@@ -24,6 +24,8 @@ _LUMINARY_GLYPH = "🌙"
 
 _MODE_CHOICES = ["context", "tools", "hybrid"]
 
+_RECALL_HEADER = "# Luminary Memory (persistent cross-session context)"
+
 _SENTINEL = None  # writer-queue shutdown marker
 
 
@@ -47,6 +49,11 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._turn_counter: int = 0
         self._thread_client: MemoryClient | None = None
         self._thread_client_owner: str | None = None
+        self._prefetch_cache: tuple[str, int] | None = None
+        self._prefetch_lock = threading.Lock()
+        self._prefetch_thread: threading.Thread | None = None
+        self._last_recall_count: int = 0
+        self._last_recall_returned: bool = False
 
     # ------------------------------------------------------------------ #
     # Identity & availability
@@ -496,6 +503,96 @@ class LuminaryMemoryProvider(MemoryProvider):
         if mode in ("tools", "hybrid"):
             lines.append("Use the `luminary_recall` / `luminary_ingest` tools to query or store memories on demand.")
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------ #
+    # Auto-recall
+    # ------------------------------------------------------------------ #
+
+    def _format_recall_block(self, memories, scores) -> str:
+        lines = [_RECALL_HEADER, "Recalled relevant memories to ground the reply."]
+        for m, s in zip(memories, scores):
+            lines.append(f"- {m.content}")
+        return "\n".join(lines)
+
+    def queue_prefetch(self, query: str, session_id: str) -> None:
+        """Queue a background recall for the next turn (warm prefetch)."""
+        if self._shutting_down.is_set():
+            return
+        if not self._client:
+            return
+        if not self._config.get("auto_recall", True):
+            return
+        if self._config.get("mode", "hybrid") == "tools":
+            return
+        if self._config.get("recall_sync", False):
+            return
+
+        def _worker() -> None:
+            try:
+                client = self._writer_client()
+                if client is None:
+                    return
+                result = client.recall(
+                    query,
+                    limit=int(self._config.get("recall_limit", 10)),
+                    token_budget=int(self._config.get("token_budget", 2048)),
+                )
+                text = self._format_recall_block(result.memories, result.scores)
+                with self._prefetch_lock:
+                    self._prefetch_cache = (text, len(result.memories))
+            except Exception:
+                logging.getLogger(__name__).exception("prefetch recall failed")
+
+        t = threading.Thread(target=_worker, name="luminary-prefetch", daemon=True)
+        t.start()
+        self._prefetch_thread = t
+
+    def prefetch(self, query: str, session_id: str) -> str:
+        """Return recall context for the current turn (cached or live)."""
+        if not self._client:
+            return ""
+        if not self._config.get("auto_recall", True):
+            return ""
+        if self._config.get("mode", "hybrid") == "tools":
+            return ""
+
+        if self._config.get("recall_sync", False):
+            try:
+                result = self._client.recall(
+                    query,
+                    limit=int(self._config.get("recall_limit", 10)),
+                    token_budget=int(self._config.get("token_budget", 2048)),
+                )
+                text = self._format_recall_block(result.memories, result.scores)
+                self._last_recall_count = len(result.memories)
+                self._last_recall_returned = bool(text)
+                return text
+            except Exception:
+                logging.getLogger(__name__).exception("sync recall failed")
+                return ""
+
+        # Cached path: join the worker briefly, then drain the cache.
+        if self._prefetch_thread is not None and self._prefetch_thread.is_alive():
+            self._prefetch_thread.join(timeout=3.0)
+        with self._prefetch_lock:
+            cached = self._prefetch_cache
+            self._prefetch_cache = None
+        if cached is None:
+            return ""
+        text, count = cached
+        self._last_recall_count = count
+        self._last_recall_returned = bool(text)
+        return text
+
+    def recall_status(self):
+        """Return the deterministic RecallStatus for the last prefetch."""
+        from agent.memory_provider import RecallStatus
+
+        if not self._config.get("recall_indicator", True):
+            return None
+        if not getattr(self, "_last_recall_returned", False):
+            return None
+        return RecallStatus("Luminary", getattr(self, "_last_recall_count", 0), _LUMINARY_GLYPH)
 
     # ------------------------------------------------------------------ #
     # Tools (stub — full implementation lands in T10)
