@@ -63,40 +63,43 @@ def _post(text: str) -> None:
 
 
 def _recent_activity(seconds: int = 30) -> str | None:
-    """Return a compact status line if the store was active recently."""
+    """Return a status line for *new* memories since last post (no repeats)."""
     if not Path(DB_PATH).exists():
         return None
     try:
         conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
-        cutoff = int(time.time()) - seconds
-        # created recently (recall updates last_accessed_at, ingest inserts new)
-        row = conn.execute(
-            "SELECT COUNT(*) AS n, "
-            "MAX(CASE WHEN strftime('%s', created_at) > ? THEN 1 ELSE 0 END) AS new_mem "
-            "FROM memories",
-            (cutoff,),
-        ).fetchone()
-        n = int(row["n"] or 0)
-        new_mem = bool(row["new_mem"])
-        if n == 0:
-            conn.close()
-            return None
-        label = "stored" if new_mem else "recalled"
-        noun = "memory" if n == 1 else "memories"
-        lines = [f"🌙 Luminary — {n} {noun} {label}"]
-        # Show the content of newly stored facts (transparency).
-        if new_mem:
+        last_id = _last_shown_id()
+        # First run after fix: only show the single newest to avoid spamming history
+        if last_id == 0:
+            row = conn.execute("SELECT MAX(id) as max_id FROM memories").fetchone()
+            max_id = int(row["max_id"] or 0)
+            if max_id == 0:
+                conn.close()
+                return None
             new_rows = conn.execute(
-                "SELECT content FROM memories "
-                "WHERE strftime('%s', created_at) > ? "
-                "ORDER BY id DESC LIMIT 1",  # show only the newest, not a batch
-                (cutoff,),
+                "SELECT id, content FROM memories WHERE id = ?",
+                (max_id,),
             ).fetchall()
-            for r in new_rows:
-                content = str(r["content"] or "").replace("\n", " ")[:90]
-                if content:
-                    lines.append(f"  • {content}")
+        else:
+            new_rows = conn.execute(
+                "SELECT id, content FROM memories WHERE id > ? ORDER BY id ASC LIMIT 3",
+                (last_id,),
+            ).fetchall()
+            if not new_rows:
+                conn.close()
+                return None
+        n_new = len(new_rows)
+        noun = "memory" if n_new == 1 else "memories"
+        lines = [f"🌙 Luminary — {n_new} {noun} stored"]
+        for r in new_rows:
+            content = str(r["content"] or "").replace("\n", " ").strip()
+            if len(content) > 120:
+                content = content[:120].rsplit(" ", 1)[0] + "…"
+            if content:
+                lines.append(f"  • {content}")
+        max_shown = max(int(r["id"]) for r in new_rows)
+        _set_last_shown_id(max_shown)
         conn.close()
         return "\n".join(lines)
     except Exception:
