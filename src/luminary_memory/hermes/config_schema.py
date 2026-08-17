@@ -5,10 +5,22 @@ because the Hermes dashboard loads it by path (``plugins.memory.config_schema``
 is the only import, and it is itself data-only).
 """
 
-from plugins.memory.config_schema import (  # type: ignore[import-not-found]
-    STORAGE_FLAT_JSON,
-    ProviderConfigSchema,
-)
+try:  # pragma: no cover - depends on hermes runtime
+    from plugins.memory.config_schema import (  # type: ignore[import-not-found]
+        STORAGE_FLAT_JSON,
+        ProviderConfigSchema,
+    )
+except ModuleNotFoundError:
+    # Standalone installs (no hermes-agent runtime): provide minimal
+    # data-only shims so the module stays importable and testable.
+    STORAGE_FLAT_JSON = "flat_json"
+
+    class ProviderConfigSchema:  # type: ignore[no-redef]
+        def __init__(self, name, label, storage, fields):
+            self.name = name
+            self.label = label
+            self.storage = storage
+            self.fields = fields
 
 CONFIG_SCHEMA = ProviderConfigSchema(
     name="luminary",
