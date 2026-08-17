@@ -67,6 +67,12 @@ factual summaries (e.g. `"Deploy target is the staging cluster."`) instead of
 raw `User: ... / Assistant: ...` transcripts. One small LLM call per retained
 turn; any OpenAI-compatible endpoint works.
 
+**LLM store maintenance (optional):** set `auto_maintain: true` in the same
+config file to have the provider review the store at every session end — the
+LLM keeps current facts, updates changed ones, and deletes stale, contradicted,
+or duplicate memories, so the store never accumulates outdated or redundant
+facts.
+
 ---
 
 ## Quickstart

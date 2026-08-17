@@ -10,7 +10,8 @@ All notable changes to this project are documented in this file. The format foll
   - `worth_saving` — chit-chat, greetings, and trivial turns are **dropped** instead of polluting the store.
   - `summary` — kept turns are stored as concise factual summaries (e.g. `"Deploy target is the staging cluster."`) instead of raw `User: ... / Assistant: ...` transcripts.
   - `entities` / `tags` — attached for richer recall.
-- **Transparency log** — provider writes `$HERMES_HOME/luminary/luminary.log` recording initialize/recall/retain/errors.
+- **LLM store maintenance** — `MemoryClient.run_maintenance()` + provider `auto_maintain` (session-end): the LLM reviews the store and **deletes obsolete/contradicted/duplicate facts**, **updates changed ones**, and **keeps** current ones (verified: stale deploy target auto-removed).
+- **Transparency log** — provider writes `$HERMES_HOME/luminary/luminary.log` recording initialize/recall/retain/maintenance/errors.
 - **`OpenAICompatibleEnricher` User-Agent header** — required by some OpenAI-compatible gateways (e.g. Command Code 403s without it).
 
 ### Fixed

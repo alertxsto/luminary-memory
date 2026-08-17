@@ -92,6 +92,7 @@ Provider config lives in `~/.hermes/luminary/config.json` (auto-created,
 | `retain_every_n_turns` | `1` | Save every N turns (higher = fewer, batched saves) |
 | `ingest_llm` | `false` | **LLM memory curation** — drops chit-chat, stores factual summary instead of raw transcript |
 | `llm_base_url` / `llm_model` / `llm_api_key` | `""` | OpenAI-compatible enricher endpoint/model/key |
+| `auto_maintain` | `false` | **LLM store review at session end** — keeps/updates/deletes stale or duplicate facts (needs `ingest_llm`) |
 | `recall_indicator` | `true` | Show `🌙 Luminary — recalled N memories` |
 | `retain_indicator` | `true` | Show `🌙 Luminary — memory saved` |
 | `backend` | `sqlite` | `sqlite` (zero config) or `pgvector` (scale) |

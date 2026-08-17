@@ -49,6 +49,7 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `llm_timeout` | `60` | Enricher request timeout (seconds) |
 | `recall_indicator` | `true` | Show `🌙 Luminary — recalled N memories` |
 | `retain_indicator` | `true` | Show `🌙 Luminary — memory saved` |
+| `auto_maintain` | `false` | **LLM store review at session end** — keeps/updates/deletes stale, contradicted, or duplicate facts (requires `ingest_llm`) |
 
 ### LLM memory curation (v0.2.2+)
 

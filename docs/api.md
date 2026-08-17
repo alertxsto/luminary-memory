@@ -14,7 +14,7 @@ pdoc --output-dir docs/api --docformat markdown src/luminary_memory
 
 ## Quick surface
 
-- `MemoryClient` — `ingest`, `ingest_batch`, `recall` (tags + snippets + planner), `search`, `get`/`update`/`delete`, `list`, `export`/`import_memories`, `run_lifecycle`, `stats`, `close`.
+- `MemoryClient` — `ingest`, `ingest_batch`, `recall` (tags + snippets + planner), `search`, `get`/`update`/`delete`, `list`, `export`/`import_memories`, `run_lifecycle`, `run_maintenance` (LLM curation), `stats`, `close`.
 - `Settings` — `LUMINARY_*` env vars, `as_dict()`.
 - `Memory`, `RecallResult` — `types.py`.
 - Subpackages `backends/`, `embeddings/`, `ingest/`, `recall/`, `lifecycle/`, `export`.

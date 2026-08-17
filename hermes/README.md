@@ -61,6 +61,25 @@ Any OpenAI-compatible endpoint works. Costs one small LLM call per retained
 turn (temperature 0, strict JSON). If the enricher fails, the provider falls
 back to storing the turn verbatim — it never blocks.
 
+### Store maintenance (auto_maintain)
+
+With `auto_maintain: true` (plus `ingest_llm: true`), the provider also
+reviews the store at every session end — the LLM keeps current facts, updates
+changed ones, and **deletes stale, contradicted, or duplicate memories**:
+
+```json
+{
+  "ingest_llm": true,
+  "llm_base_url": "https://api.commandcode.ai/provider/v1",
+  "llm_model": "deepseek/deepseek-v4-flash",
+  "llm_api_key": "your-key",
+  "auto_maintain": true
+}
+```
+
+Results land in the transparency log:
+`maintenance {'reviewed': N, 'deleted': N, 'updated': N}`.
+
 ## Manual install (no script)
 
 ```bash
