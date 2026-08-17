@@ -170,6 +170,18 @@ class SQLiteBackend(MemoryBackend):
             ).fetchall()
         return [self._row_to_memory(r) for r in rows]
 
+    def temporal_scan(self, limit: int | None = None) -> list[tuple[int, str, int]]:
+        """Lightweight rows (id, created_at, access_count) for temporal scoring.
+
+        Avoids parsing JSON metadata/tags and decoding embeddings for every
+        memory — temporal recall only needs creation time and access count.
+        """
+        limit_sql = "" if limit is None else f" LIMIT {int(limit)}"
+        rows = self.conn.execute(
+            f"SELECT id, created_at, access_count FROM memories{limit_sql}"
+        ).fetchall()
+        return [(int(r["id"]), str(r["created_at"]), int(r["access_count"] or 0)) for r in rows]
+
     def keyword_search(self, query: str, limit: int | None = 10) -> list[tuple[Memory, float]]:
         safe = _sanitize_fts_query(query)
         if limit is None:
@@ -191,16 +203,44 @@ class SQLiteBackend(MemoryBackend):
     def vector_search(self, vec: list[float], limit: int | None = 10) -> list[tuple[Memory, float]]:
         q = np.asarray(vec, dtype=np.float32)
         qn = float(np.linalg.norm(q))
+        if qn == 0:
+            return []
+
+        # Vectorized cosine similarity: load only embeddings into one matrix
+        # and compute dot products via matmul (identical results to the
+        # per-row loop, but O(N) in numpy instead of Python).
+        rows = self.conn.execute(
+            "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL"
+        ).fetchall()
+        if not rows:
+            return []
+
+        ids = np.asarray([r["id"] for r in rows], dtype=np.int64)
+        mat = np.vstack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows])
+        norms = np.linalg.norm(mat, axis=1)
+        sims = (mat @ q) / (norms * qn + 1e-12)
+
+        # Top-k via argpartition (O(N) instead of full sort).
+        if limit is not None and limit < len(sims):
+            k = int(limit)
+            idx = np.argpartition(-sims, k - 1)[:k]
+            idx = idx[np.argsort(-sims[idx])]
+        else:
+            idx = np.argsort(-sims)
+
+        # Fetch full rows only for the top-k winners.
+        top_ids = [int(ids[i]) for i in idx]
+        id_ph = ",".join("?" for _ in top_ids)
+        full_rows = self.conn.execute(
+            f"SELECT * FROM memories WHERE id IN ({id_ph})", top_ids
+        ).fetchall()
+        full_by_id = {int(r["id"]): r for r in full_rows}
         results: list[tuple[Memory, float]] = []
-        for m in self.all():
-            if m.embedding is None:
-                continue
-            v = np.asarray(m.embedding, dtype=np.float32)
-            vn = float(np.linalg.norm(v))
-            sim = 0.0 if (qn == 0 or vn == 0) else float(np.dot(q, v) / (qn * vn))
-            results.append((m, sim))
-        results.sort(key=lambda x: -x[1])
-        return results if limit is None else results[:limit]
+        for i in idx:
+            row = full_by_id.get(int(ids[i]))
+            if row is not None:
+                results.append((self._row_to_memory(row), float(sims[i])))
+        return results
 
     def count(self) -> int:
         row = self.conn.execute("SELECT COUNT(*) FROM memories").fetchone()

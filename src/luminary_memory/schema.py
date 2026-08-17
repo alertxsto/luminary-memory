@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS relations (
     weight REAL NOT NULL DEFAULT 1.0,
     memory_id INTEGER REFERENCES memories(id)
 );
+CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id);
+CREATE INDEX IF NOT EXISTS idx_relations_memory ON relations(memory_id);
+CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id);
 """
 
 def init_schema(conn: sqlite3.Connection) -> None:

@@ -44,6 +44,28 @@ def temporal_recall(
     half_life_hours: float = HALF_LIFE_HOURS,
 ) -> list[tuple]:
     now = datetime.now(UTC)
+
+    # Fast path: backends with temporal_scan() return lightweight
+    # (id, created_at, access_count) rows — no JSON/embedding parsing.
+    scan = getattr(backend, "temporal_scan", None)
+    if scan is not None:
+        scored: list[tuple] = []
+        for mid, created_at, access_count in scan():
+            created = _parse_dt(created_at)
+            age_hours = max(0.0, (now - created).total_seconds() / 3600.0)
+            recency = math.exp(-age_hours / half_life_hours)
+            popularity = 1.0 + math.log1p(float(access_count))
+            scored.append((mid, recency * popularity))
+        scored.sort(key=lambda x: -x[1])
+        top = scored if limit is None else scored[:limit]
+        out: list[tuple] = []
+        for mid, score in top:
+            mem = backend.get(mid)
+            if mem is not None:
+                out.append((mem, float(score), "temporal"))
+        return out
+
+    # Fallback: full objects via backend.all().
     scored = [(m, compute_temporal_score(m, now=now, half_life_hours=half_life_hours))
               for m in backend.all()]
     scored.sort(key=lambda x: -x[1])
