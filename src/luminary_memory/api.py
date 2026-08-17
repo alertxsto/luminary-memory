@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from luminary_memory.backends.sqlite import SQLiteBackend
+from luminary_memory.backends import get_backend
 from luminary_memory.budget import truncate
 from luminary_memory.config import Settings
 from luminary_memory.embeddings.fastembed import FastembedEngine
@@ -36,7 +36,7 @@ class MemoryClient:
         if ingest_whitelist is not None:
             self.settings.ingest_whitelist = ingest_whitelist
 
-        self.backend = backend or SQLiteBackend(self.settings.db_path)
+        self.backend = backend or get_backend(self.settings)
         self.whitelist = WhitelistFilter(self.settings.ingest_whitelist)
         self.engine = engine or FastembedEngine(model_name=self.settings.embedding_model)
         self.enricher = enricher or (NoopEnricher() if not self.settings.ingest_llm else None)
