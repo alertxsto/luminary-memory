@@ -22,3 +22,6 @@ luminary_memory.db
 .DS_Store
 .idea/
 .vscode/
+
+# Command Code CLI local config
+.commandcode/
