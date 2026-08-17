@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from luminary_memory.recall.dedup import jaccard_similarity
+
+if TYPE_CHECKING:
+    from luminary_memory.backends.base import MemoryBackend
+
+
+def consolidate(
+    backend: MemoryBackend,
+    threshold: float = 0.9,
+) -> int:
+    memories = backend.all()
+    merged = 0
+    visited: set[int] = set()
+    for i, m in enumerate(memories):
+        if m.id in visited:
+            continue
+        cluster = [m]
+        for n in memories[i + 1:]:
+            if n.id in visited:
+                continue
+            if jaccard_similarity(m.content, n.content) >= threshold:
+                cluster.append(n)
+        if len(cluster) < 2:
+            continue
+        master = max(cluster, key=lambda x: len(x.content))
+        total_access = sum(c.access_count for c in cluster)
+        merged_tags: list[str] = []
+        seen: set[str] = set()
+        for c in cluster:
+            for t in c.tags or []:
+                if t not in seen:
+                    seen.add(t)
+                    merged_tags.append(t)
+        master.access_count = total_access
+        master.tags = merged_tags
+        backend.update(master)  # type: ignore[arg-type]
+        for c in cluster:
+            if c.id != master.id:
+                backend.delete(c.id)  # type: ignore[arg-type]
+                visited.add(c.id)  # type: ignore[arg-type]
+                merged += 1
+        visited.add(master.id)  # type: ignore[arg-type]
+    return merged
