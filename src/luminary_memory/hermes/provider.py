@@ -177,6 +177,13 @@ class LuminaryMemoryProvider(MemoryProvider):
             item = self._retain_queue.get()
             if item is _SENTINEL:
                 self._retain_queue.task_done()
+                # Close the thread-owned client here (SQLite thread affinity).
+                if self._thread_client is not None:
+                    try:
+                        self._thread_client.close()
+                    except Exception:
+                        logging.getLogger(__name__).exception("thread client close failed")
+                    self._thread_client = None
                 break
             try:
                 fn = item[0]
@@ -189,15 +196,12 @@ class LuminaryMemoryProvider(MemoryProvider):
     def shutdown(self) -> None:
         """Flush queued retains, stop the writer, close the store."""
         self._shutting_down.set()
+        # Ask the writer thread to close its own client (SQLite objects are
+        # thread-affine — closing from the main thread would crash).
         self._retain_queue.put(_SENTINEL)
         if self._writer_thread is not None:
             self._writer_thread.join(timeout=5.0)
-        if self._thread_client is not None:
-            try:
-                self._thread_client.close()
-            except Exception:
-                logging.getLogger(__name__).exception("thread client close failed")
-            self._thread_client = None
+        self._thread_client = None
         if self._client is not None:
             self._client.close()
             self._client = None
