@@ -27,6 +27,16 @@ DB_PATH = os.getenv(
 )
 LOG_FILE = Path.home() / ".hermes" / "hooks" / "luminary-activity" / "hook.log"
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+STATE_FILE = LOG_FILE.parent / "state.json"
+
+def _last_shown_id() -> int:
+    try:
+        return int(json.loads(STATE_FILE.read_text())["last_id"])
+    except Exception:
+        return 0
+
+def _set_last_shown_id(mid: int) -> None:
+    STATE_FILE.write_text(json.dumps({"last_id": mid}))
 logging.basicConfig(
     filename=str(LOG_FILE), level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
@@ -80,7 +90,7 @@ def _recent_activity(seconds: int = 30) -> str | None:
             new_rows = conn.execute(
                 "SELECT content FROM memories "
                 "WHERE strftime('%s', created_at) > ? "
-                "ORDER BY id DESC LIMIT 3",
+                "ORDER BY id DESC LIMIT 1",  # show only the newest, not a batch
                 (cutoff,),
             ).fetchall()
             for r in new_rows:
