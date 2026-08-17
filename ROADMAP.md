@@ -121,7 +121,7 @@ Post-MVP audit hardening.
 
 ---
 
-### v0.4.0 — Hermes Memory Provider (pulled forward from v1.0.0)
+### v0.2.1 — Hermes Memory Provider
 
 **Goal:** Luminary becomes a first-class Hermes memory provider — auto-recall every turn, auto-save every session, matching (and beating) Hindsight's integration with a fraction of the resources.
 
