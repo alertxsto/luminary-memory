@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/), and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.3] - 2026-08-18
+
+### Added
+
+- **Hermes dashboard config schema** — exposes 18 luminary settings (mode, backend, recall limit, token budget, auto-recall/retain, **LLM memory curation**, **auto-maintain**, LLM endpoint, indicators) in the Hermes dashboard Provider panel. `auto_maintain` added; `ingest_llm` label corrected to "LLM memory curation".
+
+### Changed
+
+- **Balanced LLM curation** — the enricher now rejects work/task logs and meta-talk about the memory system itself, while still keeping durable facts (not over-strict). Verified: work logs → `worth_saving: false`; facts → stored.
+
 ## [0.2.2] - 2026-08-18
 
 ### Added
