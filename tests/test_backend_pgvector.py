@@ -53,7 +53,27 @@ class _FakeConn:
 
 @pytest.mark.skipif(not _pg_available(), reason=_SKIP_MSG)
 def test_pg_integration_smoke():
-    pass
+    """Real Postgres round-trip: create schema, add, get, search, delete."""
+    dsn = os.environ.get("LUMINARY_PG_DSN", os.environ.get("PG_DSN", ""))
+    if not dsn:
+        pytest.skip(_SKIP_MSG)
+    from luminary_memory.backends.pgvector import PGVectorBackend
+
+    b = PGVectorBackend(dsn=dsn, embedding_dim=384)
+    try:
+        m = Memory(content="integration smoke test memory", tags=["smoke"])
+        m.embedding = [0.0] * 384
+        mid = b.add(m)
+        assert mid is not None
+        got = b.get(mid)
+        assert got is not None and got.content == "integration smoke test memory"
+        assert b.count() >= 1
+        hits = b.keyword_search("smoke", limit=5)
+        assert any(h[0].content == "integration smoke test memory" for h in hits)
+        b.delete(mid)
+        assert b.get(mid) is None
+    finally:
+        b.close()
 
 
 def test_pgvector_backend_unit_add_encodes_embedding():

@@ -28,6 +28,32 @@ def _client(db_path: str | None, backend: str | None) -> MemoryClient:
     return MemoryClient(settings=settings)
 
 
+@app.callback()
+def _main(
+    ctx: typer.Context,
+) -> None:
+    """Global entry point with clean error handling."""
+    # Typer calls the callback before the command; exceptions raised by
+    # commands bubble up to the console as tracebacks. We catch them here
+    # by wrapping execution — typer doesn't offer a hook, so commands rely
+    # on _safe_run per command. (Kept as the documented entry point.)
+
+
+def _safe_run(fn):
+    """Run a command body, converting unexpected exceptions to clean errors."""
+    try:
+        return fn()
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001 — CLI boundary: show clean message
+        console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(1)
+
+
+def _clamp_limit(limit: int) -> int:
+    return max(1, int(limit))
+
+
 @app.command()
 def add(
     text: str = typer.Argument(..., help="Memory content to store"),
@@ -58,28 +84,31 @@ def recall(
     backend: str | None = typer.Option(None, "--backend", help="sqlite | pgvector"),
 ) -> None:
     """Recall memories using the full four-strategy pipeline."""
-    client = _client(db_path, backend)
-    try:
-        result = client.recall(query, limit=limit)
-        if json_out:
-            payload = {
-                "memories": [
-                    {"id": m.id, "content": m.content, "tags": m.tags} for m in result.memories
-                ],
-                "scores": result.scores,
-                "strategies_hit": result.strategies_hit,
-            }
-            console.print(json.dumps(payload, indent=2))
-            return
-        table = Table(title=f"Recall: {query}")
-        table.add_column("id", style="dim")
-        table.add_column("score", justify="right")
-        table.add_column("content")
-        for m, s in zip(result.memories, result.scores):
-            table.add_row(str(m.id), f"{s:.4f}", m.content)
-        console.print(table)
-    finally:
-        client.close()
+    def run():
+        client = _client(db_path, backend)
+        try:
+            result = client.recall(query, limit=_clamp_limit(limit))
+            if json_out:
+                payload = {
+                    "memories": [
+                        {"id": m.id, "content": m.content, "tags": m.tags} for m in result.memories
+                    ],
+                    "scores": result.scores,
+                    "strategies_hit": result.strategies_hit,
+                }
+                console.print(json.dumps(payload, indent=2))
+                return
+            table = Table(title=f"Recall: {query}")
+            table.add_column("id", style="dim")
+            table.add_column("score", justify="right")
+            table.add_column("content")
+            for m, s in zip(result.memories, result.scores):
+                table.add_row(str(m.id), f"{s:.4f}", m.content)
+            console.print(table)
+        finally:
+            client.close()
+
+    _safe_run(run)
 
 
 @app.command()
@@ -90,12 +119,15 @@ def search(
     backend: str | None = typer.Option(None, "--backend", help="sqlite | pgvector"),
 ) -> None:
     """Keyword (FTS) search only."""
-    client = _client(db_path, backend)
-    try:
-        for m, score in client.search(query, limit=limit):
-            console.print(f"[dim]{m.id}[/dim] ({score:.4f}) {m.content}")
-    finally:
-        client.close()
+    def run():
+        client = _client(db_path, backend)
+        try:
+            for m, score in client.search(query, limit=_clamp_limit(limit)):
+                console.print(f"[dim]{m.id}[/dim] ({score:.4f}) {m.content}")
+        finally:
+            client.close()
+
+    _safe_run(run)
 
 
 @app.command()
@@ -106,13 +138,16 @@ def list(
     backend: str | None = typer.Option(None, "--backend", help="sqlite | pgvector"),
 ) -> None:
     """List memories, most recent first."""
-    client = _client(db_path, backend)
-    try:
-        for m in client.list(limit=limit, offset=offset):
-            tags = ",".join(m.tags or [])
-            console.print(f"[dim]{m.id}[/dim] {m.content}" + (f" [cyan]#{tags}[/cyan]" if tags else ""))
-    finally:
-        client.close()
+    def run():
+        client = _client(db_path, backend)
+        try:
+            for m in client.list(limit=_clamp_limit(limit), offset=max(0, offset)):
+                tags = ",".join(m.tags or [])
+                console.print(f"[dim]{m.id}[/dim] {m.content}" + (f" [cyan]#{tags}[/cyan]" if tags else ""))
+        finally:
+            client.close()
+
+    _safe_run(run)
 
 
 @app.command()

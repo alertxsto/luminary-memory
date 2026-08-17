@@ -9,6 +9,24 @@ from luminary_memory.backends.base import MemoryBackend
 from luminary_memory.schema import init_schema
 from luminary_memory.types import Memory
 
+# FTS5 special characters that can alter query semantics (syntax injection).
+_FTS5_SPECIAL = ('"', "*", ":", "^", "(", ")", "{", "}", "[", "]", "-", "+", "~", "NEAR", "AND", "OR", "NOT")
+
+
+def _sanitize_fts_query(query: str) -> str:
+    """Strip FTS5 query syntax so user input is treated as plain terms.
+
+    Without this, characters like ``*``, ``NEAR``, or quoted phrases can
+    change the query into something the user did not intend (and can raise
+    syntax errors on malformed input). We keep only word characters, which
+    is the safest interpretation for plain keyword search.
+    """
+    import re
+
+    cleaned = re.sub(r"[^\w\s]", " ", query)
+    cleaned = " ".join(cleaned.split())
+    return cleaned or '" "'
+
 
 class SQLiteBackend(MemoryBackend):
     def __init__(self, db_path: str = "luminary_memory.db"):
@@ -102,8 +120,16 @@ class SQLiteBackend(MemoryBackend):
         rows = self.conn.execute("SELECT * FROM memories ORDER BY id").fetchall()
         return [self._row_to_memory(r) for r in rows]
 
+    def recent(self, limit: int = 100, offset: int = 0) -> list[Memory]:
+        """Most-recent-first pagination at the SQL level (no full load)."""
+        rows = self.conn.execute(
+            "SELECT * FROM memories ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+            (max(0, int(limit)), max(0, int(offset))),
+        ).fetchall()
+        return [self._row_to_memory(r) for r in rows]
+
     def keyword_search(self, query: str, limit: int = 10) -> list[tuple[Memory, float]]:
-        safe = query.replace('"', ' ')
+        safe = _sanitize_fts_query(query)
         rows = self.conn.execute(
             "SELECT m.*, bm25(memories_fts) AS rank "
             "FROM memories_fts JOIN memories m ON m.id = memories_fts.rowid "

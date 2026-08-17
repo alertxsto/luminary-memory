@@ -46,7 +46,9 @@ class MemoryClient:
         self.backend = backend or get_backend(self.settings)
         self.whitelist = WhitelistFilter(self.settings.ingest_whitelist)
         self.engine = engine or FastembedEngine(model_name=self.settings.embedding_model)
-        self.enricher = enricher or (NoopEnricher() if not self.settings.ingest_llm else None)
+        # Never leave enricher None: ingest() calls .enrich() unconditionally.
+        # Without a custom enricher, fall back to NoopEnricher (safe passthrough).
+        self.enricher = enricher or NoopEnricher()
 
     def ingest(self, text: str, tags: list[str] | None = None,
                source: str | None = None) -> int | None:
@@ -91,9 +93,13 @@ class MemoryClient:
         self.backend.delete(id)
 
     def list(self, limit: int = 100, offset: int = 0) -> list[Memory]:
-        """List memories, most recent first (datetime-aware sort)."""
+        """List memories, most recent first (SQL-level pagination when supported)."""
         limit = max(0, int(limit))
         offset = max(0, int(offset))
+        recent = getattr(self.backend, "recent", None)
+        if recent is not None:
+            return recent(limit=limit, offset=offset)
+        # fallback for backends without SQL pagination
         from luminary_memory.recall.temporal import _parse_dt
 
         all_mem = self.backend.all()

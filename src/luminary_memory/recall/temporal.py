@@ -11,7 +11,14 @@ HALF_LIFE_HOURS = 72.0
 
 
 def _parse_dt(s: str) -> datetime:
-    dt = datetime.fromisoformat(s)
+    if not s:
+        return datetime.now(UTC)
+    try:
+        dt = datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        # Corrupt or foreign timestamp: treat as "now" so downstream
+        # scoring/cleanup never crashes on bad data.
+        return datetime.now(UTC)
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
     return dt
