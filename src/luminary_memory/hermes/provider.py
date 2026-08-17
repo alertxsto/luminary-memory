@@ -287,6 +287,26 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._config.update({k: v for k, v in values.items() if k in _DEFAULTS})
 
     # ------------------------------------------------------------------ #
+    # System prompt
+    # ------------------------------------------------------------------ #
+
+    def system_prompt_block(self) -> str:
+        """Emit a compact, mode-aware block for the system prompt."""
+        if not self._hermes_home:
+            return ""
+        mode = self._config.get("mode", "hybrid")
+        db_path = self._resolve_db_path()
+        lines = [
+            "# Luminary Memory",
+            f"Active ({mode} mode). Store: {db_path}.",
+        ]
+        if mode in ("context", "hybrid"):
+            lines.append("Relevant memories are automatically injected into context.")
+        if mode in ("tools", "hybrid"):
+            lines.append("Use the `luminary_recall` / `luminary_ingest` tools to query or store memories on demand.")
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------ #
     # Tools (stub — full implementation lands in T10)
     # ------------------------------------------------------------------ #
 
