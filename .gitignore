@@ -102,3 +102,6 @@ docs/api/
 website/screenshot_*.png
 website/test_*.png
 website/*.png
+
+# ---- Internal plan files ----
+website/plan.md

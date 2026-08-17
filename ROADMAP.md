@@ -121,17 +121,18 @@ Post-MVP audit hardening.
 
 ---
 
-### v0.2.1 — Hermes Memory Provider
+### v0.2.1 — Hermes Memory Provider ✅ released
 
 **Goal:** Luminary becomes a first-class Hermes memory provider — auto-recall every turn, auto-save every session, matching (and beating) Hindsight's integration with a fraction of the resources.
 
-- [ ] Implement `MemoryProvider` ABC as a Hermes plugin (`plugins/memory/luminary/`)
-- [ ] `prefetch()` / `queue_prefetch()` — auto-recall into agent context each turn
-- [ ] `on_session_end()` — auto-save conversation turns
-- [ ] `get_tool_schemas()` — expose `luminary_recall` / `luminary_ingest` tools
-- [ ] `system_prompt_block()` — provider context injection
-- [ ] Register provider: `memory.provider = luminary`
-- [ ] Benchmark vs Hindsight: resource usage, recall latency, recall quality
+- [x] Implement `MemoryProvider` ABC as a standalone pip entry-point provider (`luminary_memory.hermes`)
+- [x] `prefetch()` / `queue_prefetch()` — auto-recall into agent context each turn
+- [x] `on_session_end()` — auto-save conversation turns (buffered `sync_turn`, session-boundary flush)
+- [x] `get_tool_schemas()` — expose `luminary_recall` / `luminary_ingest` / `luminary_list` tools
+- [x] `system_prompt_block()` — provider context injection
+- [x] Register provider: `memory.provider = luminary`
+- [x] Benchmark — 230 ms recall p50 @ 5k, 179 MB RSS, **0 LLM tokens** (see `benchmarks/RESULTS.md`)
+- [x] Performance: recall 4.1× faster, temporal 7.8×, graph store 3.5× smaller
 
 ---
 

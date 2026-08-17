@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/), and the project adheres to [Semantic Versioning](https://semver.org/).
 
-## [0.2.1] - Unreleased
+## [0.2.1] - 2026-08-18
 
 ### Added
 
@@ -17,6 +17,18 @@ All notable changes to this project are documented in this file. The format foll
   - **Packaging** — entry point + `plugin.yaml` directory-install fallback.
   - **Test harness** — `tests/hermes_stubs/agent/memory_provider.py` ABC stub injected via `tests/conftest.py` so tests run without a hermes-agent install.
 - **`MemoryClient.ingest(metadata=...)`** — optional metadata dict merged into stored memory metadata (backward compatible).
+
+### Performance (identical results, no approximation)
+
+- **Vectorized cosine similarity** — per-row numpy loop → single matmul; recall @ 5k memories **3,400 ms → 832 ms (4.1×)**.
+- **SQL graph aggregation** — 210k relation rows → `SUM/COUNT ... GROUP BY` in the database.
+- **`temporal_scan()`** — temporal recall fetches only `(id, created_at, access_count)`; **486 ms → 62 ms (7.8×)**.
+- **Relation cap (8/memory) + indexes** — dense graph (280k rows) → sparse (80k); store 3.5× smaller; ingest 1.6× faster.
+
+### Fixed
+
+- `config_schema.py` import fallback — module now imports standalone (no hermes runtime) so CI is green on 3.11/3.12.
+- Publish workflow — skill zip moved out of `dist/` (invalid distribution); dropped `generate_release_notes` (permission).
 
 ## [0.2.0] - 2026-08-18
 

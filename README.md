@@ -8,8 +8,8 @@
 [![Python](https://img.shields.io/pypi/pyversions/luminary-memory?color=8ab4e8&logo=python&logoColor=white)](https://pypi.org/project/luminary-memory)
 [![License](https://img.shields.io/github/license/alertxsto/luminary-memory?color=8ab4e8)](https://github.com/alertxsto/luminary-memory/blob/main/LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/alertxsto/luminary-memory/ci.yml?color=8ab4e8&label=CI&logo=github)](https://github.com/alertxsto/luminary-memory/actions)
-[![Tests](https://img.shields.io/badge/tests-101%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
-[![Coverage](https://img.shields.io/badge/coverage-89%25-8ab4e8)](https://github.com/alertxsto/luminary-memory)
+[![Tests](https://img.shields.io/badge/tests-168%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
+[![Coverage](https://img.shields.io/badge/coverage-85%25-8ab4e8)](https://github.com/alertxsto/luminary-memory)
 [![Stars](https://img.shields.io/github/stars/alertxsto/luminary-memory?color=8ab4e8&logo=github)](https://github.com/alertxsto/luminary-memory)
 
 **Self-hosted · Private · Budget-aware · Self-maintaining**
@@ -32,6 +32,32 @@ Agents are only as good as what they remember. A stateless agent re-learns the s
 - **Budget-aware by design** — results are deduplicated (Jaccard) and truncated to a configurable token budget, so memory injection never blows up your agent's context window.
 - **Self-maintaining** — a built-in lifecycle handles TTL expiry, near-duplicate consolidation, and low-value pruning, so the store stays lean without manual cleanup.
 - **Scales when you do** — a pluggable backend lets you move from SQLite to pgvector without changing your code.
+
+---
+
+## Hermes Agent — first-class memory provider
+
+luminary-memory ships a native **Hermes Agent memory provider** (`luminary-memory[hermes]`): drop-in, auto-recall every turn, auto-save every session — with **zero LLM tokens per turn**.
+
+```bash
+pip install "luminary-memory[hermes]"
+```
+
+Enable it in your Hermes `config.yaml`:
+
+```yaml
+memory:
+  provider: luminary
+```
+
+That's it. From the next session:
+
+- 🌙 **Auto-recall** — relevant memories are retrieved in the background and injected into agent context every turn
+- 💾 **Auto-save** — completed turns are persisted automatically; session boundaries flush buffered turns
+- 🛠️ **Explicit tools** — the model can call `luminary_recall` / `luminary_ingest` / `luminary_list` on demand
+- 📋 **Deterministic indicator** — a `🌙 Luminary — recalled N memories` status line surfaces memory use
+
+Registers via the standard `hermes_agent.memory_providers` entry point — no Hermes source changes, no cloud, no LLM API keys. See `docs/hermes-integration.md` for the full configuration table.
 
 ---
 
