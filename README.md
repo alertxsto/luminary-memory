@@ -194,7 +194,7 @@ Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md) for the full product roadmap — v0.2.0 (quality & scale), v0.3.0 (intelligence), and v1.0.0 (stable).
+See [ROADMAP.md](ROADMAP.md) for the full product roadmap — v0.2.1 (Hermes memory provider), v0.3.0 (intelligence), and v1.0.0 (stable).
 
 ---
 
