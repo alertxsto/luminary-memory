@@ -17,3 +17,17 @@ class LuminaryMemoryProvider(MemoryProvider):
     @property
     def name(self) -> str:
         return "luminary"
+
+    def is_available(self) -> bool:
+        """Return True when the provider can activate (no network, no store)."""
+        return True
+
+    def initialize(self, session_id: str, **kwargs) -> None:
+        """Initialize provider state for a session (stub; lifecycle lands in T4)."""
+
+    def shutdown(self) -> None:
+        """Release provider resources (stub; lifecycle lands in T4)."""
+
+    def get_tool_schemas(self) -> list[dict]:
+        """Expose model-callable tool schemas (tools land in T10)."""
+        return []
