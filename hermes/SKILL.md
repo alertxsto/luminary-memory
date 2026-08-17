@@ -76,6 +76,22 @@ client.list(limit=20)   # most recent first
 Use this before re-ingesting — if a fact is already stored, update instead of
 duplicating.
 
+### Store maintenance
+
+The store keeps itself clean two ways:
+
+```python
+# deterministic passes (TTL, consolidate, prune)
+client.run_lifecycle()
+
+# LLM review: keep current facts, update changed ones, delete stale/duplicates
+client.run_maintenance()   # requires an LLM enricher (ingest_llm)
+```
+
+In the Hermes provider, `auto_maintain: true` (plus `ingest_llm: true`) runs
+`run_maintenance()` automatically at every session end — no manual trigger
+needed. Results are logged to `~/.hermes/luminary/luminary.log`.
+
 ## Configuration — Tweaks
 
 Provider config lives in `~/.hermes/luminary/config.json` (auto-created,

@@ -69,7 +69,7 @@
     <div class="hero-inner reveal-on-scroll">
       <div class="eyebrow">
         <span class="eyebrow-dot" aria-hidden="true"></span>
-        <span>v0.2.1 - Self-Hosted Memory Layer</span>
+        <span>v0.2.2 - Self-Hosted Memory Layer</span>
       </div>
 
       <h1 class="hero-title">
@@ -214,7 +214,7 @@
   <section class="usecases" id="use-cases">
     <div class="usecases-head reveal-on-scroll">
       <h2>Built for Agents That Do Real Work.</h2>
-      <p class="usecases-sub">Persistent memory transforms ephemeral prompt turns into compounding intelligence across your developer workflows.</p>
+      <p class="usecases-sub">Every turn is a deposit. Persistent memory turns scattered conversations into a compounding knowledge base your agents actually draw from.</p>
     </div>
 
     <div class="usecases-grid reveal-on-scroll">
@@ -225,9 +225,9 @@
             <polyline points="8 6 2 12 8 18"></polyline>
           </svg>
         </div>
-        <h3 class="usecase-title">AI Coding Agents</h3>
-        <p class="usecase-desc">Retain repository architecture, code conventions, past bug diagnoses, and tool execution history across editor restarts.</p>
-        <span class="usecase-tag">Zero Context Blowout</span>
+        <h3 class="usecase-title">Never Re-Debug the Same Bug</h3>
+        <p class="usecase-desc">Your coding agent remembers the flaky test fix from last Tuesday, the repo conventions, and why that migration stalled — so it starts from context, not from zero.</p>
+        <span class="usecase-tag">Context That Compounds</span>
       </div>
 
       <div class="usecase-card">
@@ -236,8 +236,8 @@
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
           </svg>
         </div>
-        <h3 class="usecase-title">Autonomous Chatbots</h3>
-        <p class="usecase-desc">Remember user preferences, long-term facts, and ongoing project context across weeks of interactions without re-prompting.</p>
+        <h3 class="usecase-title">Chatbots That Actually Remember You</h3>
+        <p class="usecase-desc">Preferences, project context, decisions from three weeks ago — surfaced automatically every turn, without re-prompting or context-stuffing the whole history.</p>
         <span class="usecase-tag">Cross-Session Continuity</span>
       </div>
 
@@ -250,8 +250,8 @@
             <line x1="6" y1="18" x2="6.01" y2="18"></line>
           </svg>
         </div>
-        <h3 class="usecase-title">Automation Pipelines</h3>
-        <p class="usecase-desc">Persist execution state, track task outcomes, and share memory between distributed background workers and cron jobs.</p>
+        <h3 class="usecase-title">Pipelines That Keep Their State</h3>
+        <p class="usecase-desc">Background workers and cron jobs share durable execution state — task outcomes, partial results, and handoffs survive restarts, not just process memory.</p>
         <span class="usecase-tag">Stateful Workflows</span>
       </div>
 
@@ -262,8 +262,8 @@
             <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
           </svg>
         </div>
-        <h3 class="usecase-title">Personal Knowledge &amp; Local RAG</h3>
-        <p class="usecase-desc">Operate a private local-first second brain for developers with natural language recall, automatic tagging, and temporal decay.</p>
+        <h3 class="usecase-title">A Second Brain That Never Leaks</h3>
+        <p class="usecase-desc">Natural-language recall over your own notes and knowledge — tagged, temporally decaying, and stored in a SQLite file on your machine. Zero cloud, zero telemetry.</p>
         <span class="usecase-tag">100% Private &amp; Local</span>
       </div>
 
@@ -274,9 +274,9 @@
             <line x1="7" y1="7" x2="7.01" y2="7"></line>
           </svg>
         </div>
-        <h3 class="usecase-title">Hermes Agent Memory Provider</h3>
-        <p class="usecase-desc">Drop-in first-class memory provider for Hermes — auto-recall relevant memories every turn, auto-save every session, with zero LLM tokens per turn.</p>
-        <span class="usecase-tag">Zero LLM Tokens</span>
+        <h3 class="usecase-title">Hermes That Remembers Everything</h3>
+        <p class="usecase-desc">First-class Hermes memory provider — auto-recall every turn, auto-save every session, and an LLM curator that drops chit-chat and prunes stale facts so the store stays sharp.</p>
+        <span class="usecase-tag">Self-Curating Store</span>
       </div>
     </div>
   </section>
@@ -444,6 +444,16 @@
         </summary>
         <div class="faq-answer">
           <p>A standard vector database only computes embedding cosine similarity, which frequently misses exact identifiers, function names, timestamps, and relational context. Luminary runs four parallel retrieval strategies (semantic, SQLite FTS5 keyword, temporal decay, and co-occurrence graph), blends them via Reciprocal Rank Fusion (<code>k=60</code>), eliminates duplicates with Jaccard similarity (<code>0.85</code>), and strictly enforces your agent's token budget (<code>4096</code>).</p>
+        </div>
+      </details>
+
+      <details class="faq-item">
+        <summary class="faq-question">
+          <span>How does Luminary keep its memory store clean and accurate?</span>
+          <span class="faq-toggle" aria-hidden="true">+</span>
+        </summary>
+        <div class="faq-answer">
+          <p>Two layers. Deterministic lifecycle passes (TTL expiry, near-duplicate consolidation, low-value pruning) run automatically. Optionally, an LLM curation layer (<code>ingest_llm</code>) evaluates every turn before saving — dropping chit-chat and storing concise factual summaries — and <code>auto_maintain</code> reviews the whole store at session end, deleting obsolete or contradicted facts and updating changed ones. Everything is local-first and transparently logged.</p>
         </div>
       </details>
 
