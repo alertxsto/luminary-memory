@@ -9,6 +9,7 @@ runtime the real ABC is used.
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import os
 import queue
@@ -595,9 +596,114 @@ class LuminaryMemoryProvider(MemoryProvider):
         return RecallStatus("Luminary", getattr(self, "_last_recall_count", 0), _LUMINARY_GLYPH)
 
     # ------------------------------------------------------------------ #
-    # Tools (stub — full implementation lands in T10)
+    # Tools
     # ------------------------------------------------------------------ #
 
+    def _tool_error(self, message: str) -> str:
+        return json.dumps({"error": message})
+
     def get_tool_schemas(self) -> list[dict]:
-        """Expose model-callable tool schemas (tools land in T10)."""
-        return []
+        """Expose luminary recall/ingest/list tools (empty in context mode)."""
+        if self._config.get("mode", "hybrid") == "context":
+            return []
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "luminary_recall",
+                    "description": "Recall relevant memories from the luminary store for a query.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Query text"},
+                            "limit": {"type": "integer", "description": "Max results"},
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "luminary_ingest",
+                    "description": "Store a new memory in the luminary store.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string", "description": "Memory content"},
+                            "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags"},
+                        },
+                        "required": ["content"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "luminary_list",
+                    "description": "List recent memories from the luminary store (read-only).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {"type": "integer", "description": "Max results"},
+                        },
+                    },
+                },
+            },
+        ]
+
+    def _handle_recall(self, args: dict) -> str:
+        query = args.get("query")
+        if not query or not str(query).strip():
+            return self._tool_error("luminary_recall requires a non-empty 'query'")
+        try:
+            result = self._client.recall(
+                str(query),
+                limit=int(args.get("limit") or self._config.get("recall_limit", 10)),
+                token_budget=int(self._config.get("token_budget", 2048)),
+            )
+            payload = {
+                "memories": [
+                    {"id": m.id, "content": m.content, "tags": m.tags} for m in result.memories
+                ],
+                "scores": result.scores,
+            }
+            return json.dumps(payload)
+        except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
+            return self._tool_error(f"recall failed: {exc}")
+
+    def _handle_ingest(self, args: dict) -> str:
+        content = args.get("content")
+        if not content or not str(content).strip():
+            return self._tool_error("luminary_ingest requires non-empty 'content'")
+        try:
+            tags = args.get("tags") or []
+            mid = self._client.ingest(str(content), tags=list(tags), source="hermes-tool")
+            if mid is None:
+                return json.dumps({"result": "Memory rejected by whitelist."})
+            return json.dumps({"result": f"Memory stored (id={mid})."})
+        except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
+            return self._tool_error(f"ingest failed: {exc}")
+
+    def _handle_list(self, args: dict) -> str:
+        try:
+            limit = int(args.get("limit") or 20)
+            memories = self._client.list(limit=limit, offset=0)
+            payload = [
+                {"id": m.id, "content": m.content, "tags": m.tags} for m in memories
+            ]
+            return json.dumps({"memories": payload})
+        except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
+            return self._tool_error(f"list failed: {exc}")
+
+    def handle_tool_call(self, name: str, args: dict) -> str:
+        """Dispatch a tool call to the client and return a JSON string."""
+        if not self._client:
+            return self._tool_error("provider is not initialized")
+        if name == "luminary_recall":
+            return self._handle_recall(args)
+        if name == "luminary_ingest":
+            return self._handle_ingest(args)
+        if name == "luminary_list":
+            return self._handle_list(args)
+        return self._tool_error(f"unknown tool: {name}")
