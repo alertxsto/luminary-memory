@@ -3,11 +3,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from luminary_memory.backends.sqlite import SQLiteBackend
+from luminary_memory.budget import truncate
 from luminary_memory.config import Settings
 from luminary_memory.embeddings.fastembed import FastembedEngine
 from luminary_memory.ingest.llm import LLMEnricher, NoopEnricher
 from luminary_memory.ingest.whitelist import WhitelistFilter
-from luminary_memory.types import Memory
+from luminary_memory.types import Memory, RecallResult
+
+
+def _try_index_graph(backend, memory: Memory) -> None:
+    from luminary_memory.recall.graph import index_memory_entities
+
+    index_memory_entities(backend, memory)
 
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
@@ -60,7 +67,10 @@ class MemoryClient:
             ttl_seconds=self.settings.ttl_default_seconds,
             embedding=self.engine.embed(content),
         )
-        return self.backend.add(m)
+        mid = self.backend.add(m)
+        m.id = mid
+        _try_index_graph(self.backend, m)
+        return mid
 
     def get(self, id: int) -> Memory | None:
         return self.backend.get(id)
@@ -70,3 +80,66 @@ class MemoryClient:
 
     def close(self) -> None:
         self.backend.close()
+
+    def recall(
+        self,
+        query: str,
+        limit: int = 10,
+        token_budget: int | None = None,
+    ) -> RecallResult:
+        from luminary_memory.recall.dedup import dedup_jaccard
+        from luminary_memory.recall.fusion import reciprocal_rank_fusion
+        from luminary_memory.recall.graph import graph_recall
+        from luminary_memory.recall.keyword import keyword_recall
+        from luminary_memory.recall.semantic import semantic_recall
+        from luminary_memory.recall.temporal import temporal_recall
+
+        budget = token_budget if token_budget is not None else self.settings.token_budget
+        rrf_k = self.settings.rrf_k
+        dedup_threshold = self.settings.dedup_jaccard_threshold
+
+        strategies: list[list[tuple]] = []
+        strategies.append(semantic_recall(self.backend, self.engine, query, limit=limit))
+        strategies.append(keyword_recall(self.backend, query, limit=limit))
+        strategies.append(temporal_recall(self.backend, limit=limit * 2))
+        strategies.append(graph_recall(self.backend, query, limit=limit))
+
+        id_to_mem: dict[int, Memory] = {}
+        id_to_best: dict[int, float] = {}
+        strategies_hit: dict[str, int] = {}
+        ranked_lists: list[list[int]] = []
+        for strat in strategies:
+            ranked_lists.append([m.id for m, _, _ in strat if m.id is not None])
+            for m, score, label in strat:
+                if m.id is None:
+                    continue
+                strategies_hit[label] = strategies_hit.get(label, 0) + 1
+                id_to_mem[m.id] = m
+                id_to_best[m.id] = max(id_to_best.get(m.id, 0.0), float(score))
+
+        fused = reciprocal_rank_fusion(ranked_lists, k=rrf_k)
+        scored: list[tuple[Memory, float]] = [
+            (id_to_mem[mid], score) for mid, score in fused if mid in id_to_mem
+        ]
+
+        if not scored:
+            return RecallResult(memories=[], scores=[], strategies_hit={})
+
+        scored = dedup_jaccard(scored, threshold=dedup_threshold)
+
+        memories_ordered = [m for m, _ in scored]
+        memories_ordered = truncate(memories_ordered, token_budget=budget)
+
+        id_to_fused = dict(fused)
+        final_scores = [float(id_to_fused.get(m.id, 0.0)) for m in memories_ordered]
+
+        for m in memories_ordered:
+            m.access_count += 1
+            self.backend.update(m)
+
+        trimmed = {k: v for k, v in strategies_hit.items() if v}
+        return RecallResult(
+            memories=memories_ordered[:limit],
+            scores=final_scores[:limit],
+            strategies_hit=trimmed,
+        )
