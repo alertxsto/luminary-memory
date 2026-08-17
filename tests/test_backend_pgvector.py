@@ -151,3 +151,98 @@ def test_api_uses_factory_when_no_backend_injected(tmp_path):
     c2 = MemoryClient(db_path=str(tmp_path / "b.db"), engine=FakeE())
     assert c2.backend.__class__.__name__ == "SQLiteBackend"
     c2.close()
+
+
+def test_pgvector_get_row_parsing():
+    """get() must parse a real-ish row (dict) into a Memory."""
+    with patch("psycopg.connect") as mock_connect:
+        from luminary_memory.backends.pgvector import PGVectorBackend
+
+        fake = _FakeConn()
+        fake.cur._one = {
+            "id": 7,
+            "content": "parsed content",
+            "metadata": '{"summary": "x"}',
+            "source": "test",
+            "tags": '["a","b"]',
+            "importance": 0.9,
+            "ttl_seconds": None,
+            "created_at": "2026-08-17T00:00:00+00:00",
+            "updated_at": "2026-08-17T00:00:00+00:00",
+            "last_accessed_at": None,
+            "access_count": 3,
+            "embedding": "[0.1, 0.2]",
+        }
+        mock_connect.return_value = fake
+        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
+        m = b.get(7)
+        assert m is not None
+        assert m.id == 7
+        assert m.content == "parsed content"
+        assert m.tags == ["a", "b"]
+        assert m.metadata == {"summary": "x"}
+        assert m.access_count == 3
+        assert m.embedding == [0.1, 0.2]
+
+
+def test_pgvector_get_none_when_missing():
+    with patch("psycopg.connect") as mock_connect:
+        from luminary_memory.backends.pgvector import PGVectorBackend
+
+        fake = _FakeConn()
+        fake.cur._one = None
+        mock_connect.return_value = fake
+        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
+        assert b.get(999) is None
+
+
+def test_pgvector_update_issues_sql():
+    with patch("psycopg.connect") as mock_connect:
+        from luminary_memory.backends.pgvector import PGVectorBackend
+
+        fake = _FakeConn()
+        mock_connect.return_value = fake
+        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
+        m = Memory(id=1, content="updated", tags=["x"])
+        b.update(m)
+        sql = fake.cur.executed[-1][0]
+        assert "UPDATE memories" in sql
+        assert "WHERE id=%s" in sql
+
+
+def test_pgvector_delete_cascades_relations():
+    with patch("psycopg.connect") as mock_connect:
+        from luminary_memory.backends.pgvector import PGVectorBackend
+
+        fake = _FakeConn()
+        mock_connect.return_value = fake
+        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
+        b.delete(5)
+        sqls = [s for s, _ in fake.cur.executed]
+        assert any("DELETE FROM relations WHERE memory_id = %s" == s for s in sqls)
+        assert any("DELETE FROM memories WHERE id = %s" == s for s in sqls)
+
+
+def test_pgvector_count():
+    with patch("psycopg.connect") as mock_connect:
+        from luminary_memory.backends.pgvector import PGVectorBackend
+
+        fake = _FakeConn()
+        fake.cur._one = (12,)
+        mock_connect.return_value = fake
+        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
+        assert b.count() == 12
+        assert any("COUNT" in s for s, _ in fake.cur.executed)
+
+
+def test_pgvector_row_to_memory_tuple():
+    from luminary_memory.backends.pgvector import PGVectorBackend
+
+    b = PGVectorBackend.__new__(PGVectorBackend)  # skip __init__ (no conn needed)
+    m = b._row_to_memory((
+        1, "content here", "{}", None, "[]", 0.5, None,
+        "2026-08-17T00:00:00+00:00", "2026-08-17T00:00:00+00:00", None, 0, "[0.5]",
+    ))
+    assert m.id == 1
+    assert m.content == "content here"
+    assert m.embedding == [0.5]
