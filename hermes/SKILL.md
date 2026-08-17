@@ -18,6 +18,7 @@ metadata:
 > (`hermes memory setup luminary` → `memory.provider: luminary`), which gives
 > auto-recall every turn, auto-save every session, explicit `luminary_recall` /
 > `luminary_ingest` / `luminary_list` tools, and a deterministic recall indicator.
+> One-shot installer: `bash hermes/install.sh` (provider + activity hook + skill).
 > See `docs/hermes-integration.md`. The standalone-skill flow below remains
 > supported for manual/managed setups.
 
@@ -28,6 +29,45 @@ metadata:
 - When the store needs periodic maintenance (deduplication, expiry, pruning).
 
 ## Install
+
+### One-shot installer (recommended)
+
+```bash
+git clone https://github.com/alertxsto/luminary-memory.git
+cd luminary-memory
+bash hermes/install.sh
+# then restart your Hermes gateway:
+bash ~/.hermes/scripts/restart-bots.sh
+```
+
+Installs the provider (`memory.provider: luminary`), the `luminary-activity`
+chat hook, and this skill in one go. Options: `--hook`, `--skill`,
+`--no-hook --no-skill` (see `hermes/README.md`).
+
+### Manual install
+
+```bash
+# 1. package (provides the provider + entry point)
+pip install "luminary-memory[hermes]>=0.2.1"
+
+# 2. enable the provider in Hermes config (~/.hermes/config.yaml)
+#    under memory: add →  provider: luminary
+
+# 3. activity hook (optional — posts 🌙 status lines to chat)
+mkdir -p ~/.hermes/hooks/luminary-activity
+cp hermes/hooks/luminary-activity/handler.py ~/.hermes/hooks/luminary-activity/
+cp hermes/hooks/luminary-activity/HOOK.yaml ~/.hermes/hooks/luminary-activity/
+#    optional: echo "LUMINARY_HOOK_CHAT_ID=<chat id>" >> ~/.hermes/.env
+
+# 4. this skill
+mkdir -p ~/.hermes/skills/luminary-memory
+cp hermes/SKILL.md ~/.hermes/skills/luminary-memory/SKILL.md
+
+# 5. restart the gateway
+bash ~/.hermes/scripts/restart-bots.sh
+```
+
+### Library-only (no Hermes provider)
 
 ```bash
 pip install luminary-memory

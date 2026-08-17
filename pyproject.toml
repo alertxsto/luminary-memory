@@ -36,6 +36,9 @@ Documentation = "https://github.com/alertxsto/luminary-memory#readme"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.4", "pdoc>=14", "build>=1.0"]
+# Hermes Agent memory provider (entry point ships with the base install;
+# this extra exists so `pip install luminary-memory[hermes]` is explicit).
+hermes = []
 
 [project.scripts]
 luminary-memory = "luminary_memory.cli:app"
