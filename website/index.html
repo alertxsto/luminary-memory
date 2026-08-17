@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>luminary-memory — what your agent remembers</title>
+  <meta name="description" content="A self-hosted memory layer for AI agents. Four retrieval strategies, one fused recall. Runs entirely on your machine.">
+  <meta property="og:title" content="luminary-memory — what your agent remembers">
+  <meta property="og:description" content="Self-hosted memory for AI agents. Four strategies, one fused recall. No cloud, no GPU, no token bloat.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/luminary.css">
+</head>
+<body>
+
+<!-- Moon glow backdrop -->
+<div class="moon-glow" aria-hidden="true"></div>
+
+<!-- ============ NAV ============ -->
+<header class="site-nav">
+  <div class="nav-wrap">
+    <a href="#" class="brand">
+      <span class="brand-glyph" aria-hidden="true">☾</span>
+      <span class="brand-name">luminary-memory</span>
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#recall">recall</a>
+      <a href="#quickstart">quickstart</a>
+      <a href="#architecture">architecture</a>
+      <a href="https://github.com/alertxsto/luminary-memory" target="_blank" rel="noopener" class="nav-github">github ↗</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ============ HERO ============ -->
+<section class="hero" id="top">
+  <div class="hero-inner">
+    <p class="eyebrow"><span class="eyebrow-dot"></span> v0.1.0 — self-hosted memory layer</p>
+
+    <h1 class="hero-title">
+      What your agent<br>
+      <em>remembers</em><br>
+      is what it becomes.
+    </h1>
+
+    <p class="hero-sub">
+      Luminary-memory gives AI agents a place to keep what matters —
+      across sessions, across tools, on your own infrastructure.
+      Four retrieval strategies, fused into one answer.
+    </p>
+
+    <div class="hero-actions">
+      <a href="#quickstart" class="btn-primary">get started</a>
+      <span class="install-cmd"><code>pip install luminary-memory</code><span class="install-copy" role="button" tabindex="0" data-copy="pip install luminary-memory">⧉</span></span>
+    </div>
+  </div>
+
+  <!-- terminal -->
+  <div class="term" aria-label="code example">
+    <div class="term-head">
+      <span class="term-title">recall.py</span>
+      <span class="term-dots"><i></i><i></i><i></i></span>
+    </div>
+    <pre class="term-body"><code><span class="c-kw">from</span> <span class="c-mod">luminary_memory</span> <span class="c-kw">import</span> <span class="c-cls">MemoryClient</span>
+
+<span class="c-var">client</span> = <span class="c-cls">MemoryClient</span>(<span class="c-arg">db_path</span>=<span class="c-str">"memory.db"</span>)
+
+<span class="c-com"># a fact, stored once</span>
+<span class="c-var">client</span>.<span class="c-fn">ingest</span>(<span class="c-str">"the deploy target is the staging cluster"</span>,
+              <span class="c-arg">tags</span>=[<span class="c-str">"deploy"</span>, <span class="c-str">"infra"</span>])
+
+<span class="c-com"># recalled later — semantic, keyword, temporal, graph — one answer</span>
+<span class="c-var">result</span> = <span class="c-var">client</span>.<span class="c-fn">recall</span>(<span class="c-str">"where do we deploy?"</span>)
+<span class="c-kw">for</span> <span class="c-var">m</span>, <span class="c-var">s</span> <span class="c-kw">in</span> <span class="c-fn">zip</span>(<span class="c-var">result</span>.<span class="c-var">memories</span>, <span class="c-var">result</span>.<span class="c-var">scores</span>):
+    <span class="c-fn">print</span>(<span class="c-str">f"</span><span class="c-var">{s</span>:<span class="c-str">.3f}</span><span class="c-str">  </span><span class="c-var">{m</span>.<span class="c-var">content</span><span class="c-str">}"</span>)
+
+<span class="c-com"># → 0.942  the deploy target is the staging cluster</span></code></pre>
+  </div>
+</section>
+
+<!-- ============ RECALL (why) ============ -->
+<section class="why" id="recall">
+  <div class="why-head">
+    <p class="kicker">the problem</p>
+    <h2>Every session, your agent<br>starts over.</h2>
+  </div>
+
+  <div class="why-body">
+    <p class="lead">
+      A stateless agent re-learns the same context, pays the same tokens,
+      and makes the same mistakes. Memory is not a feature —
+      it is the difference between a tool and a colleague.
+    </p>
+
+    <dl class="recall-grid">
+      <div class="recall-item">
+        <dt><span class="recall-num">01</span> semantic</dt>
+        <dd>Embedding similarity — the meaning behind the words, understood locally on CPU.</dd>
+      </div>
+      <div class="recall-item">
+        <dt><span class="recall-num">02</span> keyword</dt>
+        <dd>FTS5 term matching — exact names, APIs, and identifiers never slip away.</dd>
+      </div>
+      <div class="recall-item">
+        <dt><span class="recall-num">03</span> temporal</dt>
+        <dd>A decay curve over time and access — recent, frequent facts rise first.</dd>
+      </div>
+      <div class="recall-item">
+        <dt><span class="recall-num">04</span> graph</dt>
+        <dd>Entity co-occurrence — the connections between facts, not just the facts.</dd>
+      </div>
+    </dl>
+
+    <div class="fusion-note">
+      <p>Four strategies run in parallel. Reciprocal Rank Fusion folds them into a single ranked answer — then dedup and a token budget keep it lean.</p>
+      <p class="fusion-meta">RRF k=60 · Jaccard 0.85 · token budget 4096</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ QUICKSTART ============ -->
+<section class="quickstart" id="quickstart">
+  <div class="qs-head">
+    <p class="kicker">quickstart</p>
+    <h2>Running in four steps.</h2>
+  </div>
+
+  <ol class="qs-steps">
+    <li class="qs-step">
+      <span class="qs-num">1</span>
+      <div class="qs-content">
+        <h3>Install</h3>
+        <p>One package, ONNX CPU embeddings bundled. No GPU, no cloud account.</p>
+        <code class="qs-code" data-copy="pip install luminary-memory">pip install luminary-memory <span class="qs-copy">⧉</span></code>
+      </div>
+    </li>
+    <li class="qs-step">
+      <span class="qs-num">2</span>
+      <div class="qs-content">
+        <h3>Store</h3>
+        <p>Anything durable — preferences, environment details, decisions.</p>
+        <code class="qs-code" data-copy='client.ingest("the deploy target is staging", tags=["deploy"])'>client.ingest("the deploy target is staging", tags=["deploy"]) <span class="qs-copy">⧉</span></code>
+      </div>
+    </li>
+    <li class="qs-step">
+      <span class="qs-num">3</span>
+      <div class="qs-content">
+        <h3>Recall</h3>
+        <p>Ask naturally. The fused pipeline returns what matters.</p>
+        <code class="qs-code" data-copy='luminary-memory recall "where do we deploy?" --json'>luminary-memory recall "where do we deploy?" --json <span class="qs-copy">⧉</span></code>
+      </div>
+    </li>
+    <li class="qs-step">
+      <span class="qs-num">4</span>
+      <div class="qs-content">
+        <h3>Maintain</h3>
+        <p>A lifecycle pass — TTL expiry, consolidation, pruning. The store keeps itself.</p>
+        <code class="qs-code" data-copy="luminary-memory lifecycle">luminary-memory lifecycle <span class="qs-copy">⧉</span></code>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<!-- ============ ARCHITECTURE ============ -->
+<section class="arch" id="architecture">
+  <div class="arch-head">
+    <p class="kicker">architecture</p>
+    <h2>Four phases. One loop.</h2>
+  </div>
+
+  <div class="arch-flow">
+    <div class="arch-phase">
+      <span class="arch-idx">A</span>
+      <h3>Ingest</h3>
+      <p>whitelist filter → optional enrichment → embed</p>
+    </div>
+    <div class="arch-arrow" aria-hidden="true">→</div>
+    <div class="arch-phase">
+      <span class="arch-idx">B</span>
+      <h3>Store</h3>
+      <p>SQLite + FTS5, or pgvector when you scale</p>
+    </div>
+    <div class="arch-arrow" aria-hidden="true">→</div>
+    <div class="arch-phase">
+      <span class="arch-idx">C</span>
+      <h3>Recall</h3>
+      <p>4 strategies → RRF fusion → dedup → budget</p>
+    </div>
+    <div class="arch-arrow" aria-hidden="true">→</div>
+    <div class="arch-phase">
+      <span class="arch-idx">D</span>
+      <h3>Maintain</h3>
+      <p>TTL cleanup · consolidation · pruning</p>
+    </div>
+  </div>
+
+  <div class="arch-foot">
+    <span>pluggable backend — switch without touching your code</span>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer class="site-footer">
+  <div class="footer-wrap">
+    <div class="footer-brand">
+      <span class="brand-glyph" aria-hidden="true">☾</span>
+      <span>luminary-memory</span>
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/alertxsto/luminary-memory" target="_blank" rel="noopener">github</a>
+      <a href="https://pypi.org/project/luminary-memory" target="_blank" rel="noopener">pypi</a>
+      <a href="https://github.com/alertxsto/luminary-memory/blob/main/LICENSE" target="_blank" rel="noopener">license</a>
+    </div>
+    <p class="footer-note">apache-2.0 · 2026 · dwiky candra</p>
+  </div>
+</footer>
+
+<script src="js/luminary.js"></script>
+</body>
+</html>
