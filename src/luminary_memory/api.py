@@ -254,6 +254,59 @@ class MemoryClient:
 
         return run_lifecycle(self.backend, self.settings)
 
+    def run_maintenance(self, review_all: bool = True) -> dict:
+        """LLM-driven store maintenance: review memories and prune/update stale facts.
+
+        Sends the current store (or a recent slice when ``review_all`` is
+        false) to the configured LLM enricher, which decides per memory:
+        ``keep`` (unchanged), ``update`` (new content), or ``delete``
+        (obsolete/contradicted/duplicate). Applies the decisions and returns
+        a summary dict.
+
+        Requires ``ingest_llm`` (an LLM enricher); no-ops otherwise.
+        """
+        from luminary_memory.ingest.llm import _parse_enrichment_payload
+
+        if self.enricher is None or isinstance(self.enricher, NoopEnricher):
+            return {"skipped": "no LLM enricher configured (set ingest_llm)"}
+
+        memories = self.list(limit=500)
+        if not memories:
+            return {"reviewed": 0, "deleted": 0, "updated": 0}
+
+        raw = self.enricher.review_memories(memories)
+        data = _parse_enrichment_payload(raw)
+        actions = data.get("actions") or []
+        if not isinstance(actions, list):
+            return {"reviewed": len(memories), "deleted": 0, "updated": 0, "error": "bad LLM response"}
+
+        deleted = updated = 0
+        by_id = {m.id: m for m in memories}
+        for act in actions:
+            if not isinstance(act, dict):
+                continue
+            mid = act.get("id")
+            if mid not in by_id:
+                continue
+            action = act.get("action")
+            if action == "delete":
+                try:
+                    self.delete(int(mid))
+                    deleted += 1
+                except Exception:  # noqa: BLE001, S110
+                    pass
+            elif action == "update":
+                new_content = act.get("content")
+                if isinstance(new_content, str) and new_content.strip():
+                    try:
+                        m = by_id[mid]
+                        m.content = new_content.strip()
+                        self.update(m)
+                        updated += 1
+                    except Exception:  # noqa: BLE001, S110
+                        pass
+        return {"reviewed": len(memories), "deleted": deleted, "updated": updated}
+
     def export(self, path, include_embeddings: bool = True) -> dict:
         """Export all memories to *path* (versioned JSON)."""
         from luminary_memory.export import export_memories

@@ -393,10 +393,16 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._turn_counter = 0
 
     def on_session_end(self, messages) -> None:
-        """Flush buffered turns under the current session lineage."""
+        """Flush buffered turns; optionally run LLM store maintenance."""
         if not self._client or self._shutting_down.is_set():
             return
         self._flush_session_turns()
+        if self._config.get("auto_maintain", False) and self._config.get("ingest_llm", False):
+            try:
+                result = self._client.run_maintenance()
+                self._log.info("maintenance %s", result)
+            except Exception:
+                logging.getLogger(__name__).exception("LLM maintenance failed")
 
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
         """Flush the old session, then rebind to the new one."""

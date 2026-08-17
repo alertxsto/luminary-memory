@@ -33,6 +33,7 @@ _DEFAULTS: dict = {
     "recall_indicator": True,
     "retain_indicator": True,
     "extract_on_session_end": False,
+    "auto_maintain": False,  # LLM store review on session end (needs ingest_llm)
 }
 
 
