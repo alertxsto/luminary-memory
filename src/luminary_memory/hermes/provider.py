@@ -14,6 +14,7 @@ import logging
 import os
 import queue
 import threading
+import time
 
 from agent.memory_provider import MemoryProvider  # present only in hermes runtime
 
@@ -30,11 +31,31 @@ _RECALL_HEADER = "# Luminary Memory (persistent cross-session context)"
 _SENTINEL = None  # writer-queue shutdown marker
 
 
+def _setup_logger(hermes_home: str) -> logging.Logger:
+    """Return a logger that writes to $HERMES_HOME/luminary/luminary.log.
+
+    The log records every recall, retain, and error so users can see what
+    the provider is doing (transparency log).
+    """
+    logger = logging.getLogger("luminary_memory.hermes")
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        log_dir = os.path.join(hermes_home, "luminary")
+        os.makedirs(log_dir, exist_ok=True)
+        fh = logging.FileHandler(os.path.join(log_dir, "luminary.log"), encoding="utf-8")
+        fh.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+        )
+        logger.addHandler(fh)
+    return logger
+
+
 class LuminaryMemoryProvider(MemoryProvider):
     """Hermes memory provider backed by the luminary-memory store."""
 
     def __init__(self) -> None:
         self._hermes_home: str | None = None
+        self._log = logging.getLogger("luminary_memory.hermes")
         self._config: dict = dict(_DEFAULTS)
         self._client: MemoryClient | None = None
         self._session_id: str | None = None
@@ -107,6 +128,11 @@ class LuminaryMemoryProvider(MemoryProvider):
             "HERMES_HOME", os.path.expanduser("~/.hermes")
         )
         self._hermes_home = str(hermes_home)
+        self._log = _setup_logger(self._hermes_home)
+        self._log.info(
+            "initialize session=%s platform=%s agent=%s",
+            session_id, kwargs.get("platform", ""), kwargs.get("agent_identity", ""),
+        )
         self._config = load_config(self._hermes_home)
         self._session_id = session_id
         self._platform = kwargs.get("platform", "")
@@ -451,6 +477,7 @@ class LuminaryMemoryProvider(MemoryProvider):
         try:
             meta = {k: v for k, v in (metadata or {}).items() if v is not None}
             client.ingest(content, tags=tags, source=source, metadata=meta)
+            self._log.info("retain stored len=%d tags=%s", len(content), tags)
         except Exception:  # writer must never die
             logging.getLogger(__name__).exception("retain ingest failed")
 
@@ -530,6 +557,7 @@ class LuminaryMemoryProvider(MemoryProvider):
 
         def _worker() -> None:
             try:
+                _t0 = time.time()
                 client = self._writer_client()
                 if client is None:
                     return
@@ -541,6 +569,11 @@ class LuminaryMemoryProvider(MemoryProvider):
                 text = self._format_recall_block(result.memories, result.scores)
                 with self._prefetch_lock:
                     self._prefetch_cache = (text, len(result.memories))
+                self._log.info(
+                    "recall query=%r limit=%s -> %d memories (%.0fms)",
+                    query, self._config.get("recall_limit", 10),
+                    len(result.memories), (time.time() - _t0) * 1000,
+                )
             except Exception:
                 logging.getLogger(__name__).exception("prefetch recall failed")
 

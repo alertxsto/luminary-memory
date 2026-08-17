@@ -64,6 +64,9 @@ cp hermes/SKILL.md ~/.hermes/skills/luminary-memory/SKILL.md
   agent UI.
 - 🔔 **Chat activity hook** — optional mirror of store activity to your chat.
 - 🧠 **Skill** — agent-side guidance for store usage.
+- 📜 **Transparency log** — `~/.hermes/luminary/luminary.log` records every
+  recall, retain, and error (initialize/recall/retain lines), so you can see
+  exactly what the provider is doing and whether anything failed.
 
 ## Requirements
 
