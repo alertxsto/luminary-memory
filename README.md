@@ -1,89 +1,39 @@
-<div align="center">
-
 # 🌙 luminary-memory
 
 **A lightweight, self-hosted memory layer for AI agents.**
 
-[![PyPI version](https://img.shields.io/pypi/v/luminary-memory?color=8ab4e8&label=PyPI&logo=pypi&logoColor=white)](https://pypi.org/project/luminary-memory)
-[![Python](https://img.shields.io/pypi/pyversions/luminary-memory?color=8ab4e8&logo=python&logoColor=white)](https://pypi.org/project/luminary-memory)
-[![License](https://img.shields.io/github/license/alertxsto/luminary-memory?color=8ab4e8)](https://github.com/alertxsto/luminary-memory/blob/main/LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/alertxsto/luminary-memory/ci.yml?color=8ab4e8&label=CI&logo=github)](https://github.com/alertxsto/luminary-memory/actions)
+[![PyPI version](https://img.shields.io/pypi/v/luminary-memory?color=8ab4e8&label=PyPI)](https://pypi.org/project/luminary-memory)
+[![Python](https://img.shields.io/pypi/pyversions/luminary-memory?color=8ab4e8)](https://pypi.org/project/luminary-memory)
+[![License](https://img.shields.io/github/license/alertxsto/luminary-memory?color=8ab4e8)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/alertxsto/luminary-memory/ci.yml?color=8ab4e8&label=CI)](https://github.com/alertxsto/luminary-memory/actions)
 [![Tests](https://img.shields.io/badge/tests-168%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
 [![Coverage](https://img.shields.io/badge/coverage-85%25-8ab4e8)](https://github.com/alertxsto/luminary-memory)
-[![Stars](https://img.shields.io/github/stars/alertxsto/luminary-memory?color=8ab4e8&logo=github)](https://github.com/alertxsto/luminary-memory)
+[![Stars](https://img.shields.io/github/stars/alertxsto/luminary-memory?color=8ab4e8)](https://github.com/alertxsto/luminary-memory)
 
 **Self-hosted · Private · Budget-aware · Self-maintaining**
 
-</div>
-
 ---
 
-## Why luminary-memory
+## What your agent remembers is what it becomes.
 
 Agents are only as good as what they remember. A stateless agent re-learns the same context every session — paying the same tokens, making the same mistakes. luminary-memory closes that gap with a local memory store that persists between runs, retrieves the right context on demand, and keeps itself tidy over time.
 
-**What your agent remembers is what it becomes.**
+**Four retrieval strategies. One fused answer. Zero cloud.**
 
-### Value proposition
+- **Semantic** — ONNX embeddings (384-dim, CPU, no GPU needed)
+- **Keyword** — FTS5 BM25 (SQLite, zero config)
+- **Temporal** — recency decay × access count
+- **Graph** — entity co-occurrence with automatic curation
 
-- **Self-hosted and private** — all data stays on your machine. No cloud dependency, no API keys to leak, no per-token memory cost.
-- **Four retrieval strategies in one recall** — semantic (embeddings), keyword (FTS5), temporal (recency × access), and graph (entity co-occurrence) run in parallel and fuse into a single ranked result via Reciprocal Rank Fusion.
-- **Zero hard dependencies** — the default backend is SQLite + FTS5 (standard library). Embeddings run locally on CPU via ONNX. Ingesting and recalling memories in minutes.
-- **Budget-aware by design** — results are deduplicated (Jaccard) and truncated to a configurable token budget, so memory injection never blows up your agent's context window.
-- **Self-maintaining** — a built-in lifecycle handles TTL expiry, near-duplicate consolidation, and low-value pruning, so the store stays lean without manual cleanup.
-- **Scales when you do** — a pluggable backend lets you move from SQLite to pgvector without changing your code.
-
----
-
-## Hermes Agent — first-class memory provider
-
-luminary-memory ships a native **Hermes Agent memory provider** (`luminary-memory[hermes]`): drop-in, auto-recall every turn, auto-save every session — with **zero LLM tokens per turn**.
-
-```bash
-pip install "luminary-memory[hermes]"
-```
-
-Enable it in your Hermes `config.yaml`:
-
-```yaml
-memory:
-  provider: luminary
-```
-
-That's it. From the next session:
-
-- 🌙 **Auto-recall** — relevant memories are retrieved in the background and injected into agent context every turn
-- 💾 **Auto-save** — completed turns are persisted automatically; session boundaries flush buffered turns
-- 🛠️ **Explicit tools** — the model can call `luminary_recall` / `luminary_ingest` / `luminary_list` on demand
-- 📋 **Deterministic indicator** — a `🌙 Luminary — recalled N memories` status line surfaces memory use
-
-Registers via the standard `hermes_agent.memory_providers` entry point — no Hermes source changes, no cloud, no LLM API keys. See `docs/hermes-integration.md` for the full configuration table.
-
-**LLM memory curation (optional):** set `ingest_llm: true` in
-`~/.hermes/luminary/config.json` (plus `llm_base_url` / `llm_model` /
-`llm_api_key`) to have the provider evaluate every turn before saving —
-chit-chat and trivial turns are dropped, and kept turns are stored as concise
-factual summaries (e.g. `"Deploy target is the staging cluster."`) instead of
-raw `User: ... / Assistant: ...` transcripts. One small LLM call per retained
-turn; any OpenAI-compatible endpoint works.
-
-**LLM store maintenance (optional):** set `auto_maintain: true` in the same
-config file to have the provider review the store at every session end — the
-LLM keeps current facts, updates changed ones, and deletes stale, contradicted,
-or duplicate memories, so the store never accumulates outdated or redundant
-facts.
+Strategies run in parallel and fuse via **Reciprocal Rank Fusion (k=60)** → **Jaccard deduplication (0.85)** → **token budget (4096)**.
 
 ---
 
 ## Quickstart
 
-### Install
-
 ```bash
 pip install luminary-memory
 ```
-
-### Python API
 
 ```python
 from luminary_memory import MemoryClient
@@ -98,19 +48,12 @@ result = client.recall("where do we deploy?")
 for memory, score in zip(result.memories, result.scores):
     print(f"{score:.3f}  {memory.content}")
 # → 0.942  The deploy target is the staging cluster
-
-# maintain the store (TTL cleanup + consolidation + pruning)
-client.run_lifecycle()
-
-client.close()
 ```
 
-### CLI
-
 ```bash
-luminary-memory add "The deploy target is the staging cluster" --tags deploy
+# CLI
+luminary-memory add "deploy target is staging" --tags deploy
 luminary-memory recall "where do we deploy?" --json
-luminary-memory search "postgresql"
 luminary-memory list
 luminary-memory lifecycle
 luminary-memory stats
@@ -118,56 +61,36 @@ luminary-memory stats
 
 ---
 
-## How recall works
+## Hermes Agent — first-class memory provider
 
-Four retrieval strategies run in parallel, then fuse into one ranked result:
+Drop-in. Install the provider with `pip install "luminary-memory[hermes]"`, then add
+`memory.provider: luminary` to your Hermes config. That's it.
 
-| Strategy | What it finds | Backend |
-|----------|---------------|---------|
-| **Semantic** | Meaning, paraphrase, synonyms | ONNX embeddings (384-dim, CPU) |
-| **Keyword** | Exact names, APIs, identifiers | FTS5 BM25 (SQLite) / ILIKE (pgvector) |
-| **Temporal** | Recent, frequently-accessed facts | Decay curve × access count |
-| **Graph** | Entity co-occurrence, indirect links | `entities` / `relations` tables |
+From the next session: **auto-recall** injects relevant memories every turn,
+**auto-save** persists completed turns, and the model can call
+`luminary_recall` / `luminary_ingest` / `luminary_list` on demand.
 
-**Fusion pipeline:** `4 strategies → RRF fusion (k=60) → Jaccard dedup (0.85) → token budget (4096)`
+Two optional LLM-powered features keep the store sharp:
 
----
+- **`ingest_llm`** — evaluates every turn before saving: drops chit-chat, stores factual summaries instead of raw transcripts.
+- **`auto_maintain`** — reviews the store at session end: keeps current facts, updates changed ones, deletes stale or duplicate ones.
 
-## Backends
-
-| | SQLite + FTS5 (default) | PostgreSQL + pgvector |
-|---|---|---|
-| **Dependencies** | stdlib + FTS5 | PostgreSQL + pgvector extension |
-| **Vector search** | In-process cosine | HNSW-ready (`<=>` operator) |
-| **Best for** | Single-user, edge, <100k memories | Scale, concurrent access |
-| **Setup** | Zero-config | Running Postgres + `LUMINARY_PG_DSN` |
-
-Switch backends with one setting:
-
-```python
-from luminary_memory import MemoryClient
-from luminary_memory.config import Settings
-
-client = MemoryClient(settings=Settings(
-    backend="pgvector",
-    pg_dsn="postgresql://user:pass@localhost/memdb",
-))
-```
+18 settings are exposed in the [Hermes dashboard](https://alertxsto.github.io/luminary-memory) for zero-hassle tuning. See
+[hermes/README.md](hermes/README.md) for the one-shot installer and full configuration.
 
 ---
 
 ## Configuration
 
-Every setting can be set via a `LUMINARY_*` environment variable or passed as a `Settings` object.
+Every setting has a `LUMINARY_*` env var or a `Settings` object.
 
 | Setting | Env var | Default |
 |---------|---------|---------|
 | `backend` | `LUMINARY_BACKEND` | `sqlite` |
 | `db_path` | `LUMINARY_DB_PATH` | `luminary_memory.db` |
-| `pg_dsn` | `LUMINARY_PG_DSN` | `postgresql://localhost/luminary_memory` |
+| `pg_dsn` | `LUMINARY_PG_DSN` | — (pgvector only) |
 | `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` |
 | `embedding_dim` | `LUMINARY_EMBEDDING_DIM` | `384` |
-| `ingest_whitelist` | `LUMINARY_INGEST_WHITELIST` | `[]` (regex patterns) |
 | `ingest_llm` | `LUMINARY_INGEST_LLM` | `false` |
 | `rrf_k` | `LUMINARY_RRF_K` | `60` |
 | `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | `0.85` |
@@ -176,65 +99,41 @@ Every setting can be set via a `LUMINARY_*` environment variable or passed as a 
 | `prune_min_importance` | `LUMINARY_PRUNE_MIN_IMPORTANCE` | `0.2` |
 | `consolidate_jaccard_threshold` | `LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD` | `0.9` |
 
----
-
-## Use cases
-
-- **AI coding agents** — retain architecture decisions, API choices, and error fixes across sessions.
-- **Chatbots & assistants** — remember user preferences, history, and conversation context.
-- **Automation pipelines** — persist execution state, task outcomes, and learned parameters.
-- **Personal knowledge & local RAG** — a private second brain with zero cloud involvement.
+See [hermes/SKILL.md](hermes/SKILL.md) for the full provider config table (18 settings).
 
 ---
 
 ## Architecture
 
 ```
-ingest(text) ──► whitelist filter ──► (LLM enrich, optional) ──► embed ──► backend
-                                                                          │
-recall(query) ──► 4 strategies (semantic·keyword·temporal·graph)
+ingest(text) ──► whitelist filter ──► (LLM curation) ──► embed ──► SQLite / pgvector
+
+recall(query) ──► semantic │ keyword │ temporal │ graph
                ──► RRF fusion ──► Jaccard dedup ──► token budget ──► ranked results
-                                                                          │
+
 lifecycle() ──► cleanup (TTL) ──► consolidate (near-dupes) ──► prune (low-value)
+
+maintenance() ──► LLM reviews store ──► keep │ update │ delete stale facts
 ```
 
----
-
-## Hermes integration
-
-A ready-to-use skill lives in [`hermes/SKILL.md`](hermes/SKILL.md): install it, then the agent can ingest durable facts on tool calls, recall context into its system prompt, and schedule lifecycle maintenance via cron. See [docs/hermes-integration.md](docs/hermes-integration.md).
-
----
-
-## Development
-
-```bash
-git clone https://github.com/alertxsto/luminary-memory.git
-cd luminary-memory
-pip install -e ".[dev]"
-
-python -m pytest          # run tests
-python -m ruff check src tests   # lint
-```
-
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Built-in lifecycle keeps the store lean. LLM maintenance (optional) keeps it accurate.
 
 ---
 
 ## Documentation
 
-- [Quickstart](docs/quickstart.md) — install and first use
-- [Architecture](docs/architecture.md) — pipelines and data flow
-- [Python API](docs/api.md) — `MemoryClient` reference
-- [CLI](docs/cli.md) — all subcommands and flags
-- [Recall](docs/recall.md) — how the four strategies + fusion work
-- [Lifecycle](docs/lifecycle.md) — cleanup, consolidation, pruning
-- [Backends](docs/backends.md) — SQLite vs pgvector
-- [Hermes integration](docs/hermes-integration.md) — use with Hermes Agent
-
-## Roadmap
-
-See [ROADMAP.md](ROADMAP.md) for the full product roadmap — v0.2.2 (LLM memory curation & maintenance), v0.3.0 (intelligence), and v1.0.0 (stable).
+| Section | |
+|---------|-----|
+| [Quickstart](docs/quickstart.md) | Install and first use |
+| [Architecture](docs/architecture.md) | Pipelines and data flow |
+| [Python API](docs/api.md) | `MemoryClient` reference |
+| [CLI](docs/cli.md) | All subcommands |
+| [Recall](docs/recall.md) | Four strategies + fusion |
+| [Lifecycle](docs/lifecycle.md) | Cleanup, consolidation, pruning, LLM maintenance |
+| [Backends](docs/backends.md) | SQLite vs pgvector |
+| [Hermes integration](docs/hermes-integration.md) | Provider, config, installer |
+| [Roadmap](ROADMAP.md) | v0.2.3 → v1.0.0 |
+| [Benchmarks](benchmarks/RESULTS.md) | 230 ms recall @ 5k, 0 LLM tokens |
 
 ---
 
