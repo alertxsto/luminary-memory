@@ -1,5 +1,7 @@
 import sqlite3
-from luminary_memory.schema import SCHEMA_SQL, init_schema
+
+from luminary_memory.schema import init_schema
+
 
 def test_init_schema_creates_tables(tmp_path):
     db = tmp_path / "t.db"

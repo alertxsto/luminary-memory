@@ -1,6 +1,6 @@
-import sqlite3
 from luminary_memory.backends.sqlite import SQLiteBackend
 from luminary_memory.types import Memory
+
 
 def _mk(tmp_path):
     return SQLiteBackend(str(tmp_path / "t.db"))
