@@ -43,6 +43,10 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._shutting_down = threading.Event()
         self._retain_queue: queue.Queue = queue.Queue()
         self._writer_thread: threading.Thread | None = None
+        self._session_turns: list[str] = []
+        self._turn_counter: int = 0
+        self._thread_client: MemoryClient | None = None
+        self._thread_client_owner: str | None = None
 
     # ------------------------------------------------------------------ #
     # Identity & availability
@@ -154,6 +158,12 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._retain_queue.put(_SENTINEL)
         if self._writer_thread is not None:
             self._writer_thread.join(timeout=5.0)
+        if self._thread_client is not None:
+            try:
+                self._thread_client.close()
+            except Exception:
+                logging.getLogger(__name__).exception("thread client close failed")
+            self._thread_client = None
         if self._client is not None:
             self._client.close()
             self._client = None
@@ -285,6 +295,106 @@ class LuminaryMemoryProvider(MemoryProvider):
             raise RuntimeError("provider is not initialized; cannot save config")
         save_config(values, self._hermes_home)
         self._config.update({k: v for k, v in values.items() if k in _DEFAULTS})
+
+    # ------------------------------------------------------------------ #
+    # Auto-save
+    # ------------------------------------------------------------------ #
+
+    def sync_turn(self, user: str, assistant: str, **kwargs) -> None:
+        """Persist a completed turn to the store (buffered, non-blocking).
+
+        Turns accumulate in ``_session_turns``; every ``retain_every_n_turns``
+        turns the batch is enqueued on the single writer thread.
+        """
+        if not self._client or self._shutting_down.is_set():
+            return
+        if not self._config.get("auto_retain", True):
+            return
+
+        user_prefix = self._config.get("retain_user_prefix", "User")
+        assistant_prefix = self._config.get("retain_assistant_prefix", "Assistant")
+        content = f"{user_prefix}: {user}\n{assistant_prefix}: {assistant}"
+
+        self._session_turns.append(content)
+        self._turn_counter += 1
+
+        every_n = int(self._config.get("retain_every_n_turns", 1) or 1)
+        if self._turn_counter % every_n != 0:
+            return  # buffer only
+
+        batch = "\n".join(self._session_turns)
+        self._session_turns = []
+        self._turn_counter = 0
+
+        session_id = kwargs.get("session_id") or self._session_id
+        parent_id = kwargs.get("parent_session_id") or self._parent_session_id
+
+        tags = [f"session:{session_id}"] if session_id else []
+        if parent_id:
+            tags.append(f"parent:{parent_id}")
+        if self._platform:
+            tags.append(f"platform:{self._platform}")
+        if self._agent_identity:
+            tags.append(f"agent:{self._agent_identity}")
+
+        metadata = {
+            "turn_index": kwargs.get("turn_index"),
+            "message_count": kwargs.get("message_count"),
+            "session_id": session_id,
+            "platform": self._platform,
+            "agent_identity": self._agent_identity,
+        }
+
+        self._enqueue_retain(batch, tags, metadata)
+        self._emit_retain_indicator()
+
+    def _enqueue_retain(self, content: str, tags: list[str], metadata: dict) -> None:
+        self._retain_queue.put((self._do_retain, content, tags, metadata))
+
+    def _do_retain(self, content: str, tags: list[str], metadata: dict) -> None:
+        """Writer-thread task: ingest the buffered turn batch.
+
+        The client is created lazily on the writer thread so that SQLite
+        connections are used exclusively from the thread that created them.
+        """
+        client = self._writer_client()
+        if client is None:
+            return
+        try:
+            client.ingest(content, tags=tags, source="hermes")
+        except Exception:  # writer must never die
+            logging.getLogger(__name__).exception("retain ingest failed")
+
+    def _writer_client(self) -> MemoryClient | None:
+        """Return a client owned by the calling (writer) thread."""
+        thread_name = threading.current_thread().name
+        if self._thread_client is not None and self._thread_client_owner == thread_name:
+            return self._thread_client
+        if self._hermes_home:
+            db_path = self._resolve_db_path()
+            settings = Settings(
+                backend=self._config.get("backend", "sqlite"),
+                db_path=db_path,
+                token_budget=int(self._config.get("token_budget", 2048)),
+                ingest_llm=bool(self._config.get("ingest_llm", False)),
+            )
+            client = MemoryClient(settings=settings)
+            if getattr(client, "engine", None) is not None:
+                # Reuse the shared engine instance (single model load).
+                client.engine = self._client.engine if self._client else client.engine
+            self._thread_client = client
+            self._thread_client_owner = thread_name
+            return client
+        return None
+
+    def _emit_retain_indicator(self) -> None:
+        if not self._config.get("retain_indicator", True):
+            return
+        if self._status_callback:
+            try:
+                self._status_callback("🌙 Luminary — memory saved")
+            except Exception:
+                logging.getLogger(__name__).exception("status callback failed")
 
     # ------------------------------------------------------------------ #
     # System prompt
