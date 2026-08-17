@@ -67,14 +67,28 @@ def _recent_activity(seconds: int = 30) -> str | None:
             "FROM memories",
             (cutoff,),
         ).fetchone()
-        conn.close()
         n = int(row["n"] or 0)
         new_mem = bool(row["new_mem"])
         if n == 0:
+            conn.close()
             return None
         label = "stored" if new_mem else "recalled"
         noun = "memory" if n == 1 else "memories"
-        return f"🌙 Luminary — {n} {noun} {label}"
+        lines = [f"🌙 Luminary — {n} {noun} {label}"]
+        # Show the content of newly stored facts (transparency).
+        if new_mem:
+            new_rows = conn.execute(
+                "SELECT content FROM memories "
+                "WHERE strftime('%s', created_at) > ? "
+                "ORDER BY id DESC LIMIT 3",
+                (cutoff,),
+            ).fetchall()
+            for r in new_rows:
+                content = str(r["content"] or "").replace("\n", " ")[:90]
+                if content:
+                    lines.append(f"  • {content}")
+        conn.close()
+        return "\n".join(lines)
     except Exception:
         logging.exception("activity read failed")
         return None
