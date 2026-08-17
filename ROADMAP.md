@@ -116,9 +116,22 @@ Post-MVP audit hardening.
 - [ ] API freeze (semver 1.0 contract)
 - [ ] Async API (`async def`) for agent loops
 - [ ] Web dashboard (browse/query memories via UI)
-- [ ] Official integrations: Hermes, Claude Code, Codex, OpenCode
 - [ ] Plugin system for custom retrieval strategies
 - [ ] Full benchmark report published
+
+---
+
+### v0.4.0 — Hermes Memory Provider (pulled forward from v1.0.0)
+
+**Goal:** Luminary becomes a first-class Hermes memory provider — auto-recall every turn, auto-save every session, matching (and beating) Hindsight's integration with a fraction of the resources.
+
+- [ ] Implement `MemoryProvider` ABC as a Hermes plugin (`plugins/memory/luminary/`)
+- [ ] `prefetch()` / `queue_prefetch()` — auto-recall into agent context each turn
+- [ ] `on_session_end()` — auto-save conversation turns
+- [ ] `get_tool_schemas()` — expose `luminary_recall` / `luminary_ingest` tools
+- [ ] `system_prompt_block()` — provider context injection
+- [ ] Register provider: `memory.provider = luminary`
+- [ ] Benchmark vs Hindsight: resource usage, recall latency, recall quality
 
 ---
 
