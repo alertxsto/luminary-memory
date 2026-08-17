@@ -30,9 +30,9 @@ jobs:
           python -m build
       - name: Build Hermes skill artifact
         run: |
-          mkdir -p dist
-          zip -j dist/luminary-memory-skill.zip hermes/SKILL.md hermes/README.md
-          ls -lh dist/luminary-memory-skill.zip
+          mkdir -p skill_asset
+          zip -j skill_asset/luminary-memory-skill.zip hermes/SKILL.md hermes/README.md
+          ls -lh skill_asset/luminary-memory-skill.zip
       - name: Publish to PyPI (trusted publishing / OIDC)
         uses: pypa/gh-action-pypi-publish@release/v1
         # Requires one-time setup on PyPI: configure this repo as a trusted
@@ -41,5 +41,5 @@ jobs:
       - name: Attach skill asset to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/luminary-memory-skill.zip
+          files: skill_asset/luminary-memory-skill.zip
           generate_release_notes: true
