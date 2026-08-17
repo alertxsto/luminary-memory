@@ -94,8 +94,8 @@ def _recent_activity(seconds: int = 30) -> str | None:
         return None
 
 
-def handler(event_type: str, context: dict) -> None:
-    """Hook entry point: surface luminary activity on agent:start/end."""
+def handle(event_type: str, context: dict) -> None:
+    """Hook entry point: surface luminary activity on agent:end."""
     # Only surface on agent:end (after work), cooldown-ish: skip if store idle.
     if event_type != "agent:end":
         return
