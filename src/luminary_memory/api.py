@@ -75,6 +75,47 @@ class MemoryClient:
     def get(self, id: int) -> Memory | None:
         return self.backend.get(id)
 
+    def update(self, memory: Memory) -> None:
+        """Update an existing memory in place."""
+        self.backend.update(memory)
+
+    def delete(self, id: int) -> None:
+        """Delete a memory by id."""
+        self.backend.delete(id)
+
+    def list(self, limit: int = 100, offset: int = 0) -> list[Memory]:
+        """List memories, most recent first."""
+        all_mem = self.backend.all()
+        all_mem.sort(key=lambda m: m.created_at or "", reverse=True)
+        return all_mem[offset:offset + limit]
+
+    def search(self, query: str, limit: int = 10) -> list[tuple[Memory, float]]:
+        """Direct keyword (FTS) search without the full recall pipeline."""
+        return self.backend.keyword_search(query, limit=limit)
+
+    def stats(self) -> dict:
+        """Store statistics: count, oldest/newest, avg importance, tags."""
+        all_mem = self.backend.all()
+        n = len(all_mem)
+        if not n:
+            return {"count": 0}
+        import statistics
+
+        avg_importance = statistics.fmean([m.importance for m in all_mem])
+        tag_counts: dict[str, int] = {}
+        for m in all_mem:
+            for t in m.tags or []:
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+        top_tags = sorted(tag_counts.items(), key=lambda kv: -kv[1])[:10]
+        created = sorted(m.created_at or "" for m in all_mem)
+        return {
+            "count": n,
+            "oldest": created[0] if created else None,
+            "newest": created[-1] if created else None,
+            "avg_importance": round(avg_importance, 3),
+            "top_tags": dict(top_tags),
+        }
+
     def count(self) -> int:
         return self.backend.count()
 

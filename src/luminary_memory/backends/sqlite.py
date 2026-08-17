@@ -93,6 +93,8 @@ class SQLiteBackend(MemoryBackend):
         self.conn.commit()
 
     def delete(self, id: int) -> None:
+        # Relations reference memories via FK; delete them first (manual cascade).
+        self.conn.execute("DELETE FROM relations WHERE memory_id = ?", (id,))
         self.conn.execute("DELETE FROM memories WHERE id = ?", (id,))
         self.conn.commit()
 

@@ -164,6 +164,8 @@ class PGVectorBackend(MemoryBackend):
 
     def delete(self, id: int) -> None:
         cur = self.conn.cursor()
+        # Relations reference memories via FK; delete them first (manual cascade).
+        cur.execute("DELETE FROM relations WHERE memory_id = %s", (id,))
         cur.execute("DELETE FROM memories WHERE id = %s", (id,))
         self.conn.commit()
 
