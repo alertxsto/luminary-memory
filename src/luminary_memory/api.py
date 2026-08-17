@@ -51,7 +51,7 @@ class MemoryClient:
         self.enricher = enricher or NoopEnricher()
 
     def ingest(self, text: str, tags: list[str] | None = None,
-               source: str | None = None) -> int | None:
+               source: str | None = None, metadata: dict | None = None) -> int | None:
         if not self.whitelist.accepts(text):
             return None
 
@@ -62,15 +62,15 @@ class MemoryClient:
                 enriched.content, enriched.summary, enriched.entities, enriched.tags,
             )
 
-        metadata: dict = {}
+        meta: dict = dict(metadata or {})
         if summary:
-            metadata["summary"] = summary
+            meta["summary"] = summary
         if entities:
-            metadata["entities"] = entities
+            meta["entities"] = entities
 
         m = Memory(
             content=content,
-            metadata=metadata,
+            metadata=meta,
             source=source,
             tags=list(dict.fromkeys((tags or []) + extra_tags)),
             ttl_seconds=self.settings.ttl_default_seconds,

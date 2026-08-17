@@ -297,6 +297,35 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._config.update({k: v for k, v in values.items() if k in _DEFAULTS})
 
     # ------------------------------------------------------------------ #
+    # Hooks: builtin-mirror, delegation, pre-compress
+    # ------------------------------------------------------------------ #
+
+    def on_memory_write(self, action: str, target: str, content: str, metadata=None) -> None:
+        """Mirror built-in memory tool writes into the store (additive)."""
+        if not self._client or self._shutting_down.is_set():
+            return
+        tags = ["builtin", target] if target else ["builtin"]
+        if action == "replace":
+            tags.append("replace:builtin")
+        self._enqueue_retain(
+            content, tags, {"action": action, "target": target}, source="hermes-builtin"
+        )
+
+    def on_delegation(self, task, result, child_session_id: str = "") -> None:
+        """Persist a delegation observation."""
+        if not self._client or self._shutting_down.is_set():
+            return
+        tags = ["delegation"]
+        if child_session_id:
+            tags.append(f"child:{child_session_id}")
+        metadata = {"result": (result or "")[:500]}
+        self._enqueue_retain(f"delegated: {task}", tags, metadata)
+
+    def on_pre_compress(self, messages) -> str:
+        """Return an extraction block for pre-compression (v0.2.1 no-op)."""
+        return ""
+
+    # ------------------------------------------------------------------ #
     # Session boundaries
     # ------------------------------------------------------------------ #
 
@@ -399,10 +428,10 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._enqueue_retain(batch, tags, metadata)
         self._emit_retain_indicator()
 
-    def _enqueue_retain(self, content: str, tags: list[str], metadata: dict) -> None:
-        self._retain_queue.put((self._do_retain, content, tags, metadata))
+    def _enqueue_retain(self, content: str, tags: list[str], metadata: dict, source: str = "hermes") -> None:
+        self._retain_queue.put((self._do_retain, content, tags, metadata, source))
 
-    def _do_retain(self, content: str, tags: list[str], metadata: dict) -> None:
+    def _do_retain(self, content: str, tags: list[str], metadata: dict, source: str = "hermes") -> None:
         """Writer-thread task: ingest the buffered turn batch.
 
         The client is created lazily on the writer thread so that SQLite
@@ -412,7 +441,8 @@ class LuminaryMemoryProvider(MemoryProvider):
         if client is None:
             return
         try:
-            client.ingest(content, tags=tags, source="hermes")
+            meta = {k: v for k, v in (metadata or {}).items() if v is not None}
+            client.ingest(content, tags=tags, source=source, metadata=meta)
         except Exception:  # writer must never die
             logging.getLogger(__name__).exception("retain ingest failed")
 
