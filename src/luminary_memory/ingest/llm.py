@@ -11,6 +11,7 @@ class EnrichedContent:
     summary: str | None = None
     entities: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    worth_saving: bool = True
 
 
 class LLMEnricher:
@@ -86,9 +87,20 @@ class OpenAICompatibleEnricher(LLMEnricher):
                         {
                             "role": "system",
                             "content": (
-                                "You are a memory enrichment helper. Given the user text, "
-                                "return strict JSON with keys: summary (string), entities "
-                                "(list of strings), tags (list of strings). No extra keys, no markdown."
+                                "You are a memory curation helper for an AI agent's long-term memory. "
+                                "Given a conversation turn (User/Assistant), decide whether it contains "
+                                "durable, useful facts worth remembering — preferences, decisions, "
+                                "environment details, project conventions, instructions. "
+                                "Return STRICT JSON with exactly these keys:\n"
+                                "- worth_saving (boolean): true only if the turn contains a durable, "
+                                "non-obvious fact. false for chit-chat, greetings, trivial "
+                                "acknowledgements, or one-off questions.\n"
+                                "- summary (string): if worth_saving is true, a concise factual summary "
+                                "in the same language as the turn (e.g. 'User prefers X', 'Deploy target "
+                                "is Y'). If false, an empty string.\n"
+                                "- entities (list of strings): key nouns/names mentioned. Empty if false.\n"
+                                "- tags (list of strings): 1-3 short tags. Empty if false.\n"
+                                "No extra keys, no markdown."
                             ),
                         },
                         {"role": "user", "content": text},
@@ -96,7 +108,10 @@ class OpenAICompatibleEnricher(LLMEnricher):
                     "temperature": 0,
                 }
             ).encode()
-            headers = {"Content-Type": "application/json"}
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "luminary-memory/0.2.1",
+            }
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
             req = urllib.request.Request(url, data=body, headers=headers, method="POST")
@@ -115,16 +130,20 @@ class OpenAICompatibleEnricher(LLMEnricher):
                 summary = data.get("summary")
                 entities = data.get("entities") or []
                 tags = data.get("tags") or []
+                worth = data.get("worth_saving")
                 # Normalize to expected types.
                 if not isinstance(entities, list):
                     entities = []
                 if not isinstance(tags, list):
                     tags = []
+                if not isinstance(summary, str):
+                    summary = None
                 return EnrichedContent(
                     content=text,
-                    summary=str(summary) if isinstance(summary, str) and summary else None,
+                    summary=summary if summary and summary.strip() else None,
                     entities=[str(x) for x in entities if isinstance(x, str) and x.strip()],
                     tags=[str(x).strip() for x in tags if isinstance(x, str) and x.strip()],
+                    worth_saving=bool(worth) if worth is not None else True,
                 )
         except Exception:  # noqa: BLE001 -- enrichment is best-effort
             return EnrichedContent(content=text)

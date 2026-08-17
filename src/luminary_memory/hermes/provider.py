@@ -474,11 +474,23 @@ class LuminaryMemoryProvider(MemoryProvider):
 
         The client is created lazily on the writer thread so that SQLite
         connections are used exclusively from the thread that created them.
+
+        When LLM enrichment is enabled, the enricher decides whether the
+        turn is worth saving and produces a factual summary; turns the LLM
+        deems trivial are dropped instead of polluting the store.
         """
         client = self._writer_client()
         if client is None:
             return
         try:
+            if self._config.get("ingest_llm") and client.enricher is not None:
+                enriched = client.enricher.enrich(content)
+                if not enriched.worth_saving:
+                    self._log.info("retain skipped (LLM: not worth saving) len=%d", len(content))
+                    return
+                # Store the factual summary (not the raw transcript) as content.
+                if enriched.summary:
+                    content = enriched.summary
             meta = {k: v for k, v in (metadata or {}).items() if v is not None}
             client.ingest(content, tags=tags, source=source, metadata=meta)
             self._log.info("retain stored len=%d tags=%s", len(content), tags)
@@ -498,7 +510,17 @@ class LuminaryMemoryProvider(MemoryProvider):
                 token_budget=int(self._config.get("token_budget", 2048)),
                 ingest_llm=bool(self._config.get("ingest_llm", False)),
             )
-            client = MemoryClient(settings=settings)
+            enricher = None
+            if self._config.get("ingest_llm"):
+                from luminary_memory.ingest.llm import OpenAICompatibleEnricher
+
+                enricher = OpenAICompatibleEnricher(
+                    base_url=self._config.get("llm_base_url") or "",
+                    api_key=self._config.get("llm_api_key") or "",
+                    model=self._config.get("llm_model") or "",
+                    timeout=int(self._config.get("llm_timeout", 60)),
+                )
+            client = MemoryClient(settings=settings, enricher=enricher)
             if getattr(client, "engine", None) is not None:
                 # Reuse the shared engine instance (single model load).
                 client.engine = self._client.engine if self._client else client.engine
