@@ -1,8 +1,66 @@
 # Hermes integration
 
-Use luminary-memory as the memory layer for a [Hermes Agent](https://github.com/NousResearch/hermes-agent).
+Use luminary-memory as a first-class **memory provider** for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Since v0.2.1 the recommended path is the pip entry-point provider (`luminary`), which replaces the standalone-skill approach described below.
 
-## Install the skill
+## Preferred: install the provider (v0.2.1+)
+
+`luminary-memory` ships a Hermes `MemoryProvider` registered through the
+`hermes_agent.memory_providers` entry-point group.
+
+```bash
+pip install luminary-memory>=0.2.1
+hermes memory setup luminary
+```
+
+Then set in `config.yaml`:
+
+```yaml
+memory:
+  provider: luminary
+```
+
+On the next session Hermes will:
+
+- **Auto-recall every turn** — the current user message is used to recall relevant memories from the local store, injected as a `# Luminary Memory (persistent cross-session context)` block.
+- **Auto-save every session** — completed turns are persisted under session lineage tags (`session:<id>`, `parent:<id>`, `platform:<p>`, `agent:<identity>`).
+- **Expose explicit tools** — `luminary_recall` / `luminary_ingest` / `luminary_list` are registered for the model in `tools` and `hybrid` modes.
+- **Report a deterministic indicator** — a `🌙 Luminary — recalled N memories` status line appears whenever recall injected context.
+
+### Configuration
+
+The provider reads `$HERMES_HOME/luminary/config.json` (created on first save with
+`0600` permissions). Key settings:
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `mode` | `hybrid` | `context` (auto-inject only) · `tools` (tool-only) · `hybrid` (both) |
+| `db_path` | `""` | Override store path; `""` = `$HERMES_HOME/luminary/memory.db` |
+| `backend` | `sqlite` | `sqlite` or `pgvector` |
+| `recall_limit` | `10` | Top-N memories per recall |
+| `token_budget` | `2048` | Recall context budget |
+| `auto_recall` | `true` | Enable per-turn background recall |
+| `recall_sync` | `false` | Synchronous (live) recall instead of warm prefetch |
+| `auto_retain` | `true` | Enable per-turn auto-save |
+| `retain_every_n_turns` | `1` | Batch N turns into one store write |
+| `ingest_llm` | `false` | Opt-in LLM enrichment on retain |
+
+### Store layout
+
+```
+$HERMES_HOME/luminary/
+├── config.json          # provider config — 0600
+└── memory.db            # SQLite store (created by MemoryClient)
+```
+
+The store is profile-scoped and picked up by `hermes backup` automatically. If you
+override `db_path` to a location outside HERMES_HOME, `backup_paths()` declares it.
+
+### Directory-install fallback
+
+The provider also ships `plugin.yaml`; users who prefer a directory install can copy
+the `luminary_memory/hermes/` package contents to `~/.hermes/plugins/luminary/`.
+
+## Legacy: standalone skill (pre-0.2.1)
 
 Copy `hermes/SKILL.md` into the agent's skills directory:
 

@@ -6,7 +6,17 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
-- **Hermes Memory Provider** — `LuminaryMemoryProvider` plugging into Hermes via the `hermes_agent.memory_providers` entry-point group; registered as a standalone package (see PLAN-v0.2.1.md).
+- **Hermes Memory Provider** — `LuminaryMemoryProvider` plugging into Hermes via the `hermes_agent.memory_providers` entry-point group; registered as a standalone package.
+  - **Auto-recall every turn** — warm background prefetch (`queue_prefetch` → cached `prefetch`) or synchronous recall (`recall_sync`), formatted as a deterministic context block.
+  - **Auto-save every session** — buffered `sync_turn` on a single writer thread, batched by `retain_every_n_turns`, with session/parent/platform/agent lineage tags.
+  - **Session-boundary handling** — `on_session_end` flush + `on_session_switch` rebind with reset guard.
+  - **Explicit tools** — `luminary_recall`, `luminary_ingest`, `luminary_list` (OpenAI-format schemas, JSON dispatch, local error helper).
+  - **Deterministic indicator** — `RecallStatus("Luminary", count, 🌙)` surfaced via `recall_status()`.
+  - **Config layer** — `$HERMES_HOME/luminary/config.json` (0600, atomic write), `get_config_schema()`, dashboard `config_schema.py` (pure data).
+  - **Lifecycle hooks** — `is_available`, `initialize`, `shutdown`, `system_prompt_block`, `on_memory_write`, `on_delegation`, `on_pre_compress`, `backup_paths`.
+  - **Packaging** — entry point + `plugin.yaml` directory-install fallback.
+  - **Test harness** — `tests/hermes_stubs/agent/memory_provider.py` ABC stub injected via `tests/conftest.py` so tests run without a hermes-agent install.
+- **`MemoryClient.ingest(metadata=...)`** — optional metadata dict merged into stored memory metadata (backward compatible).
 
 ## [0.2.0] - 2026-08-18
 

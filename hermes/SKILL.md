@@ -14,6 +14,13 @@ metadata:
 
 **luminary-memory** is a self-hosted memory layer. This skill wires it into Hermes so an agent can store durable facts across sessions, recall the right context on demand, and keep the store clean.
 
+> **Note (v0.2.1+):** the preferred integration is the **pip entry-point provider**
+> (`hermes memory setup luminary` → `memory.provider: luminary`), which gives
+> auto-recall every turn, auto-save every session, explicit `luminary_recall` /
+> `luminary_ingest` / `luminary_list` tools, and a deterministic recall indicator.
+> See `docs/hermes-integration.md`. The standalone-skill flow below remains
+> supported for manual/managed setups.
+
 ## When to Use
 
 - When an agent needs durable cross-session memory beyond the built-in MEMORY.md/USER.md files.

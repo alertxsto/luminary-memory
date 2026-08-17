@@ -596,6 +596,29 @@ class LuminaryMemoryProvider(MemoryProvider):
         return RecallStatus("Luminary", getattr(self, "_last_recall_count", 0), _LUMINARY_GLYPH)
 
     # ------------------------------------------------------------------ #
+    # Backup
+    # ------------------------------------------------------------------ #
+
+    def backup_paths(self) -> list[str]:
+        """Declare state paths outside HERMES_HOME (for ``hermes backup``).
+
+        The default store lives under HERMES_HOME/luminary/, so it is already
+        covered by a standard backup. Only a user-overridden ``db_path`` that
+        points outside HERMES_HOME needs to be declared.
+        """
+        cfg_path = self._config.get("db_path", "") or ""
+        if not cfg_path:
+            return []
+        home = self._hermes_home or os.environ.get(
+            "HERMES_HOME", os.path.expanduser("~/.hermes")
+        )
+        resolved_home = os.path.abspath(os.path.expanduser(home))
+        resolved_path = os.path.abspath(os.path.expanduser(cfg_path))
+        if resolved_path.startswith(resolved_home + os.sep) or resolved_path == resolved_home:
+            return []
+        return [cfg_path]
+
+    # ------------------------------------------------------------------ #
     # Tools
     # ------------------------------------------------------------------ #
 
