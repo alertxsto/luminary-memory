@@ -66,6 +66,20 @@ class Settings:
     ttl_default_seconds: int | None = field(default_factory=lambda: _env_int("LUMINARY_TTL_DEFAULT_SECONDS", 0) or None)
     prune_min_importance: float = field(default_factory=lambda: _env_float("LUMINARY_PRUNE_MIN_IMPORTANCE", 0.2))
     consolidate_jaccard_threshold: float = field(default_factory=lambda: _env_float("LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD", 0.9))
+    # LLM enrichment (provider-agnostic, stdlib HTTP)
+    llm_base_url: str | None = field(default_factory=lambda: os.environ.get("LUMINARY_LLM_BASE_URL") or None)
+    llm_api_key: str | None = field(default_factory=lambda: os.environ.get("LUMINARY_LLM_API_KEY") or None)
+    llm_model: str = field(default_factory=lambda: os.environ.get("LUMINARY_LLM_MODEL", "gpt-4o-mini"))
+    llm_timeout: int = field(default_factory=lambda: _env_int("LUMINARY_LLM_TIMEOUT", 10))
+    # query planner
+    query_planner: bool = field(default_factory=lambda: _env_bool("LUMINARY_QUERY_PLANNER", True))
+    query_planner_keyword_threshold: float = field(
+        default_factory=lambda: _env_float("LUMINARY_QUERY_PLANNER_KEYWORD_THRESHOLD", 0.9)
+    )
+    # pgvector HNSW
+    pg_hnsw_index: bool = field(default_factory=lambda: _env_bool("LUMINARY_PG_HNSW_INDEX", False))
+    pg_hnsw_m: int = field(default_factory=lambda: _env_int("LUMINARY_PG_HNSW_M", 16))
+    pg_hnsw_ef_construction: int = field(default_factory=lambda: _env_int("LUMINARY_PG_HNSW_EF_CONSTRUCTION", 64))
 
     def as_dict(self) -> dict[str, Any]:
         """Return settings as a plain dict (useful for CLI `show` and config dumps)."""
@@ -83,4 +97,13 @@ class Settings:
             "ttl_default_seconds": self.ttl_default_seconds,
             "prune_min_importance": self.prune_min_importance,
             "consolidate_jaccard_threshold": self.consolidate_jaccard_threshold,
+            "llm_base_url": self.llm_base_url,
+            "llm_api_key": self.llm_api_key,
+            "llm_model": self.llm_model,
+            "llm_timeout": self.llm_timeout,
+            "query_planner": self.query_planner,
+            "query_planner_keyword_threshold": self.query_planner_keyword_threshold,
+            "pg_hnsw_index": self.pg_hnsw_index,
+            "pg_hnsw_m": self.pg_hnsw_m,
+            "pg_hnsw_ef_construction": self.pg_hnsw_ef_construction,
         }

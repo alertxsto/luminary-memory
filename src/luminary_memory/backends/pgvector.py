@@ -12,6 +12,9 @@ class PGVectorBackend(MemoryBackend):
         self,
         dsn: str = "postgresql://localhost/luminary_memory",
         embedding_dim: int = 384,
+        hnsw: bool | None = None,
+        hnsw_m: int | None = None,
+        hnsw_ef_construction: int | None = None,
     ):
         import psycopg
 
@@ -20,6 +23,33 @@ class PGVectorBackend(MemoryBackend):
         self._psycopg = psycopg
         self.conn = psycopg.connect(dsn)
         self._ensure_schema()
+        # Optional HNSW index (feature-flagged, never hard-fails).
+        from luminary_memory.config import Settings as _Settings
+
+        _s = _Settings()
+        do_hnsw = bool(hnsw if hnsw is not None else _s.pg_hnsw_index)
+        if do_hnsw:
+            self.build_index(
+                m=int(hnsw_m if hnsw_m is not None else _s.pg_hnsw_m),
+                ef_construction=int(
+                    hnsw_ef_construction if hnsw_ef_construction is not None else _s.pg_hnsw_ef_construction
+                ),
+            )
+
+    def build_index(self, m: int = 16, ef_construction: int = 64) -> None:
+        try:
+            cur = self.conn.cursor()
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS memories_embedding_hnsw "
+                f"ON memories USING hnsw (embedding vector_cosine_ops) "
+                f"WITH (m = {int(m)}, ef_construction = {int(ef_construction)})"
+            )
+            self.conn.commit()
+        except Exception:  # noqa: BLE001 -- index is best-effort
+            try:
+                self.conn.rollback()
+            except Exception:  # noqa: BLE001, S110
+                pass
 
     def _ensure_schema(self) -> None:
         cur = self.conn.cursor()
@@ -175,24 +205,87 @@ class PGVectorBackend(MemoryBackend):
         rows = cur.fetchall()
         return [self._row_to_memory(r) for r in rows]
 
-    def keyword_search(self, query: str, limit: int = 10) -> list[tuple[Memory, float]]:
+    def add_many(self, memories: list[Memory]) -> list[int]:
+        if not memories:
+            return []
+        cur = self.conn.cursor()
+        ids: list[int] = []
+        for m in memories:
+            cur.execute(
+                """
+                INSERT INTO memories (content, metadata, source, tags, importance,
+                                      ttl_seconds, created_at, updated_at,
+                                      last_accessed_at, access_count, embedding)
+                VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    m.content,
+                    json.dumps(m.metadata),
+                    m.source,
+                    json.dumps(m.tags),
+                    float(m.importance),
+                    m.ttl_seconds,
+                    m.created_at,
+                    m.updated_at,
+                    m.last_accessed_at,
+                    int(m.access_count),
+                    m.embedding,
+                ),
+            )
+            row = cur.fetchone()
+            ids.append(int(row[0]) if row and row[0] is not None else 0)
+        self.conn.commit()
+        return ids
+
+    def recent(self, limit: int | None = 100, offset: int = 0) -> list[Memory]:
+        """Most-recent-first pagination at the SQL level (None = unlimited)."""
+        cur = self.conn.cursor()
+        o = max(0, int(offset))
+        if limit is None or int(limit) == 0:
+            cur.execute(
+                "SELECT * FROM memories ORDER BY created_at DESC, id DESC OFFSET %s",
+                (o,),
+            )
+        else:
+            cur.execute(
+                "SELECT * FROM memories ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s",
+                (max(0, int(limit)), o),
+            )
+        rows = cur.fetchall()
+        return [self._row_to_memory(r) for r in rows]
+
+    def keyword_search(self, query: str, limit: int | None = 10) -> list[tuple[Memory, float]]:
         escaped = query.replace("%", r"\%").replace("_", r"\_")
         q = f"%{escaped}%"
         cur = self.conn.cursor()
-        cur.execute(
-            "SELECT * FROM memories WHERE content ILIKE %s OR tags::text ILIKE %s LIMIT %s",
-            (q, q, int(limit)),
-        )
+        if limit is None:
+            cur.execute(
+                "SELECT * FROM memories WHERE content ILIKE %s OR tags::text ILIKE %s",
+                (q, q),
+            )
+        else:
+            cur.execute(
+                "SELECT * FROM memories WHERE content ILIKE %s OR tags::text ILIKE %s LIMIT %s",
+                (q, q, int(limit)),
+            )
         rows = cur.fetchall()
         return [(self._row_to_memory(r), 1.0) for r in rows]
 
-    def vector_search(self, vec: list[float], limit: int = 10) -> list[tuple[Memory, float]]:
+    def vector_search(self, vec: list[float], limit: int | None = 10) -> list[tuple[Memory, float]]:
         cur = self.conn.cursor()
-        cur.execute(
-            "SELECT *, embedding <=> %s::vector AS distance FROM memories "
-            "WHERE embedding IS NOT NULL ORDER BY distance LIMIT %s",
-            (vec, int(limit)),
-        )
+        if limit is None:
+            cur.execute(
+                "SELECT *, embedding <=> %s::vector AS distance FROM memories "
+                "WHERE embedding IS NOT NULL ORDER BY distance",
+                (vec,),
+            )
+        else:
+            cur.execute(
+                "SELECT *, embedding <=> %s::vector AS distance FROM memories "
+                "WHERE embedding IS NOT NULL ORDER BY distance LIMIT %s",
+                (vec, int(limit)),
+            )
         rows = cur.fetchall()
         results: list[tuple[Memory, float]] = []
         for r in rows:
@@ -212,6 +305,37 @@ class PGVectorBackend(MemoryBackend):
         if row is None:
             return 0
         return int(row[0] if isinstance(row, (list, tuple)) else row.get("count", 0))
+
+    def by_tags(self, tags: list[str]) -> set[int]:
+        if not tags:
+            return set()
+        cur = self.conn.cursor()
+        # JSONB tags @> check per tag; fallback to python filter when driver absent.
+        try:
+            import json as _json
+
+            wanted = set(tags)
+            cur.execute("SELECT id, tags FROM memories")
+            ids: set[int] = set()
+            for row in cur.fetchall():
+                d = row if isinstance(row, dict) else {}
+                if not isinstance(row, dict):
+                    # tuple path: map via description
+                    cols = [desc[0] for desc in (cur.description or [])]
+                    d = dict(zip(cols, row)) if cols else {}
+                raw = d.get("tags")
+                if isinstance(raw, list):
+                    tlist = raw
+                else:
+                    try:
+                        tlist = _json.loads(raw) if isinstance(raw, str) else list(raw or [])
+                    except Exception:  # noqa: BLE001
+                        tlist = []
+                if wanted & set(tlist):
+                    ids.add(int(d.get("id") or row[0]))
+            return ids
+        except Exception:  # noqa: BLE001
+            return set()
 
     def close(self) -> None:
         try:

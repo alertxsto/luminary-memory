@@ -1,27 +1,104 @@
+# ============================================================
+# luminary-memory — .gitignore
+# ============================================================
+
+# ---- Python ----
 __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
 *.egg
+*.whl
+*.so
+.python-version
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+
+# ---- Virtual environments ----
 .venv/
 venv/
 env/
-dist/
-build/
+ENV/
+.conda/
+
+# ---- Test & coverage ----
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.tox/
+.nox/
 .coverage
 .coverage.*
 htmlcov/
 coverage.xml
+
+# ---- Database (local memory store) ----
 *.db
+*.db-journal
 *.sqlite
 *.sqlite3
+*.sqlite3-journal
 luminary_memory.db
-.DS_Store
+*.db-shm
+*.db-wal
+
+# ---- Environment / secrets ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+.pypirc
+netrc
+
+# ---- IDE / editors ----
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 
-# Command Code CLI local config
+# ---- OS ----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+
+# ---- Logs & temp ----
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+
+# ---- Command Code CLI (local) ----
 .commandcode/
+.codex/
+.antigravity/
+
+# ---- Internal reports (not for public) ----
+REPORT-*.md
+*REPORT.md
+
+# ---- Generated API docs (regenerate via pdoc) ----
+docs/api/
+
+# ---- Website screenshots (local verification only) ----
+website/screenshot_*.png
+website/test_*.png
+website/*.png

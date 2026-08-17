@@ -120,25 +120,75 @@ class SQLiteBackend(MemoryBackend):
         rows = self.conn.execute("SELECT * FROM memories ORDER BY id").fetchall()
         return [self._row_to_memory(r) for r in rows]
 
-    def recent(self, limit: int = 100, offset: int = 0) -> list[Memory]:
-        """Most-recent-first pagination at the SQL level (no full load)."""
-        rows = self.conn.execute(
-            "SELECT * FROM memories ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-            (max(0, int(limit)), max(0, int(offset))),
-        ).fetchall()
+    def add_many(self, memories: list[Memory]) -> list[int]:
+        if not memories:
+            return []
+        # sqlite3.executemany.lastrowid is unreliable (None) on this build;
+        # use explicit transaction + per-row insert returning lastrowid, or
+        # query the tail. Simpler and portable: iterate add() inside a transaction.
+        ids: list[int] = []
+        self.conn.execute("BEGIN")
+        try:
+            for m in memories:
+                cur = self.conn.execute(
+                    "INSERT INTO memories (content, metadata, source, tags, importance, "
+                    "ttl_seconds, created_at, updated_at, last_accessed_at, access_count, embedding) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        m.content,
+                        json.dumps(m.metadata),
+                        m.source,
+                        json.dumps(m.tags),
+                        m.importance,
+                        m.ttl_seconds,
+                        m.created_at,
+                        m.updated_at,
+                        m.last_accessed_at,
+                        m.access_count,
+                        self._encode_embedding(m.embedding),
+                    ),
+                )
+                ids.append(int(cur.lastrowid))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return ids
+
+    def recent(self, limit: int | None = 100, offset: int = 0) -> list[Memory]:
+        """Most-recent-first pagination at the SQL level (None = unlimited)."""
+        o = max(0, int(offset))
+        if limit is None or int(limit) == 0:
+            rows = self.conn.execute(
+                "SELECT * FROM memories ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?",
+                (o,),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM memories ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                (max(0, int(limit)), o),
+            ).fetchall()
         return [self._row_to_memory(r) for r in rows]
 
-    def keyword_search(self, query: str, limit: int = 10) -> list[tuple[Memory, float]]:
+    def keyword_search(self, query: str, limit: int | None = 10) -> list[tuple[Memory, float]]:
         safe = _sanitize_fts_query(query)
-        rows = self.conn.execute(
-            "SELECT m.*, bm25(memories_fts) AS rank "
-            "FROM memories_fts JOIN memories m ON m.id = memories_fts.rowid "
-            "WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?",
-            (safe, limit),
-        ).fetchall()
+        if limit is None:
+            rows = self.conn.execute(
+                "SELECT m.*, bm25(memories_fts) AS rank "
+                "FROM memories_fts JOIN memories m ON m.id = memories_fts.rowid "
+                "WHERE memories_fts MATCH ? ORDER BY rank",
+                (safe,),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT m.*, bm25(memories_fts) AS rank "
+                "FROM memories_fts JOIN memories m ON m.id = memories_fts.rowid "
+                "WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?",
+                (safe, int(limit)),
+            ).fetchall()
         return [(self._row_to_memory(r), -float(r["rank"])) for r in rows]
 
-    def vector_search(self, vec: list[float], limit: int = 10) -> list[tuple[Memory, float]]:
+    def vector_search(self, vec: list[float], limit: int | None = 10) -> list[tuple[Memory, float]]:
         q = np.asarray(vec, dtype=np.float32)
         qn = float(np.linalg.norm(q))
         results: list[tuple[Memory, float]] = []
@@ -150,11 +200,28 @@ class SQLiteBackend(MemoryBackend):
             sim = 0.0 if (qn == 0 or vn == 0) else float(np.dot(q, v) / (qn * vn))
             results.append((m, sim))
         results.sort(key=lambda x: -x[1])
-        return results[:limit]
+        return results if limit is None else results[:limit]
 
     def count(self) -> int:
         row = self.conn.execute("SELECT COUNT(*) FROM memories").fetchone()
         return int(row[0])
+
+    def by_tags(self, tags: list[str]) -> set[int]:
+        if not tags:
+            return set()
+        rows = self.conn.execute("SELECT id, tags FROM memories").fetchall()
+        import json as _json
+
+        wanted = set(tags)
+        ids: set[int] = set()
+        for r in rows:
+            try:
+                tlist = _json.loads(r["tags"] or "[]")
+            except Exception:  # noqa: BLE001
+                tlist = []
+            if wanted & set(tlist):
+                ids.add(int(r["id"]))
+        return ids
 
     def close(self) -> None:
         self.conn.close()

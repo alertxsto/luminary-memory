@@ -22,6 +22,7 @@ class Memory:
     last_accessed_at: str | None = None
     access_count: int = 0
     embedding: list[float] | None = None
+    snippet: str | None = None
 
 @dataclass
 class ScoredMemory:

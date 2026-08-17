@@ -98,7 +98,7 @@ def _query_entities(query: str) -> set[str]:
 def graph_recall(
     backend: MemoryBackend,
     query: str,
-    limit: int = 10,
+    limit: int | None = 10,
 ) -> list[tuple]:
     query_ents = _query_entities(query)
     if not query_ents:
@@ -142,4 +142,4 @@ def graph_recall(
         if mem is not None:
             scored.append((mem, float(score), "graph"))
     scored.sort(key=lambda x: -x[1])
-    return scored[:limit]
+    return scored if limit is None else scored[:limit]

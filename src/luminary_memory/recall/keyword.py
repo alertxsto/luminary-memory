@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 def keyword_recall(
     backend: MemoryBackend,
     query: str,
-    limit: int = 10,
+    limit: int | None = 10,
 ) -> list[tuple]:
     raw = backend.keyword_search(query, limit=limit)
     return [(m, float(score), "keyword") for m, score in raw]

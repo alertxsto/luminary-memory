@@ -14,7 +14,7 @@ def semantic_recall(
     backend: MemoryBackend,
     engine: _Embedder,
     query: str,
-    limit: int = 10,
+    limit: int | None = 10,
 ) -> list[tuple]:
     query_vec = engine.embed(query)
     raw = backend.vector_search(query_vec, limit=limit)

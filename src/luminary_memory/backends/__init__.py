@@ -21,7 +21,11 @@ def get_backend(settings: Settings) -> MemoryBackend:
         if int(settings.embedding_dim) <= 0:
             raise ValueError("embedding_dim must be positive")
         return PGVectorBackend(
-            dsn=settings.pg_dsn, embedding_dim=int(settings.embedding_dim)
+            dsn=settings.pg_dsn,
+            embedding_dim=int(settings.embedding_dim),
+            hnsw=bool(getattr(settings, "pg_hnsw_index", False)),
+            hnsw_m=int(getattr(settings, "pg_hnsw_m", 16)),
+            hnsw_ef_construction=int(getattr(settings, "pg_hnsw_ef_construction", 64)),
         )
     if backend_name == "sqlite":
         return SQLiteBackend(db_path=settings.db_path)

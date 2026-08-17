@@ -40,11 +40,13 @@ def compute_temporal_score(
 
 def temporal_recall(
     backend: MemoryBackend,
-    limit: int = 10,
+    limit: int | None = 10,
     half_life_hours: float = HALF_LIFE_HOURS,
 ) -> list[tuple]:
     now = datetime.now(UTC)
     scored = [(m, compute_temporal_score(m, now=now, half_life_hours=half_life_hours))
               for m in backend.all()]
     scored.sort(key=lambda x: -x[1])
-    return [(m, float(score), "temporal") for m, score in scored[:limit]]
+    return [(m, float(score), "temporal") for m, score in scored] if limit is None else [
+        (m, float(score), "temporal") for m, score in scored[:limit]
+    ]
