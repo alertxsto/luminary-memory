@@ -276,7 +276,7 @@ class MemoryClient:
 
         raw = self.enricher.review_memories(memories)
         data = _parse_enrichment_payload(raw)
-        actions = data.get("actions") or []
+        actions = data.get("actions")
         if not isinstance(actions, list):
             return {"reviewed": len(memories), "deleted": 0, "updated": 0, "error": "bad LLM response"}
 

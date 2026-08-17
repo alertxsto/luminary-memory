@@ -69,3 +69,26 @@ def test_help():
     assert r.exit_code == 0
     assert "add" in r.output
     assert "recall" in r.output
+
+
+def test_add_rejected_by_whitelist(tmp_path, monkeypatch):
+    db = tmp_path / "t.db"
+    # whitelist accepts only "kubernetes"
+    monkeypatch.setenv("LUMINARY_INGEST_WHITELIST", "kubernetes")
+    r = _invoke(["add", "random text without signal"], db)
+    assert r.exit_code == 1
+    assert "rejected" in r.output
+
+
+def test_recall_negative_limit_errors(tmp_path):
+    db = tmp_path / "t.db"
+    r = _invoke(["recall", "query", "--limit", "-1"], db)
+    assert r.exit_code == 1
+    assert "limit" in r.output.lower() or "error" in r.output.lower()
+
+
+def test_cli_command_error_clean(tmp_path):
+    db = tmp_path / "t.db"
+    # search with a malformed FTS query should degrade, not crash
+    r = _invoke(["search", "-"], db)
+    assert r.exit_code in (0, 1)

@@ -65,3 +65,64 @@ def test_session_end_flushes_pending_turns(tmp_path):
     p.on_session_end(messages=[{"role": "user", "content": "final turn"}])
     assert _wait_for_store(p, 1), "on_session_end did not flush"
     p.shutdown()
+
+
+def test_session_end_runs_maintenance_when_enabled(tmp_path, monkeypatch):
+    p = _init_provider(tmp_path)
+    p._config.update({"auto_maintain": True, "ingest_llm": True})
+    p.sync_turn("some durable fact", "ok", session_id="s1")
+
+    called = {"n": 0}
+    def fake_maintenance():
+        called["n"] += 1
+        return {"reviewed": 1, "deleted": 0, "updated": 0}
+    monkeypatch.setattr(p._client, "run_maintenance", fake_maintenance)
+
+    p.on_session_end(messages=[{"role": "user", "content": "x"}])
+    time.sleep(0.5)
+    assert called["n"] == 1, "run_maintenance should be called when auto_maintain+ingest_llm"
+
+
+def test_session_end_maintenance_exception_logged(tmp_path, monkeypatch, caplog):
+    p = _init_provider(tmp_path)
+    p._config.update({"auto_maintain": True, "ingest_llm": True})
+    p.sync_turn("fact", "ok", session_id="s1")
+
+    def boom():
+        raise RuntimeError("maintenance exploded")
+    monkeypatch.setattr(p._client, "run_maintenance", boom)
+
+    p.on_session_end(messages=[{"role": "user", "content": "x"}])
+    time.sleep(0.5)
+    assert "maintenance" in caplog.text.lower() or "failed" in caplog.text.lower(), \
+        "exception should be logged, not propagate"
+
+
+def test_session_end_skips_maintenance_when_disabled(tmp_path, monkeypatch):
+    p = _init_provider(tmp_path)
+    p._config.update({"auto_maintain": False, "ingest_llm": True})
+    p.sync_turn("fact", "ok", session_id="s1")
+
+    called = {"n": 0}
+    monkeypatch.setattr(p._client, "run_maintenance", lambda: called.__setitem__("n", called["n"] + 1))
+
+    p.on_session_end(messages=[{"role": "user", "content": "x"}])
+    time.sleep(0.5)
+    assert called["n"] == 0, "maintenance should NOT run when auto_maintain=false"
+
+
+def test_shutdown_no_thread_affinity_crash(tmp_path):
+    """Regression: shutdown must not raise SQLite thread-affinity errors."""
+    p = _init_provider(tmp_path)
+    p.sync_turn("fact one", "ok", session_id="s1")
+    p.sync_turn("fact two", "ok", session_id="s1")
+    time.sleep(0.5)
+    p.shutdown()  # must not raise
+
+
+def test_prefetch_skipped_when_auto_recall_off(tmp_path, monkeypatch):
+    p = _init_provider(tmp_path)
+    p._config.update({"auto_recall": False})
+    p._shutting_down.clear()
+    p.queue_prefetch("query", session_id="s1")  # should be a no-op
+    assert p._prefetch_cache is None, "no prefetch cache should be set when auto_recall off"

@@ -58,3 +58,29 @@ def test_config_schema_module_is_pure_data():
     assert schema.label == "Luminary Memory"
     assert schema.storage == "flat_json"
     assert schema.fields
+
+
+def test_config_schema_standalone_shim(monkeypatch):
+    """Fallback shim (no hermes runtime) exposes the same schema shape."""
+    import sys
+
+    # Block 'plugins' to simulate standalone install
+    monkeypatch.setitem(sys.modules, "plugins", None)
+    monkeypatch.setitem(sys.modules, "plugins.memory", None)
+    monkeypatch.setitem(sys.modules, "plugins.memory.config_schema", None)
+
+    import importlib
+
+    from luminary_memory.hermes import config_schema
+    importlib.reload(config_schema)
+
+    schema = config_schema.CONFIG_SCHEMA
+    assert schema.name == "luminary"
+    assert schema.label == "Luminary Memory"
+    assert schema.storage == "flat_json"
+    assert schema.fields
+
+    keys = [f["key"] for f in schema.fields]
+    assert "auto_maintain" in keys
+    assert "ingest_llm" in keys
+    assert len(schema.fields) >= 18

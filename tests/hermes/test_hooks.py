@@ -69,3 +69,31 @@ def test_on_pre_compress_returns_string(tmp_path):
     out = p.on_pre_compress([])
     assert isinstance(out, str)
     p.shutdown()
+
+
+def test_save_config_persists(tmp_path):
+    from luminary_memory.hermes.config import load_config
+    p = _init_provider(tmp_path)
+    p.save_config({"recall_limit": 7, "auto_retain": False})
+    cfg = load_config(str(tmp_path))
+    assert cfg.get("recall_limit") == 7
+    assert cfg.get("auto_retain") is False
+    p.shutdown()
+
+
+def test_save_config_uninitialized_raises():
+    from luminary_memory.hermes.provider import LuminaryMemoryProvider
+    p = LuminaryMemoryProvider()
+    try:
+        p.save_config({"recall_limit": 5})
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("save_config before initialize must raise RuntimeError")
+
+
+def test_on_memory_write_uninitialized_noop():
+    from luminary_memory.hermes.provider import LuminaryMemoryProvider
+    p = LuminaryMemoryProvider()
+    p.on_memory_write("add", "memory", "content")  # must not raise
+    p.on_delegation("task", "result")  # must not raise

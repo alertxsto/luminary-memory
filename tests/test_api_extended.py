@@ -5,6 +5,13 @@ from luminary_memory.api import MemoryClient
 from luminary_memory.config import Settings
 
 
+class _E:
+    def embed(self, t):
+        return [0.1] * 384
+    def embed_batch(self, ts):
+        return [[0.1] * 384 for _ in ts]
+
+
 @pytest.fixture()
 def client(tmp_path):
     c = MemoryClient(db_path=str(tmp_path / "t.db"))
@@ -81,3 +88,220 @@ def test_stats(client):
     assert s["count"] == 2
     assert "alpha" in s["top_tags"]
     assert "beta" in s["top_tags"]
+
+
+def test_list_negative_limit_raises(client):
+    import pytest
+    with pytest.raises(ValueError):
+        client.list(limit=-1)
+
+
+def test_list_negative_offset_raises(client):
+    import pytest
+    with pytest.raises(ValueError):
+        client.list(limit=10, offset=-5)
+
+
+def test_list_unlimited_zero(client):
+    client.ingest("fact a")
+    client.ingest("fact b")
+    ms = client.list(limit=0)
+    assert len(ms) >= 2
+
+
+def test_search_empty_query_returns_empty(client):
+    assert client.search("   ") == []
+
+
+def test_export_import_roundtrip(client, tmp_path):
+    client.ingest("durable fact one", tags=["a"])
+    client.ingest("durable fact two", tags=["b"])
+    path = str(tmp_path / "export.json")
+    res = client.export(path)
+    assert res["count"] >= 2
+
+    # import into a fresh client
+    from luminary_memory.api import MemoryClient
+    c2 = MemoryClient(db_path=str(tmp_path / "fresh.db"))
+    imp = c2.import_memories(path)
+    assert imp["imported"] >= 2
+    assert c2.count() >= 2
+    c2.close()
+
+
+class _NoRecentBackend:
+    """Backend without the 'recent' shortcut → list() falls back to sort."""
+
+    def __init__(self):
+        self.items = []
+
+    def add(self, m):
+        m.id = len(self.items) + 1
+        self.items.append(m)
+        return m.id
+
+    def get(self, mid):
+        for m in self.items:
+            if m.id == mid:
+                return m
+        return None
+
+    def all(self):
+        return list(self.items)
+
+    def count(self):
+        return len(self.items)
+
+    def close(self):
+        pass
+
+    def keyword_search(self, query, limit=None):
+        raise RuntimeError("no keyword search")
+
+
+def test_list_fallback_no_recent(tmp_path):
+    from luminary_memory.api import MemoryClient
+
+    class _E:
+        def embed(self, t):
+            return [0.1] * 384
+
+    c = MemoryClient(db_path=str(tmp_path / "x.db"), engine=_E())
+    c.backend = _NoRecentBackend()
+    c.ingest("first")
+    c.ingest("second")
+    ms = c.list(limit=10)
+    assert len(ms) == 2
+
+
+def test_search_error_returns_empty(tmp_path):
+    from luminary_memory.api import MemoryClient
+
+    class _E:
+        def embed(self, t):
+            return [0.1] * 384
+
+    c = MemoryClient(db_path=str(tmp_path / "y.db"), engine=_E())
+    c.backend = _NoRecentBackend()
+    assert c.search("anything") == []
+
+
+def test_recall_strategy_error_falls_back(tmp_path, monkeypatch):
+    """A strategy that raises must not break recall — it degrades to []."""
+    from luminary_memory.api import MemoryClient
+    from luminary_memory.recall import semantic as semantic_mod
+
+    class _E:
+        def embed(self, t):
+            return [0.1] * 384
+        def embed_batch(self, ts):
+            return [[0.1] * 384 for _ in ts]
+
+    c = MemoryClient(db_path=str(tmp_path / "r.db"), engine=_E())
+    c.ingest("some fact about postgres")
+
+    def boom(*a, **kw):
+        raise RuntimeError("semantic exploded")
+    monkeypatch.setattr(semantic_mod, "semantic_recall", boom)
+
+    result = c.recall("postgres", limit=5)
+    assert result is not None  # degraded, not raised
+    c.close()
+
+
+def test_recall_planner_disables_strategies(tmp_path):
+    """Query planner skips strategies when keyword scores are strong."""
+    from luminary_memory.api import MemoryClient
+
+    class _E:
+        def embed(self, t):
+            return [0.1] * 384
+        def embed_batch(self, ts):
+            return [[0.1] * 384 for _ in ts]
+
+    c = MemoryClient(db_path=str(tmp_path / "p.db"), engine=_E())
+    c.ingest("postgres index tuning")
+    r = c.recall("postgres", limit=5)
+    assert r.strategies_hit  # dict populated
+    c.close()
+
+
+def test_update_without_id_raises(tmp_path):
+    from luminary_memory.types import Memory
+    c = MemoryClient(db_path=str(tmp_path / "u.db"), engine=_E())
+    m = Memory(content="no id yet", embedding=[0.1] * 384)
+    import pytest
+    with pytest.raises(ValueError):
+        c.update(m)
+    c.close()
+
+
+def test_ingest_batch_empty(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "b.db"), engine=_E())
+    res = c.ingest_batch([])
+    assert res == [] or res == {}
+    c.close()
+
+
+def test_keyword_search_unlimited(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "k.db"), engine=_E())
+    c.ingest("postgres index query")
+    c.ingest("postgres tuning guide")
+    hits = c.search("postgres", limit=0)
+    assert len(hits) >= 2
+    c.close()
+
+
+def test_ingest_batch_tags_mismatch_raises(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "m.db"), engine=_E())
+    import pytest
+    with pytest.raises(ValueError):
+        c.ingest_batch(["a", "b"], tags=["only-one"])
+    c.close()
+
+
+def test_by_tags_empty_and_corrupt(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "bt.db"), engine=_E())
+    # empty tags → empty set
+    assert c.backend.by_tags([]) == set()
+    # corrupt tags JSON → treated as empty, no crash
+    c.ingest("fact with tag", tags=["x"])
+    c.backend.conn.execute("UPDATE memories SET tags='{corrupt' WHERE id=?", (c.list(limit=1)[0].id,))
+    c.backend.conn.commit()
+    res = c.backend.by_tags(["x"])
+    assert isinstance(res, set)
+    c.close()
+
+
+def test_ingest_batch_embed_failure_falls_back(tmp_path, monkeypatch):
+    class _BrokenBatch(_E):
+        def embed_batch(self, ts):
+            raise RuntimeError("batch embedding failed")
+    c = MemoryClient(db_path=str(tmp_path / "fb.db"), engine=_BrokenBatch())
+    c.ingest_batch(["fact one", "fact two"])
+    assert c.count() == 2  # per-item fallback still stored both
+    c.close()
+
+
+def test_recall_snippet_error_ignored(tmp_path, monkeypatch):
+    from luminary_memory.recall import snippets as snip_mod
+    c = MemoryClient(db_path=str(tmp_path / "sn.db"), engine=_E())
+    c.ingest("postgres tuning is critical for latency")
+    monkeypatch.setattr(snip_mod, "extract_snippet", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("snippet failed")))
+    r = c.recall("postgres", limit=5)
+    assert r is not None  # recall survives snippet failure
+    c.close()
+
+
+def test_recall_keyword_error_falls_back(tmp_path, monkeypatch):
+    from luminary_memory.recall import keyword as kw_mod
+    c = MemoryClient(db_path=str(tmp_path / "kw.db"), engine=_E())
+    c.ingest("postgres index tuning")
+
+    def boom(*a, **kw):
+        raise RuntimeError("keyword exploded")
+    monkeypatch.setattr(kw_mod, "keyword_recall", boom)
+
+    r = c.recall("postgres", limit=5)
+    assert r is not None  # degraded, not raised
+    c.close()

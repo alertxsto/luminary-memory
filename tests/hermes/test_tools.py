@@ -69,3 +69,37 @@ def test_handle_unknown_tool_returns_error(tmp_path):
     data = json.loads(out)
     assert "error" in data
     p.shutdown()
+
+
+def test_handle_ingest_empty_content_returns_error(tmp_path):
+    p = _init_provider(tmp_path)
+    out = p.handle_tool_call("luminary_ingest", {})
+    data = json.loads(out)
+    assert "error" in data
+    p.shutdown()
+
+
+def test_handle_ingest_whitelist_reject(tmp_path):
+    p = _init_provider(tmp_path)
+    p._client.whitelist = type("W", (), {"accepts": lambda self, t: False})()
+    out = p.handle_tool_call("luminary_ingest", {"content": "blocked fact"})
+    data = json.loads(out)
+    assert "rejected" in data.get("result", "").lower()
+    p.shutdown()
+
+
+def test_handle_list_returns_memories(tmp_path):
+    p = _init_provider(tmp_path)
+    p._client.ingest("alpha memory", tags=["t"])
+    out = p.handle_tool_call("luminary_list", {"limit": 10})
+    data = json.loads(out)
+    assert len(data["memories"]) >= 1
+    p.shutdown()
+
+
+def test_handle_tool_call_uninitialized():
+    from luminary_memory.hermes.provider import LuminaryMemoryProvider
+    p = LuminaryMemoryProvider()
+    out = p.handle_tool_call("luminary_recall", {"query": "x"})
+    data = json.loads(out)
+    assert "error" in data

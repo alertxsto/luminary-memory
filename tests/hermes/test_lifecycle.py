@@ -67,3 +67,36 @@ def test_initialize_does_not_load_embedding_model(tmp_path, monkeypatch):
     monkeypatch.setattr(FastembedEngine, "embed", _no_embed)
     p.initialize("s1", hermes_home=str(tmp_path))
     p.shutdown()
+
+
+def test_is_available_pgvector_missing_deps(tmp_path, monkeypatch):
+    import importlib.util
+    p = LuminaryMemoryProvider()
+    p._config["backend"] = "pgvector"
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None if name in ("psycopg", "pgvector") else object())
+    assert p.is_available() is False
+    reason = p.unavailable_reason()
+    assert "pgvector" in reason
+
+
+def test_recall_sync_uses_sync_path(tmp_path, monkeypatch):
+    """recall_sync=true must recall synchronously in prefetch()."""
+    p = _make_provider(tmp_path)
+    p._config["recall_sync"] = True
+    p._config["auto_recall"] = True
+    p._shutting_down.clear()
+
+    import luminary_memory.hermes.provider as prov_mod
+    from luminary_memory.api import RecallResult
+
+    class _M:
+        content = "sync recalled fact"
+        def __init__(self):
+            self.tags: list = []
+    fake_result = RecallResult(memories=[_M()], scores=[1.0], strategies_hit={"semantic": 1})
+    monkeypatch.setattr(prov_mod.MemoryClient, "recall", lambda self, q, **kw: fake_result)
+
+    out = p.prefetch("sync query", session_id="s1")
+    assert "sync recalled fact" in out
+    assert p._last_recall_count == 1
+    p.shutdown()
