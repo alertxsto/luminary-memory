@@ -297,6 +297,57 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._config.update({k: v for k, v in values.items() if k in _DEFAULTS})
 
     # ------------------------------------------------------------------ #
+    # Session boundaries
+    # ------------------------------------------------------------------ #
+
+    def _flush_session_turns(self, session_id: str | None = None) -> None:
+        """Flush buffered turns under a session lineage (writer-enqueued)."""
+        if not self._session_turns:
+            return
+        content = "\n".join(self._session_turns)
+        sid = session_id or self._session_id
+        tags = [f"session:{sid}"] if sid else []
+        if self._parent_session_id:
+            tags.append(f"parent:{self._parent_session_id}")
+        if self._platform:
+            tags.append(f"platform:{self._platform}")
+        if self._agent_identity:
+            tags.append(f"agent:{self._agent_identity}")
+        metadata = {
+            "turn_index": None,
+            "message_count": len(self._session_turns),
+            "session_id": sid,
+            "platform": self._platform,
+            "agent_identity": self._agent_identity,
+        }
+        self._enqueue_retain(content, tags, metadata)
+        self._emit_retain_indicator()
+        self._session_turns = []
+        self._turn_counter = 0
+
+    def on_session_end(self, messages) -> None:
+        """Flush buffered turns under the current session lineage."""
+        if not self._client or self._shutting_down.is_set():
+            return
+        self._flush_session_turns()
+
+    def on_session_switch(self, new_session_id: str, **kwargs) -> None:
+        """Flush the old session, then rebind to the new one."""
+        if not self._client or self._shutting_down.is_set():
+            return
+        old_id = self._session_id
+        self._flush_session_turns(old_id)
+
+        reset = kwargs.get("reset", False)
+        if reset:
+            self._session_turns = []
+            self._turn_counter = 0
+
+        if new_session_id:
+            self._session_id = new_session_id
+            self._parent_session_id = kwargs.get("parent_session_id") or self._parent_session_id
+
+    # ------------------------------------------------------------------ #
     # Auto-save
     # ------------------------------------------------------------------ #
 
