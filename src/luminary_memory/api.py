@@ -78,6 +78,11 @@ class MemoryClient:
     def count(self) -> int:
         return self.backend.count()
 
+    def run_lifecycle(self) -> dict[str, int]:
+        from luminary_memory.lifecycle.runner import run_lifecycle
+
+        return run_lifecycle(self.backend, self.settings)
+
     def close(self) -> None:
         self.backend.close()
 
