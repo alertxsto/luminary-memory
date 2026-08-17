@@ -1,0 +1,71 @@
+import json
+
+from typer.testing import CliRunner
+
+from luminary_memory.cli import app
+
+runner = CliRunner()
+
+
+def _invoke(args, db_path):
+    return runner.invoke(app, args + ["--db-path", str(db_path)])
+
+
+def test_add_and_list(tmp_path):
+    db = tmp_path / "t.db"
+    r = _invoke(["add", "hello world memory"], db)
+    assert r.exit_code == 0, r.output
+    assert "added" in r.output
+
+    r = _invoke(["list"], db)
+    assert r.exit_code == 0
+    assert "hello world memory" in r.output
+
+
+def test_add_with_tags(tmp_path):
+    db = tmp_path / "t.db"
+    r = _invoke(["add", "tagged memory", "--tags", "alpha,beta"], db)
+    assert r.exit_code == 0, r.output
+    r = _invoke(["list"], db)
+    assert "alpha" in r.output
+    assert "beta" in r.output
+
+
+def test_recall_json(tmp_path):
+    db = tmp_path / "t.db"
+    _invoke(["add", "the database uses sqlite fts5"], db)
+    r = _invoke(["recall", "database", "--json"], db)
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.output)
+    assert "memories" in data
+    assert "scores" in data
+    assert "strategies_hit" in data
+
+
+def test_search(tmp_path):
+    db = tmp_path / "t.db"
+    _invoke(["add", "postgresql indexing"], db)
+    r = _invoke(["search", "postgresql"], db)
+    assert r.exit_code == 0
+    assert "postgresql" in r.output
+
+
+def test_stats_empty(tmp_path):
+    db = tmp_path / "t.db"
+    r = _invoke(["stats"], db)
+    assert r.exit_code == 0
+    assert json.loads(r.output)["count"] == 0
+
+
+def test_lifecycle(tmp_path):
+    db = tmp_path / "t.db"
+    r = _invoke(["lifecycle"], db)
+    assert r.exit_code == 0
+    assert json.loads(r.output) == {"cleanup": 0, "consolidate": 0, "prune": 0}
+
+
+def test_help():
+    r = runner.invoke(app, ["--help"])
+    assert r.exit_code == 0
+    assert "add" in r.output
+    assert "recall" in r.output

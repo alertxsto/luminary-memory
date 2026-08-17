@@ -12,9 +12,16 @@ from luminary_memory.types import Memory, RecallResult
 
 
 def _try_index_graph(backend, memory: Memory) -> None:
+    import logging
+
     from luminary_memory.recall.graph import index_memory_entities
 
-    index_memory_entities(backend, memory)
+    try:
+        index_memory_entities(backend, memory)
+    except Exception:  # noqa: BLE001 -- graph indexing is best-effort; never abort ingest
+        logging.getLogger(__name__).warning(
+            "graph indexing failed for memory %s (non-fatal)", memory.id
+        )
 
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
@@ -84,22 +91,38 @@ class MemoryClient:
         self.backend.delete(id)
 
     def list(self, limit: int = 100, offset: int = 0) -> list[Memory]:
-        """List memories, most recent first."""
+        """List memories, most recent first (datetime-aware sort)."""
+        limit = max(0, int(limit))
+        offset = max(0, int(offset))
+        from luminary_memory.recall.temporal import _parse_dt
+
         all_mem = self.backend.all()
-        all_mem.sort(key=lambda m: m.created_at or "", reverse=True)
+        all_mem.sort(key=lambda m: (_parse_dt(m.created_at or ""), -(m.id or 0)), reverse=True)
         return all_mem[offset:offset + limit]
 
     def search(self, query: str, limit: int = 10) -> list[tuple[Memory, float]]:
         """Direct keyword (FTS) search without the full recall pipeline."""
-        return self.backend.keyword_search(query, limit=limit)
+        if not (query or "").strip():
+            return []
+        try:
+            return self.backend.keyword_search(query, limit=limit)
+        except Exception:  # noqa: BLE001
+            return []
 
     def stats(self) -> dict:
         """Store statistics: count, oldest/newest, avg importance, tags."""
+        import statistics
+
         all_mem = self.backend.all()
         n = len(all_mem)
         if not n:
-            return {"count": 0}
-        import statistics
+            return {
+                "count": 0,
+                "oldest": None,
+                "newest": None,
+                "avg_importance": 0.0,
+                "top_tags": {},
+            }
 
         avg_importance = statistics.fmean([m.importance for m in all_mem])
         tag_counts: dict[str, int] = {}
@@ -144,14 +167,20 @@ class MemoryClient:
         rrf_k = self.settings.rrf_k
         dedup_threshold = self.settings.dedup_jaccard_threshold
 
+        # Per-strategy isolation: one failing strategy must not kill recall.
         strategies: list[list[tuple]] = []
-        strategies.append(semantic_recall(self.backend, self.engine, query, limit=limit))
-        strategies.append(keyword_recall(self.backend, query, limit=limit))
-        strategies.append(temporal_recall(self.backend, limit=limit * 2))
-        strategies.append(graph_recall(self.backend, query, limit=limit))
+        for fn in (
+            lambda: semantic_recall(self.backend, self.engine, query, limit=limit),
+            lambda: keyword_recall(self.backend, query, limit=limit),
+            lambda: temporal_recall(self.backend, limit=limit * 2),
+            lambda: graph_recall(self.backend, query, limit=limit),
+        ):
+            try:
+                strategies.append(fn())
+            except Exception:  # noqa: BLE001
+                strategies.append([])
 
         id_to_mem: dict[int, Memory] = {}
-        id_to_best: dict[int, float] = {}
         strategies_hit: dict[str, int] = {}
         ranked_lists: list[list[int]] = []
         for strat in strategies:
@@ -161,7 +190,6 @@ class MemoryClient:
                     continue
                 strategies_hit[label] = strategies_hit.get(label, 0) + 1
                 id_to_mem[m.id] = m
-                id_to_best[m.id] = max(id_to_best.get(m.id, 0.0), float(score))
 
         fused = reciprocal_rank_fusion(ranked_lists, k=rrf_k)
         scored: list[tuple[Memory, float]] = [
@@ -169,7 +197,7 @@ class MemoryClient:
         ]
 
         if not scored:
-            return RecallResult(memories=[], scores=[], strategies_hit={})
+            return RecallResult(memories=[], scores=[], strategies_hit=strategies_hit)
 
         scored = dedup_jaccard(scored, threshold=dedup_threshold)
 
@@ -179,8 +207,11 @@ class MemoryClient:
         id_to_fused = dict(fused)
         final_scores = [float(id_to_fused.get(m.id, 0.0)) for m in memories_ordered]
 
-        for m in memories_ordered:
+        from datetime import UTC, datetime
+
+        for m in memories_ordered[:limit]:
             m.access_count += 1
+            m.last_accessed_at = datetime.now(UTC).isoformat()
             self.backend.update(m)
 
         trimmed = {k: v for k, v in strategies_hit.items() if v}
