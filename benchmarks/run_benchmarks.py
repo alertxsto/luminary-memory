@@ -94,8 +94,8 @@ def main() -> None:
     print(json.dumps(report, indent=2))
     try:
         tmp.unlink(missing_ok=True)
-    except Exception:
-        pass
+    except OSError:
+        pass  # best-effort cleanup; temp dir is reclaimed by the OS
     client.close()
 
 

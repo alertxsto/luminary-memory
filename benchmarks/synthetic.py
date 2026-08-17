@@ -40,7 +40,6 @@ def generate_memories(n: int = 500, seed: int = 42) -> list[dict]:
 
 
 def generate_queries(n: int = 5, seed: int = 99) -> list[dict]:
-    rng = random.Random(seed)
     queries = [
         ("postgres vector search", [0]),
         ("deploy target staging", [1]),
