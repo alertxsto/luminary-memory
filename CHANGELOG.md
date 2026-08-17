@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/), and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-08-18
+
+### Added
+
+- **LLM memory curation** — with `ingest_llm: true`, the provider's enricher evaluates every retained turn:
+  - `worth_saving` — chit-chat, greetings, and trivial turns are **dropped** instead of polluting the store.
+  - `summary` — kept turns are stored as concise factual summaries (e.g. `"Deploy target is the staging cluster."`) instead of raw `User: ... / Assistant: ...` transcripts.
+  - `entities` / `tags` — attached for richer recall.
+- **Transparency log** — provider writes `$HERMES_HOME/luminary/luminary.log` recording initialize/recall/retain/errors.
+- **`OpenAICompatibleEnricher` User-Agent header** — required by some OpenAI-compatible gateways (e.g. Command Code 403s without it).
+
+### Fixed
+
+- **Shutdown SQLite thread-affinity crash** — the writer thread now closes its own client (closing from the main thread raised `sqlite3.ProgrammingError`).
+- **Hermes installer** — `hermes/install.sh` gains `--llm` (enables memory curation), handles a missing `config.yaml`, and no longer warns about the missing `[hermes]` extra (now declared).
+
 ## [0.2.1] - 2026-08-18
 
 ### Added

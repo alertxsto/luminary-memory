@@ -42,14 +42,35 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `recall_sync` | `false` | Synchronous (live) recall instead of warm prefetch |
 | `auto_retain` | `true` | Enable per-turn auto-save |
 | `retain_every_n_turns` | `1` | Batch N turns into one store write |
-| `ingest_llm` | `false` | Opt-in LLM enrichment on retain |
+| `ingest_llm` | `false` | **LLM memory curation on retain** — the enricher decides whether a turn is worth saving (drops chit-chat) and stores a factual summary instead of the raw transcript |
+| `llm_base_url` | `""` | OpenAI-compatible endpoint for the enricher (e.g. `https://api.commandcode.ai/provider/v1`) |
+| `llm_model` | `""` | Enricher model (e.g. `deepseek/deepseek-v4-flash`) |
+| `llm_api_key` | `""` | Enricher API key |
+| `llm_timeout` | `60` | Enricher request timeout (seconds) |
+| `recall_indicator` | `true` | Show `🌙 Luminary — recalled N memories` |
+| `retain_indicator` | `true` | Show `🌙 Luminary — memory saved` |
+
+### LLM memory curation (v0.2.2+)
+
+With `ingest_llm: true`, every retained turn is sent to the enricher, which
+returns:
+
+- **`worth_saving`** — `false` drops the turn entirely (chit-chat, greetings,
+  trivial acknowledgements never reach the store).
+- **`summary`** — a concise factual summary in the turn's language that
+  becomes the stored content, instead of the raw `User: ... / Assistant: ...`
+  transcript.
+- **`entities` / `tags`** — attached as metadata/tags for richer recall.
+
+Without `ingest_llm` (default), turns are stored verbatim — zero LLM cost.
 
 ### Store layout
 
 ```
 $HERMES_HOME/luminary/
 ├── config.json          # provider config — 0600
-└── memory.db            # SQLite store (created by MemoryClient)
+├── memory.db            # SQLite store (created by MemoryClient)
+└── luminary.log         # transparency log (initialize/recall/retain/errors)
 ```
 
 The store is profile-scoped and picked up by `hermes backup` automatically. If you

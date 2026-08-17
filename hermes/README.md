@@ -31,8 +31,35 @@ bash ~/.hermes/scripts/restart-bots.sh
 ```bash
 bash hermes/install.sh --hook      # hook only
 bash hermes/install.sh --skill     # skill only
+bash hermes/install.sh --llm       # also enable LLM memory curation (ingest_llm)
 bash hermes/install.sh --no-hook --no-skill   # provider only
 ```
+
+## LLM memory curation (optional but recommended)
+
+By default the provider stores every turn verbatim (zero LLM cost). With LLM
+curation enabled, an enricher evaluates each turn and:
+
+- **Drops chit-chat** — greetings, "ok", trivial acknowledgements never reach
+  the store (`worth_saving: false`).
+- **Stores factual summaries** — kept turns are saved as concise facts (e.g.
+  `"Deploy target is the staging cluster."`) instead of raw transcripts.
+
+Enable it (after `bash hermes/install.sh --llm`, edit
+`~/.hermes/luminary/config.json`):
+
+```json
+{
+  "ingest_llm": true,
+  "llm_base_url": "https://api.commandcode.ai/provider/v1",
+  "llm_model": "deepseek/deepseek-v4-flash",
+  "llm_api_key": "<your key>"
+}
+```
+
+Any OpenAI-compatible endpoint works. Costs one small LLM call per retained
+turn (temperature 0, strict JSON). If the enricher fails, the provider falls
+back to storing the turn verbatim — it never blocks.
 
 ## Manual install (no script)
 

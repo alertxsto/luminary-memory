@@ -59,6 +59,14 @@ That's it. From the next session:
 
 Registers via the standard `hermes_agent.memory_providers` entry point — no Hermes source changes, no cloud, no LLM API keys. See `docs/hermes-integration.md` for the full configuration table.
 
+**LLM memory curation (optional):** set `ingest_llm: true` in
+`~/.hermes/luminary/config.json` (plus `llm_base_url` / `llm_model` /
+`llm_api_key`) to have the provider evaluate every turn before saving —
+chit-chat and trivial turns are dropped, and kept turns are stored as concise
+factual summaries (e.g. `"Deploy target is the staging cluster."`) instead of
+raw `User: ... / Assistant: ...` transcripts. One small LLM call per retained
+turn; any OpenAI-compatible endpoint works.
+
 ---
 
 ## Quickstart

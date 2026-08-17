@@ -27,11 +27,13 @@ HOOK_DST="$HERMES_HOME/hooks/luminary-activity"
 DO_PROVIDER=1
 DO_HOOK=1
 DO_SKILL=1
+DO_LLM=0
 
 for arg in "$@"; do
   case "$arg" in
     --hook) DO_PROVIDER=0; DO_SKILL=0 ;;
     --skill) DO_PROVIDER=0; DO_HOOK=0 ;;
+    --llm) DO_LLM=1 ;;
     --no-hook) DO_HOOK=0 ;;
     --no-skill) DO_SKILL=0 ;;
     *) echo "unknown arg: $arg" >&2; exit 2 ;;
@@ -78,7 +80,23 @@ PY
 fi
 
 # ------------------------------------------------------------------ #
-# 2. Activity hook
+# 2. LLM memory curation (optional — drops chit-chat, stores facts)
+# ------------------------------------------------------------------ #
+if [ "$DO_LLM" -eq 1 ]; then
+  log "enabling LLM memory curation (ingest_llm) ..."
+  LUM_CONFIG="$HERMES_HOME/luminary/config.json"
+  mkdir -p "$HERMES_HOME/luminary"
+  if [ ! -f "$LUM_CONFIG" ]; then
+    printf '{\n  "ingest_llm": true,\n  "llm_base_url": "",\n  "llm_model": "",\n  "llm_api_key": ""\n}\n' > "$LUM_CONFIG"
+    chmod 600 "$LUM_CONFIG"
+    log "config created at $LUM_CONFIG — set llm_base_url / llm_model / llm_api_key"
+  else
+    log "config exists — edit $LUM_CONFIG to set ingest_llm + llm_*"
+  fi
+fi
+
+# ------------------------------------------------------------------ #
+# 3. Activity hook
 # ------------------------------------------------------------------ #
 if [ "$DO_HOOK" -eq 1 ]; then
   log "installing luminary-activity hook ..."

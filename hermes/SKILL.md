@@ -90,10 +90,18 @@ Provider config lives in `~/.hermes/luminary/config.json` (auto-created,
 | `token_budget` | `2048` | Max tokens of injected memory |
 | `auto_retain` | `true` | Auto-save turns to the store |
 | `retain_every_n_turns` | `1` | Save every N turns (higher = fewer, batched saves) |
+| `ingest_llm` | `false` | **LLM memory curation** — drops chit-chat, stores factual summary instead of raw transcript |
+| `llm_base_url` / `llm_model` / `llm_api_key` | `""` | OpenAI-compatible enricher endpoint/model/key |
 | `recall_indicator` | `true` | Show `🌙 Luminary — recalled N memories` |
 | `retain_indicator` | `true` | Show `🌙 Luminary — memory saved` |
 | `backend` | `sqlite` | `sqlite` (zero config) or `pgvector` (scale) |
-| `ingest_llm` | `false` | LLM enrichment (off = zero token cost) |
+
+**LLM memory curation:** with `ingest_llm: true`, the enricher evaluates each
+turn and keeps only durable facts — greetings, chit-chat, and trivial
+acknowledgements are dropped, and kept turns are stored as concise factual
+summaries (e.g. `"Deploy target is the staging cluster."`) instead of raw
+`User: ... / Assistant: ...` transcripts. Without it (default), turns are
+stored verbatim with zero LLM cost.
 
 Example — save less often, no indicators:
 
