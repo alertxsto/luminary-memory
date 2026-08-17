@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "luminary-memory"
-version = "0.1.1"
+version = "0.2.0"
 description = "A lightweight, self-hosted memory layer for AI agents"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -35,7 +35,7 @@ Repository = "https://github.com/alertxsto/luminary-memory"
 Documentation = "https://github.com/alertxsto/luminary-memory#readme"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.4"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.4", "pdoc>=14", "build>=1.0"]
 
 [project.scripts]
 luminary-memory = "luminary_memory.cli:app"

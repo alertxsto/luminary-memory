@@ -8,8 +8,8 @@
 [![Python](https://img.shields.io/pypi/pyversions/luminary-memory?color=8ab4e8&logo=python&logoColor=white)](https://pypi.org/project/luminary-memory)
 [![License](https://img.shields.io/github/license/alertxsto/luminary-memory?color=8ab4e8)](https://github.com/alertxsto/luminary-memory/blob/main/LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/alertxsto/luminary-memory/ci.yml?color=8ab4e8&label=CI&logo=github)](https://github.com/alertxsto/luminary-memory/actions)
-[![Tests](https://img.shields.io/badge/tests-97%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
-[![Coverage](https://img.shields.io/badge/coverage-91%25-8ab4e8)](https://github.com/alertxsto/luminary-memory)
+[![Tests](https://img.shields.io/badge/tests-101%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
+[![Coverage](https://img.shields.io/badge/coverage-89%25-8ab4e8)](https://github.com/alertxsto/luminary-memory)
 [![Stars](https://img.shields.io/github/stars/alertxsto/luminary-memory?color=8ab4e8&logo=github)](https://github.com/alertxsto/luminary-memory)
 
 **Self-hosted · Private · Budget-aware · Self-maintaining**

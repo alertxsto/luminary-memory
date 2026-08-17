@@ -1,0 +1,44 @@
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/luminary-memory
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+          python -m build
+      - name: Build Hermes skill artifact
+        run: |
+          mkdir -p dist
+          zip -j dist/luminary-memory-skill.zip hermes/SKILL.md hermes/README.md
+          ls -lh dist/luminary-memory-skill.zip
+      - name: Publish to PyPI (trusted publishing / OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # Requires one-time setup on PyPI: configure this repo as a trusted
+        # publisher for project luminary-memory (https://pypi.org/manage/account/publishing/).
+        # Fallback: python -m build && twine upload dist/*
+      - name: Attach skill asset to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/luminary-memory-skill.zip
+          generate_release_notes: true

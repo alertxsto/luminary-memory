@@ -1,70 +1,22 @@
 # Python API
 
-## MemoryClient
+Generated from docstrings via **pdoc** (zero-config, no mkdocs dependency).
 
-The single entry point. All methods are synchronous.
+**HTML reference:** [`api/`](./api/) — open `docs/api/index.html` after running the generator.
 
-```python
-from luminary_memory import MemoryClient
+## Build the reference
 
-client = MemoryClient(
-    db_path="memory.db",           # or Settings(backend="pgvector", pg_dsn=...)
-    ingest_whitelist=[r"port", r"config"],  # optional regex patterns
-)
+```bash
+pip install -e ".[dev]"        # includes pdoc
+pdoc --output-dir docs/api --docformat markdown src/luminary_memory
+# open docs/api/luminary_memory.html  — MemoryClient, Settings, backends, etc.
 ```
 
-### ingest
+## Quick surface
 
-```python
-ingest(text: str, tags: list[str] | None = None, source: str | None = None) -> int | None
-```
+- `MemoryClient` — `ingest`, `ingest_batch`, `recall` (tags + snippets + planner), `search`, `get`/`update`/`delete`, `list`, `export`/`import_memories`, `run_lifecycle`, `stats`, `close`.
+- `Settings` — `LUMINARY_*` env vars, `as_dict()`.
+- `Memory`, `RecallResult` — `types.py`.
+- Subpackages `backends/`, `embeddings/`, `ingest/`, `recall/`, `lifecycle/`, `export`.
 
-Stores a memory. Returns its id, or `None` if the whitelist rejected it.
-
-### recall
-
-```python
-recall(query: str, limit: int = 10, token_budget: int | None = None) -> RecallResult
-```
-
-Runs the four-strategy pipeline and returns a `RecallResult` with `.memories`, `.scores`, and `.strategies_hit`.
-
-### search
-
-```python
-search(query: str, limit: int = 10) -> list[tuple[Memory, float]]
-```
-
-Keyword (FTS) search only — bypasses the full fusion pipeline.
-
-### get / update / delete
-
-```python
-get(id: int) -> Memory | None
-update(memory: Memory) -> None
-delete(id: int) -> None
-```
-
-### list
-
-```python
-list(limit: int = 100, offset: int = 0) -> list[Memory]
-```
-
-Most recent first (datetime-aware sort).
-
-### lifecycle / stats / count
-
-```python
-run_lifecycle() -> dict[str, int]   # {"cleanup": n, "consolidate": n, "prune": n}
-stats() -> dict                      # count, oldest/newest, avg_importance, top_tags
-count() -> int
-```
-
-### close
-
-```python
-close() -> None
-```
-
-Releases the backend connection.
+Regenerate whenever public docstrings change; CI optionally checks freshness with `pdoc --output-dir /tmp/pdoc_check && diff`.
