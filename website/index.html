@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Luminary Memory — What Your Agent Remembers Is What It Becomes</title>
+  <title>Luminary Memory - What Your Agent Remembers Is What It Becomes</title>
   <meta name="description" content="A lightweight, self-hosted memory layer for AI agents. Four retrieval strategies fused into one recall with zero cloud dependencies.">
-  <meta property="og:title" content="Luminary Memory — What Your Agent Remembers Is What It Becomes">
+  <meta property="og:title" content="Luminary Memory - What Your Agent Remembers Is What It Becomes">
   <meta property="og:description" content="Self-hosted memory for AI agents. Four retrieval strategies, one fused recall. No cloud, no GPU, no token bloat.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://alertxsto.github.io/luminary-memory/">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Luminary Memory — What Your Agent Remembers Is What It Becomes">
+  <meta name="twitter:title" content="Luminary Memory - What Your Agent Remembers Is What It Becomes">
   <meta name="twitter:description" content="Self-hosted memory for AI agents. Four retrieval strategies, one fused recall.">
   <meta name="theme-color" content="#06070a">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23e9f6ff'><path d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'/></svg>">
@@ -52,9 +52,14 @@
           <path d="M8 0C3.58 0 0 3.58 0 8a8.013 8.013 0 005.47 7.59c.4.08.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
         </svg>
         <span>GitHub</span>
-        <span class="nav-stars" id="nav-star-count" title="GitHub Stars">★ 142</span>
+        <span class="nav-stars" id="nav-star-count" title="GitHub Stars">★ 1</span>
       </a>
     </nav>
+    <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation menu" aria-expanded="false">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
   </div>
 </header>
 
@@ -64,17 +69,16 @@
     <div class="hero-inner reveal-on-scroll">
       <div class="eyebrow">
         <span class="eyebrow-dot" aria-hidden="true"></span>
-        <span>v0.1.1 — Self-Hosted Memory Layer</span>
+        <span>v0.1.1 - Self-Hosted Memory Layer</span>
       </div>
 
       <h1 class="hero-title">
-        What Your Agent<br>
-        <em>Remembers</em><br>
+        What Your Agent <em>Remembers</em><br>
         Is What It Becomes.
       </h1>
 
       <p class="hero-sub">
-        Luminary gives AI agents durable, cross-session memory across tools, models, and workflows — running entirely on your own infrastructure. Four retrieval strategies, fused into one clear recall.
+        Durable, cross-session memory with four-strategy fused recall. Runs entirely on your infrastructure. No cloud, zero token bloat.
       </p>
 
       <div class="hero-actions">
@@ -160,9 +164,9 @@
         <p class="stat-sub">100% self-hosted on your machine with local CPU ONNX embeddings.</p>
       </div>
       <div class="stat-card">
-        <span class="stat-num">&lt; 4<em>ms</em></span>
-        <h3 class="stat-label">Median Latency</h3>
-        <p class="stat-sub">In-process SQLite + FTS5 execution with zero external network overhead.</p>
+        <span class="stat-num">384</span>
+        <h3 class="stat-label">Embedding Dimensions</h3>
+        <p class="stat-sub">Local ONNX model <code>BAAI/bge-small-en-v1.5</code> running on CPU, no GPU required.</p>
       </div>
     </div>
   </section>
@@ -200,7 +204,7 @@
 
       <div class="fusion-note">
         <h3 class="fusion-title">Parallel Execution &amp; Context Protection</h3>
-        <p>Four strategies execute concurrently in parallel. Reciprocal Rank Fusion combines the candidates into a single ranked stream — followed by Jaccard deduplication and strict token budget truncation to protect your model's context window.</p>
+        <p>Four strategies execute concurrently in parallel. Reciprocal Rank Fusion combines the candidates into a single ranked stream, followed by Jaccard deduplication and strict token budget truncation to protect your model's context window.</p>
         <p class="fusion-meta">RRF <code>k=60</code> · Jaccard Threshold <code>0.85</code> · Token Budget <code>4096</code> · Embedding Dim <code>384</code></p>
       </div>
     </div>
@@ -209,7 +213,6 @@
   <!-- ============ USE CASES ============ -->
   <section class="usecases" id="use-cases">
     <div class="usecases-head reveal-on-scroll">
-      <p class="kicker">Use Cases</p>
       <h2>Built for Agents That Do Real Work.</h2>
       <p class="usecases-sub">Persistent memory transforms ephemeral prompt turns into compounding intelligence across your developer workflows.</p>
     </div>
@@ -324,7 +327,6 @@
   <!-- ============ ARCHITECTURE ============ -->
   <section class="arch" id="architecture">
     <div class="arch-head reveal-on-scroll">
-      <p class="kicker">Architecture</p>
       <h2>Four Phases. One Unified Lifecycle.</h2>
     </div>
 
@@ -355,72 +357,50 @@
     </div>
 
     <div class="arch-foot reveal-on-scroll">
-      <span>Pluggable Backend — Switch from SQLite to pgvector without changing your application code.</span>
+      <span>Pluggable Backend: Switch from SQLite to pgvector without changing your application code.</span>
     </div>
   </section>
 
   <!-- ============ BACKEND COMPARISON ============ -->
   <section class="backends" id="backends">
     <div class="backends-head reveal-on-scroll">
-      <p class="kicker">Storage Backends</p>
       <h2>SQLite by Default. pgvector When You Scale.</h2>
       <p class="backends-sub">Luminary abstracts storage behind a pluggable interface. Start instantly with zero setup on your machine, then migrate seamlessly when your infrastructure demands it.</p>
     </div>
 
-    <div class="table-wrap reveal-on-scroll">
-      <table class="backend-table">
-        <thead>
-          <tr>
-            <th scope="col">Capability</th>
-            <th scope="col">SQLite + FTS5 <span class="badge-default">Default</span></th>
-            <th scope="col">PostgreSQL + pgvector</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Dependencies</td>
-            <td>Python standard library (Zero extra installs)</td>
-            <td>PostgreSQL 14+ with pgvector extension</td>
-          </tr>
-          <tr>
-            <td>Vector Engine</td>
-            <td>In-process cosine similarity on CPU (Fast &amp; isolated)</td>
-            <td>HNSW / IVFFlat indexed vector queries</td>
-          </tr>
-          <tr>
-            <td>Keyword Matching</td>
-            <td>Built-in SQLite FTS5 index (Exact substring &amp; BM25)</td>
-            <td>PostgreSQL <code>tsvector</code> / GIN text matching</td>
-          </tr>
-          <tr>
-            <td>Ideal Scale</td>
-            <td>Single-user agents, local CLI, edge (&lt; 100k memories)</td>
-            <td>Multi-agent fleets, backend services, enterprise scale</td>
-          </tr>
-          <tr>
-            <td>Setup Overhead</td>
-            <td>Zero-configuration (instant local <code>.db</code> file)</td>
-            <td>Database connection string (<code>LUMINARY_PG_DSN</code>)</td>
-          </tr>
-          <tr>
-            <td>Median Latency</td>
-            <td>&lt; 4ms average local in-memory execution</td>
-            <td>&lt; 12ms network roundtrip</td>
-          </tr>
-          <tr>
-            <td>Memory Footprint</td>
-            <td>&lt; 35MB resident memory on CPU</td>
-            <td>Dedicated PostgreSQL server connection pool</td>
-          </tr>
-        </tbody>
-      </table>
+    <div class="backend-cards reveal-on-scroll">
+      <div class="backend-card backend-card-default">
+        <div class="backend-card-header">
+          <h3>SQLite + FTS5</h3>
+          <span class="badge-default">Default</span>
+        </div>
+        <ul class="backend-specs">
+          <li><strong>Dependencies</strong> Python standard library, zero extra installs</li>
+          <li><strong>Vector Engine</strong> In-process cosine similarity on CPU</li>
+          <li><strong>Keyword Matching</strong> Built-in SQLite FTS5 index (BM25 ranking)</li>
+          <li><strong>Ideal Scale</strong> Single-user agents, local CLI, edge (under 100k memories)</li>
+          <li><strong>Setup</strong> Zero-config instant local <code>.db</code> file</li>
+        </ul>
+      </div>
+
+      <div class="backend-card">
+        <div class="backend-card-header">
+          <h3>PostgreSQL + pgvector</h3>
+        </div>
+        <ul class="backend-specs">
+          <li><strong>Dependencies</strong> PostgreSQL 14+ with pgvector extension</li>
+          <li><strong>Vector Engine</strong> pgvector cosine similarity (HNSW-ready)</li>
+          <li><strong>Keyword Matching</strong> ILIKE pattern matching on content and tags</li>
+          <li><strong>Ideal Scale</strong> Multi-agent fleets, backend services, enterprise</li>
+          <li><strong>Setup</strong> Database connection string (<code>LUMINARY_PG_DSN</code>)</li>
+        </ul>
+      </div>
     </div>
   </section>
 
   <!-- ============ FAQ ============ -->
   <section class="faq" id="faq">
     <div class="faq-head reveal-on-scroll">
-      <p class="kicker">Frequently Asked Questions</p>
       <h2>Everything You Need to Know.</h2>
     </div>
 
@@ -441,7 +421,7 @@
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>No GPU or third-party cloud API keys are required. Luminary bundles an ONNX-optimized 384-dimensional embedding model that runs fast and efficiently on modern CPUs with negligible memory usage (&lt; 35MB). It runs seamlessly on developer laptops, VPS instances, Raspberry Pis, and containerized agent runners.</p>
+          <p>No GPU or third-party cloud API keys are required. Luminary bundles an ONNX-optimized 384-dimensional embedding model that runs fast and efficiently on modern CPUs. It runs seamlessly on developer laptops, VPS instances, Raspberry Pis, and containerized agent runners.</p>
         </div>
       </details>
 
@@ -500,7 +480,7 @@
             <path d="M8 0C3.58 0 0 3.58 0 8a8.013 8.013 0 005.47 7.59c.4.08.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
           </svg>
           <span>Star on GitHub</span>
-          <span class="cta-stars" id="cta-star-count">★ 142</span>
+          <span class="cta-stars" id="cta-star-count">★ 1</span>
         </a>
         <div class="install-cmd" role="button" tabindex="0" data-copy="pip install luminary-memory" aria-label="Copy install command: pip install luminary-memory">
           <code>pip install luminary-memory</code>
@@ -513,7 +493,7 @@
         <span class="dot" aria-hidden="true">·</span>
         <span>Zero Cloud Dependencies</span>
         <span class="dot" aria-hidden="true">·</span>
-        <span>Python 3.10+</span>
+        <span>Python 3.11+</span>
         <span class="dot" aria-hidden="true">·</span>
         <span>Pluggable Backends</span>
       </div>
@@ -573,7 +553,7 @@
   <div class="footer-bottom">
     <div class="footer-bottom-wrap">
       <p class="footer-copy">Apache-2.0 License · © 2026 Dwiky Candra</p>
-      <p class="footer-tagline">Moonlit Editorial Design System</p>
+      <p class="footer-tagline">Self-hosted memory layer for AI agents</p>
     </div>
   </div>
 </footer>

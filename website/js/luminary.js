@@ -1,18 +1,17 @@
 /**
- * Luminary Memory — Moonlit Editorial Interactions
+ * Luminary Memory - Moonlit Editorial Interactions
  * - 1-Click Clipboard Copy with Visual Tooltip Feedback
  * - Terminal Tab Switching (Python API vs Terminal CLI)
  * - Live GitHub Stars Fetcher with Session Storage Caching
  * - Smooth Scroll Reveal via IntersectionObserver
- * - Ambient Moon Glow Scroll Parallax
+ * - Ambient Moon Glow Parallax via IntersectionObserver (no scroll listener)
+ * - Mobile Navigation Toggle
  * - Full Accessibility & Reduced Motion Support
  */
 
 (function () {
   "use strict";
 
-  // Gate reveal animations behind JS: content is visible without JS,
-  // and only hidden-then-revealed when JS is actually running.
   document.documentElement.classList.add("js-enabled");
 
   var isReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -24,7 +23,6 @@
     if (navigator.clipboard && navigator.clipboard.writeText) {
       return navigator.clipboard.writeText(text);
     }
-    // Fallback for older environments
     return new Promise(function (resolve, reject) {
       try {
         var ta = document.createElement("textarea");
@@ -79,7 +77,6 @@
     });
   });
 
-  // Support pressing Enter/Space on focusable copy boxes
   document.addEventListener("keydown", function (e) {
     if (e.key === "Enter" || e.key === " ") {
       var el = document.activeElement && document.activeElement.closest("[data-copy]");
@@ -150,7 +147,6 @@
 
     var now = Date.now();
 
-    // Use cached value if younger than 15 minutes
     if (cachedStars && cachedTime && (now - parseInt(cachedTime, 10) < 15 * 60 * 1000)) {
       updateStarBadges(parseInt(cachedStars, 10));
       return;
@@ -210,7 +206,6 @@
       revealObserver.observe(el);
     });
 
-    // Check elements immediately in view on initial load
     setTimeout(function () {
       revealElements.forEach(function (el) {
         var rect = el.getBoundingClientRect();
@@ -222,19 +217,46 @@
   }
 
   // ============================================================
-  // 5. Subtle Moon Glow Scroll Parallax
+  // 5. Ambient Moon Glow Parallax via IntersectionObserver
+  //    (replaces banned window.addEventListener('scroll'))
   // ============================================================
   var glow = document.querySelector(".moon-glow");
-  if (glow && !isReducedMotion) {
-    var ticking = false;
-    window.addEventListener("scroll", function () {
-      if (ticking) return;
-      ticking = true;
-      requestAnimationFrame(function () {
-        var y = window.scrollY;
-        glow.style.transform = "translateY(" + (y * 0.05) + "px)";
-        ticking = false;
+  if (glow && !isReducedMotion && "IntersectionObserver" in window) {
+    var parallaxObserver = new IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            var rect = entry.boundingClientRect;
+            var progress = 1 - (rect.top / window.innerHeight);
+            progress = Math.max(0, Math.min(1, progress));
+            glow.style.transform = "translateY(" + (progress * 30) + "px)";
+          }
+        });
+      },
+      { threshold: [0, 0.25, 0.5, 0.75, 1] }
+    );
+    parallaxObserver.observe(document.body);
+  }
+
+  // ============================================================
+  // 6. Mobile Navigation Toggle
+  // ============================================================
+  var navToggle = document.getElementById("nav-toggle");
+  var navLinks = document.querySelector(".nav-links");
+
+  if (navToggle && navLinks) {
+    navToggle.addEventListener("click", function () {
+      var isOpen = navLinks.classList.toggle("nav-open");
+      navToggle.classList.toggle("open", isOpen);
+      navToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    });
+
+    navLinks.querySelectorAll("a").forEach(function (link) {
+      link.addEventListener("click", function () {
+        navLinks.classList.remove("nav-open");
+        navToggle.classList.remove("open");
+        navToggle.setAttribute("aria-expanded", "false");
       });
-    }, { passive: true });
+    });
   }
 })();
