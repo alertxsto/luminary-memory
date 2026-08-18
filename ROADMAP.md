@@ -2,7 +2,7 @@
 
 > **Tagline:** A lightweight, self-hosted memory layer for AI agents.
 
-**Current release:** v0.2.15 (adaptive memory + core integrity) · **Tests:** 370+ passing · **Coverage:** 93% · **License:** Apache-2.0
+**Current release:** v0.2.16 (complete dashboard coverage + config reference) · **Tests:** 370+ passing · **Coverage:** 93% · **License:** Apache-2.0
 
 ---
 
@@ -24,12 +24,12 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 
 | Area | Status |
 |------|--------|
-| Core library (ingest / recall / lifecycle) | ✅ Done (v0.2.15) |
+| Core library (ingest / recall / lifecycle) | ✅ Done (v0.2.16) |
 | Backends (SQLite default, pgvector optional) | ✅ Done (v0.2.14) |
-| Python API (`MemoryClient`) | ✅ Done (v0.2.15) |
+| Python API (`MemoryClient`) | ✅ Done (v0.2.16) |
 | CLI (`luminary-memory`) | ✅ Done (v0.2.7) |
-| Hermes memory provider | ✅ Done (v0.2.1, enhanced v0.2.15) |
-| Dashboard settings | ✅ Done (v0.2.10) |
+| Hermes memory provider | ✅ Done (v0.2.16, 29 dashboard fields) |
+| Dashboard settings | ✅ Done (v0.2.16, 100% schema coverage) |
 | Recall quality (weighted fusion + query expansion) | ✅ Done (v0.2.15, rule-aware expansion) |
 | Persistent context (per-turn rule injection) | ✅ Done (v0.2.11, adaptive importance v0.2.15) |
 | Core memory (DB-backed, auto-loaded every session) | ✅ Done (v0.2.13, integrity v0.2.15) |
@@ -37,8 +37,8 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 | Rule hygiene (pinning, auto-replace, summary-only) | ✅ Done (v0.2.11) |
 | Performance (vectorized scans, batched writes) | ✅ Done (v0.2.12) |
 | Store hardening (max cap, dedup, selective curation) | ✅ Done (v0.2.12) |
-| Website | ✅ Done (v0.2.15) |
-| Documentation | ✅ Done (v0.2.15) |
+| Website | ✅ Done (v0.2.16) |
+| Documentation | ✅ Done (v0.2.16, config-ref + agent-tools) |
 | Test coverage | ✅ 93% total |
 
 ---
@@ -65,10 +65,19 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 | v0.2.13 | 2026-08-18 | Core memory (DB-backed MEMORY.md, auto-loaded every session), keyword recall OR join, prefetch core block |
 | v0.2.14 | 2026-08-18 | SQLite backend hardening: FTS5 rebuild migration, dead-code cleanup, 12 new backend tests, backends.md rewrite |
 | v0.2.15 | 2026-08-18 | Adaptive memory: importance on recall, rule-aware query expansion, content-level anti-dup, core integrity tests |
+| v0.2.16 | 2026-08-19 | Complete dashboard config coverage (29 fields), importance_recall_boost dual config+env, docs/config-reference.md & docs/agent-tools.md, website v0.2.16 |
 
 ---
 
 ## Roadmap
+
+### v0.2.16 — Complete Dashboard Coverage & Config Reference (✅ released)
+
+- [x] Complete dashboard coverage — 7 missing runtime keys exposed in `CONFIG_SCHEMA` (29 fields total).
+- [x] `importance_recall_boost` in provider config & dashboard.
+- [x] Authoritative configuration reference (`docs/config-reference.md`).
+- [x] Dedicated agent tools reference (`docs/agent-tools.md`).
+- [x] Website v0.2.16 update & Agent Tools stat card restructuring.
 
 ### v0.2.15 — Adaptive Memory & Core Integrity (✅ released)
 

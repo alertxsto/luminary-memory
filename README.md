@@ -77,8 +77,9 @@ Two optional LLM-powered features keep the store sharp:
 - **`ingest_llm`**, evaluates every turn before saving: drops chit-chat, stores factual summaries instead of raw transcripts.
 - **`auto_maintain`**, reviews the store at session end: keeps current facts, updates changed ones, deletes stale or duplicate ones.
 
-22 settings are exposed in the [Hermes dashboard](https://alertxsto.github.io/luminary-memory) for zero-hassle tuning. See
-[hermes/README.md](hermes/README.md) for the one-shot installer and full configuration.
+29 settings are exposed in the [Hermes dashboard](https://alertxsto.github.io/luminary-memory) for zero-hassle tuning. See
+[docs/config-reference.md](docs/config-reference.md) for the complete reference and
+[hermes/README.md](hermes/README.md) for the one-shot installer.
 
 ---
 
@@ -196,12 +197,14 @@ after, and a background lifecycle keeps the store lean.
 | [Quickstart](docs/quickstart.md) | Install and first use |
 | [Architecture](docs/architecture.md) | Pipelines and data flow |
 | [Python API](docs/api.md) | `MemoryClient` reference |
+| [Agent Tools](docs/agent-tools.md) | 6 tools reference + parameter schema |
 | [CLI](docs/cli.md) | All subcommands |
 | [Recall](docs/recall.md) | Four strategies + fusion |
 | [Lifecycle](docs/lifecycle.md) | Cleanup, consolidation, pruning, LLM maintenance |
 | [Backends](docs/backends.md) | SQLite vs pgvector |
+| [Configuration reference](docs/config-reference.md) | All 37 env vars + provider config |
 | [Hermes integration](docs/hermes-integration.md) | Provider, config, installer |
-| [Roadmap](ROADMAP.md) | v0.2.15 → v1.0.0 |
+| [Roadmap](ROADMAP.md) | v0.2.16 → v1.0.0 |
 | [Benchmarks](benchmarks/RESULTS.md) | ~77 ms recall @ 5k (p50), 0 LLM tokens |
 
 ---
