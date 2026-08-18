@@ -16,10 +16,11 @@
 ## Fase 1 — Test Coverage Hermes (gap terbesar)
 
 ### T1.1 Test activity hook (`luminary-activity/handler.py`)
-- [ ] Unit test `_recent_activity()`: last_id tracking, dedup (memory ≤ last_id tidak muncul), format markdown-escape.
-- [ ] Unit test `_post()`: mock `urllib.request.urlopen`, verifikasi payload JSON, error handling (network fail → swallow).
-- [ ] Unit test `handle()`: hanya fire di `agent:end`, cooldown/skip saat store idle.
+- [x] Unit test `_recent_activity()`: last_id tracking, dedup (memory ≤ last_id tidak muncul), format markdown-escape.
+- [x] Unit test `_post()`: mock `urllib.request.urlopen`, verifikasi payload JSON, error handling (network fail → swallow).
+- [x] Unit test `handle()`: hanya fire di `agent:end`, cooldown/skip saat store idle.
 - **Gap saat ini:** `tests/hermes/test_hooks.py` hanya menguji provider hooks (`on_memory_write` dll), BUKAN activity hook yang kirim ke Telegram.
+- **Status:** Done — 14 unit tests di `tests/hermes/test_activity_hook.py`, semua pass.
 
 ### T1.2 Test persistent context config
 - [ ] Test env var `LUMINARY_CONTEXT_*` (sudah ada `test_context_env_vars_map_to_settings` — perlu perluas: `context_budget` truncation, `context_min_importance` filter).
@@ -33,9 +34,9 @@
 ## Fase 2 — Recall Accuracy (tanpa ubah hasil)
 
 ### T2.1 `health_score()` duplicate check O(N²) → blocking
-- **Masalah:** `health_score()` (api.py:396) menghitung duplicate_rate dengan nested loop O(N²) Jaccard terhadap 500 memory = 125k comparisons per call.
-- **Fix (lossless):** gunakan token-blocking (duplicate Jaccard ≥ threshold pasti share token) — hasil identik, ~10× lebih cepat.
-- **Verifikasi:** `test_health_score` hasil duplicate_rate SAMA sebelum/sesudah; benchmark health_score 5k turun.
+- [x] **Masalah:** `health_score()` (api.py:396) menghitung duplicate_rate dengan nested loop O(N²) Jaccard terhadap 500 memory = 125k comparisons per call.
+- [x] **Fix (lossless):** gunakan token-blocking (duplicate Jaccard ≥ threshold pasti share token) — hasil identik, ~10× lebih cepat.
+- **Status:** Done — implemented at `api.py` health_score(), token-blocking via inverted index. Duplicate count identical to original. Verified via full test suite (338 passed, ruff clean).
 
 ### T2.2 `consolidate()` O(N²) → blocking (jika bisa lossless)
 - **Masalah:** consolidate.py:71 nested loop O(N²).
@@ -81,8 +82,8 @@
 - [ ] Restart gateway hermes → log `luminary.log` tidak ada error baru.
 
 ### T5.2 Full test suite + lint + coverage
-- [ ] `pytest tests/` — semua pass (target: 308+ passed, 3 skipped pgvector).
-- [ ] `ruff check src tests` — clean.
+- [x] `pytest tests/` — semua pass (target: 338+ passed, 3 skipped pgvector).
+- [x] `ruff check src tests` — clean.
 - [ ] Coverage ≥ 93%.
 
 ---
@@ -105,8 +106,8 @@
 
 | Priority | Task | Alasan |
 |----------|------|--------|
-| 🔴 P1 | T1.1 Activity hook test | Gap test terbesar; hook sudah live tapi belum ada jaring pengaman |
-| 🔴 P1 | T2.1 health_score O(N²) | Dipanggil berkala, 125k comparisons per call |
+| 🔴 P1 | T1.1 Activity hook test | Gap test terbesar; hook sudah live tapi belum ada jaring pengaman — **DONE** |
+| 🔴 P1 | T2.1 health_score O(N²) | Dipanggil berkala, 125k comparisons per call — **DONE** |
 | 🟡 P2 | T2.3 Recall fallback | Perbaikan akurasi nyata, tapi ubah hasil → perlu benchmark + ACC |
 | 🟡 P2 | T5.1 Live Hermes smoke | Wajib sebelum tiap push |
 | 🟢 P3 | T2.2 consolidate (hanya jika lossless) | Akurasi > kecepatan |

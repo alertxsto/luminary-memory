@@ -1,0 +1,206 @@
+"""Unit tests for the luminary-activity hook (handler.py).
+
+The hook surfaces new memories to a Telegram chat after agent turns.
+These tests mock the Telegram API and SQLite store; no live network.
+"""
+import importlib.util
+import json
+import os
+import sqlite3
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+# ============================================================================
+# Helpers — load handler module with mocked globals
+# ============================================================================
+
+def _load_handler(tmp_path, **env_overrides):
+    """Load handler.py with its module-level globals pointed at tmp_path."""
+    db_path = str(tmp_path / "memory.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS memories (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT, "
+        "created_at TEXT, updated_at TEXT, last_accessed_at TEXT, access_count INTEGER, "
+        "importance REAL DEFAULT 0.5, source TEXT, tags TEXT DEFAULT '[]', metadata TEXT DEFAULT '{}', "
+        "ttl_seconds INTEGER, embedding BLOB)"
+    )
+    conn.commit()
+    conn.close()
+
+    env = dict(os.environ)
+    env.update({
+        "TELEGRAM_BOT_TOKEN": "fake-token",
+        "LUMINARY_HOOK_CHAT_ID": "12345",
+        "LUMINARY_DB_PATH": db_path,
+        **(env_overrides or {}),
+    })
+
+    mock_log_dir = tmp_path / "hooks" / "luminary-activity"
+    mock_log_dir.mkdir(parents=True, exist_ok=True)
+
+    with patch.dict(os.environ, env, clear=True),          patch.object(Path, "home", return_value=tmp_path):
+        # Load handler.py as a module from its file path
+        handler_path = Path(__file__).parent.parent.parent / "hermes" / "hooks" / "luminary-activity" / "handler.py"
+        spec = importlib.util.spec_from_file_location("luminary_activity_handler", handler_path)
+        h = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(h)
+        # Override state/log paths to our controlled tmp directory
+        h.STATE_FILE = tmp_path / "state.json"
+        h.LOG_FILE = tmp_path / "hook.log"
+        h.DB_PATH = db_path
+        return h
+
+
+def _seed(db_path, contents):
+    conn = sqlite3.connect(db_path)
+    for i, c in enumerate(contents, 1):
+        conn.execute(
+            "INSERT INTO memories (id, content) VALUES (?, ?)",
+            (i, c),
+        )
+    conn.commit()
+    conn.close()
+
+
+# ============================================================================
+# _recent_activity — dedup, last_id tracking, content format
+# ============================================================================
+
+def test_recent_activity_first_run_returns_only_newest(tmp_path):
+    """First run (last_id=0): only the single newest memory is shown."""
+    h = _load_handler(tmp_path)
+    _seed(h.DB_PATH, ["old fact", "middle fact", "newest fact"])
+
+    result = h._recent_activity()
+    assert result is not None
+    assert "newest fact" in result
+    assert "old fact" not in result
+    assert "1 memory" in result
+
+
+def test_recent_activity_shows_new_memories_since_last_id(tmp_path):
+    """After last_id is set, only memories with id > last_id appear."""
+    h = _load_handler(tmp_path)
+    h._set_last_shown_id(2)
+    _seed(h.DB_PATH, ["shown before", "already seen", "new fact 1", "new fact 2"])
+
+    result = h._recent_activity()
+    assert result is not None
+    assert "new fact 1" in result
+    assert "new fact 2" in result
+    assert "already seen" not in result
+    assert "2 memories" in result
+
+
+def test_recent_activity_no_new_memories_returns_none(tmp_path):
+    h = _load_handler(tmp_path)
+    h._set_last_shown_id(99)
+    _seed(h.DB_PATH, ["old fact"])
+
+    assert h._recent_activity() is None
+
+
+def test_recent_activity_empty_store_returns_none(tmp_path):
+    h = _load_handler(tmp_path)
+    assert h._recent_activity() is None
+
+
+def test_recent_activity_truncates_long_content(tmp_path):
+    h = _load_handler(tmp_path)
+    h._set_last_shown_id(0)
+    long = "A" * 200 + " final word"
+    _seed(h.DB_PATH, [long])
+
+    result = h._recent_activity()
+    assert len(result) < 200, f"too long: {len(result)}"
+    assert "…" in result
+
+
+def test_recent_activity_marks_last_shown_id(tmp_path):
+    h = _load_handler(tmp_path)
+    h._set_last_shown_id(2)
+    _seed(h.DB_PATH, ["a", "b", "c", "d", "e"])
+
+    h._last_shown_id()
+    h._recent_activity()
+    after = h._last_shown_id()
+    assert after >= 4, f"last_shown_id should advance past shown ids, got {after}"
+
+
+def test_recent_activity_missing_db_returns_none(tmp_path):
+    h = _load_handler(tmp_path)
+    h.DB_PATH = str(tmp_path / "nonexistent.db")
+    assert h._recent_activity() is None
+
+
+# ============================================================================
+# _post — payload, error handling, token/chat missing
+# ============================================================================
+
+def test_post_sends_correct_payload(tmp_path):
+    h = _load_handler(tmp_path)
+
+    with patch("urllib.request.urlopen") as mock_open:
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"ok":true}'
+        mock_open.return_value.__enter__.return_value = mock_resp
+
+        h._post("test message")
+
+        args, _ = mock_open.call_args
+        req = args[0]
+        body = json.loads(req.data.decode())
+        assert body["chat_id"] == "12345"
+        assert body["text"] == "test message"
+        assert body["parse_mode"] == "Markdown"
+
+
+def test_post_swallows_network_error(tmp_path):
+    h = _load_handler(tmp_path)
+
+    with patch("urllib.request.urlopen", side_effect=OSError("network down")):
+        # Must not raise
+        h._post("test message")
+
+
+def test_post_skips_when_token_missing(tmp_path):
+    h = _load_handler(tmp_path, TELEGRAM_BOT_TOKEN="")
+    # Must not raise
+    h._post("should be skipped")
+
+
+def test_post_skips_when_chat_missing(tmp_path):
+    h = _load_handler(tmp_path, LUMINARY_HOOK_CHAT_ID="", TELEGRAM_HOME_CHANNEL="")
+    # Must not raise
+    h._post("should be skipped")
+
+
+# ============================================================================
+# handle — only on agent:end, skip agent:start (the hook YAML fires both)
+# ============================================================================
+
+def test_handle_fires_on_agent_end(tmp_path):
+    h = _load_handler(tmp_path)
+    with patch.object(h, "_recent_activity", return_value="test line") as mock_ra, \
+         patch.object(h, "_post") as mock_post:
+        h.handle("agent:end", {})
+        mock_ra.assert_called_once()
+        mock_post.assert_called_once_with("test line")
+
+
+def test_handle_ignores_agent_start(tmp_path):
+    h = _load_handler(tmp_path)
+    with patch.object(h, "_recent_activity") as mock_ra, \
+         patch.object(h, "_post") as mock_post:
+        h.handle("agent:start", {})
+        mock_ra.assert_not_called()
+        mock_post.assert_not_called()
+
+
+def test_handle_skips_when_store_idle(tmp_path):
+    h = _load_handler(tmp_path)
+    with patch.object(h, "_recent_activity", return_value=None), \
+         patch.object(h, "_post") as mock_post:
+        h.handle("agent:end", {})
+        mock_post.assert_not_called()

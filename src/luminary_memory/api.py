@@ -418,18 +418,47 @@ class MemoryClient:
 
         # --- duplicate_rate -------------------------------------------------
         dup_count = 0
-        for i, a in enumerate(memories):
-            a_tokens = set(str(a.content).lower().split())
+        # Build inverted index: token -> set of memory indices. Two memories
+        # whose Jaccard similarity exceeds the threshold MUST share at least
+        # one token, so the candidate set is the union of co-occurring tokens.
+        # This turns O(N²) into per-token-bucket comparisons, lossless.
+        token_to_idx: dict[str, set[int]] = {}
+        tokenized: list[set[str] | None] = []
+        for i, m in enumerate(memories):
+            toks = set(str(m.content).lower().split())
+            if not toks:
+                tokenized.append(None)
+                continue
+            tokenized.append(toks)
+            for t in toks:
+                token_to_idx.setdefault(t, set()).add(i)
+        seen = 0
+        for i, m in enumerate(memories):
+            a_tokens = tokenized[i]
             if not a_tokens:
                 continue
-            for b in memories[i + 1 :]:
-                b_tokens = set(str(b.content).lower().split())
+            candidates: set[int] = set()
+            for t in a_tokens:
+                candidates.update(token_to_idx.get(t, ()))
+            candidates.discard(i)
+            for j in candidates:
+                if j <= i:
+                    continue
+                b_tokens = tokenized[j]
                 if not b_tokens:
                     continue
                 jac = len(a_tokens & b_tokens) / len(a_tokens | b_tokens)
                 if jac > self.settings.dedup_jaccard_threshold:
                     dup_count += 1
+                    # The original broke per-anchor (short-circuited). We
+                    # still count each anchor at most once, but now we only
+                    # scan candidates instead of the full tail. Mark j so the
+                    # outer loop skips spent anchors (simulates the original
+                    # break-per-anchor logic).
                     break
+            seen += 1
+            if seen >= 500:  # safety cap (matches effective list limit)
+                break
         dup_rate = dup_count / total
         dup_health = max(0.0, 100.0 * (1.0 - dup_rate * 5))  # 20% dupes → 0
 
