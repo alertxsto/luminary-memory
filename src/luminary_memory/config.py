@@ -77,6 +77,11 @@ class Settings:
         }
     )
     token_budget: int = field(default_factory=lambda: _env_int("LUMINARY_TOKEN_BUDGET", 4096))
+    max_memories: int | None = field(default_factory=lambda: _env_int("LUMINARY_MAX_MEMORIES", 1000))
+    # persistent context (Hermes provider)
+    context_top_n: int = field(default_factory=lambda: _env_int("LUMINARY_CONTEXT_TOP_N", 8))
+    context_budget: int = field(default_factory=lambda: _env_int("LUMINARY_CONTEXT_BUDGET", 2000))
+    context_min_importance: float = field(default_factory=lambda: _env_float("LUMINARY_CONTEXT_MIN_IMPORTANCE", 0.0))
     # lifecycle
     ttl_default_seconds: int | None = field(default_factory=lambda: _env_int("LUMINARY_TTL_DEFAULT_SECONDS", 0) or None)
     prune_min_importance: float = field(default_factory=lambda: _env_float("LUMINARY_PRUNE_MIN_IMPORTANCE", 0.2))
@@ -119,6 +124,10 @@ class Settings:
             "rrf_k": self.rrf_k,
             "dedup_jaccard_threshold": self.dedup_jaccard_threshold,
             "token_budget": self.token_budget,
+            "max_memories": self.max_memories,
+            "context_top_n": self.context_top_n,
+            "context_budget": self.context_budget,
+            "context_min_importance": self.context_min_importance,
             "ttl_default_seconds": self.ttl_default_seconds,
             "prune_min_importance": self.prune_min_importance,
             "consolidate_jaccard_threshold": self.consolidate_jaccard_threshold,

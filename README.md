@@ -90,7 +90,10 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 |---------|---------|---------|
 | `backend` | `LUMINARY_BACKEND` | `sqlite` |
 | `db_path` | `LUMINARY_DB_PATH` | `luminary_memory.db` |
-| `pg_dsn` | `LUMINARY_PG_DSN` |, (pgvector only) |
+| `pg_dsn` | `LUMINARY_PG_DSN` | `postgresql://localhost/luminary_memory` (pgvector only) |
+| `pg_hnsw_index` | `LUMINARY_PG_HNSW_INDEX` | `false` |
+| `pg_hnsw_m` | `LUMINARY_PG_HNSW_M` | `16` |
+| `pg_hnsw_ef_construction` | `LUMINARY_PG_HNSW_EF_CONSTRUCTION` | `64` |
 | `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` |
 | `embedding_dim` | `LUMINARY_EMBEDDING_DIM` | `384` |
 | `ingest_llm` | `LUMINARY_INGEST_LLM` | `false` |
@@ -109,8 +112,25 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `rule_auto_replace` | `LUMINARY_RULE_AUTO_REPLACE` | `true` |
 | `rule_auto_replace_threshold` | `LUMINARY_RULE_AUTO_REPLACE_THRESHOLD` | `0.85` |
 | `rule_importance` | `LUMINARY_RULE_IMPORTANCE` | `0.9` |
+| `context_top_n` | `LUMINARY_CONTEXT_TOP_N` | `8` |
+| `context_budget` | `LUMINARY_CONTEXT_BUDGET` | `2000` |
+| `context_min_importance` | `LUMINARY_CONTEXT_MIN_IMPORTANCE` | `0.0` |
+| `query_planner` | `LUMINARY_QUERY_PLANNER` | `true` |
+| `query_planner_keyword_threshold` | `LUMINARY_QUERY_PLANNER_KEYWORD_THRESHOLD` | `0.9` |
+| `ingest_whitelist` | `LUMINARY_INGEST_WHITELIST` | `[]` |
+| `llm_base_url` | `LUMINARY_LLM_BASE_URL` | `""` |
+| `llm_api_key` | `LUMINARY_LLM_API_KEY` | `""` |
+| `llm_model` | `LUMINARY_LLM_MODEL` | `gpt-4o-mini` |
+| `llm_timeout` | `LUMINARY_LLM_TIMEOUT` | `10` |
+| `llm_max_tokens` | `LUMINARY_LLM_MAX_TOKENS` | `512` |
+| `rule_keywords` | `LUMINARY_RULE_KEYWORDS` | `JANGAN,WAJIB,HARUS,...` |
 
-See [hermes/SKILL.md](hermes/SKILL.md) for the full provider config table (22 settings).
+> Provider-specific settings (Hermes dashboard): `max_memories`, `context_*`,
+> `mode`, `recall_limit`, `auto_recall`, `recall_sync`, `auto_retain`,
+> `retain_every_n_turns`, `retain_user_prefix` / `retain_assistant_prefix`,
+> `ingest_llm`, `auto_maintain`, `consolidate_semantic`, `importance_auto`,
+> `recall_indicator`, `retain_indicator` — live in `~/.hermes/luminary/config.json`.
+> See [hermes/SKILL.md](hermes/SKILL.md) for the full provider config table.
 
 ---
 
@@ -178,7 +198,7 @@ after, and a background lifecycle keeps the store lean.
 | [Backends](docs/backends.md) | SQLite vs pgvector |
 | [Hermes integration](docs/hermes-integration.md) | Provider, config, installer |
 | [Roadmap](ROADMAP.md) | v0.2.12 → v1.0.0 |
-| [Benchmarks](benchmarks/RESULTS.md) | 230 ms recall @ 5k, 0 LLM tokens |
+| [Benchmarks](benchmarks/RESULTS.md) | ~77 ms recall @ 5k (p50), 0 LLM tokens |
 
 ---
 

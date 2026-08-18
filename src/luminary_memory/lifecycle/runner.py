@@ -31,6 +31,11 @@ def run_lifecycle(
         getattr(settings, "rule_importance", 0.9) if settings else 0.9
     )
 
+    # max_memories cap (env LUMINARY_MAX_MEMORIES / Settings / provider config).
+    # Pinned rules are exempt inside prune().
+    max_count = int(getattr(settings, "max_memories", 0) or 0) if settings else 0
+    max_count = max_count or None
+
     # Re-estimate importance before pruning so values reflect current value.
     # Pinned memories (importance >= pin_threshold, e.g. durable rules) are
     # never downgraded by re-estimation.
@@ -62,7 +67,7 @@ def run_lifecycle(
     result = {
         "cleanup": int(cleanup_expired(backend)),
         "consolidate": int(consolidate(backend, threshold=consolidate_threshold, semantic=semantic, pin_threshold=pin_threshold)),
-        "prune": int(prune(backend, min_importance=min_importance, pin_threshold=pin_threshold)),
+        "prune": int(prune(backend, min_importance=min_importance, pin_threshold=pin_threshold, max_count=max_count)),
         "reestimated": reestimated,
     }
     logger.info("run_lifecycle %s (%.1fs)", result, time.monotonic() - start)

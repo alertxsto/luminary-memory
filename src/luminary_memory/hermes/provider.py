@@ -148,9 +148,21 @@ class LuminaryMemoryProvider(MemoryProvider):
             db_path=db_path,
             token_budget=int(self._config.get("token_budget", 2048)),
             ingest_llm=bool(self._config.get("ingest_llm", False)),
+            max_memories=int(self._config.get("max_memories", 1000) or 0) or None,
         )
         if self._config.get("ingest_llm"):
             settings.ingest_llm = True
+        # Persistent-context knobs: env vars (Settings) are the source of
+        # truth; an explicit config.json value (differing from the default)
+        # overrides the env default so dashboard edits still win.
+        defaults = _DEFAULTS
+        for key, attr in (
+            ("context_top_n", "context_top_n"),
+            ("context_budget", "context_budget"),
+            ("context_min_importance", "context_min_importance"),
+        ):
+            if key in self._config and self._config.get(key) != defaults.get(key):
+                setattr(settings, attr, self._config[key])
         self._client = MemoryClient(settings=settings)
         self._shutting_down.clear()
         self._start_writer()
@@ -519,9 +531,12 @@ class LuminaryMemoryProvider(MemoryProvider):
         if not self._client:
             return ""
         try:
-            top_n = int(self._config.get("context_top_n", 8))
-            budget = int(self._config.get("context_budget", 2000))
-            min_imp = float(self._config.get("context_min_importance", 0.0))
+            # Read from the client's merged settings (env var via Settings,
+            # overridden by config.json when set explicitly).
+            settings = self._client.settings
+            top_n = int(getattr(settings, "context_top_n", 8))
+            budget = int(getattr(settings, "context_budget", 2000))
+            min_imp = float(getattr(settings, "context_min_importance", 0.0))
             top = getattr(self._client.backend, "top_by_importance", None)
             if top is not None:
                 mems = top(top_n, min_importance=min_imp)

@@ -84,3 +84,67 @@ def test_config_schema_standalone_shim(monkeypatch):
     assert "auto_maintain" in keys
     assert "ingest_llm" in keys
     assert len(schema.fields) >= 18
+
+
+def test_context_env_vars_map_to_settings(monkeypatch):
+    """LUMINARY_CONTEXT_* env vars must exist and drive Settings defaults."""
+    from luminary_memory.config import Settings
+
+    monkeypatch.setenv("LUMINARY_CONTEXT_TOP_N", "12")
+    monkeypatch.setenv("LUMINARY_CONTEXT_BUDGET", "3000")
+    monkeypatch.setenv("LUMINARY_CONTEXT_MIN_IMPORTANCE", "0.5")
+
+    s = Settings()
+    assert s.context_top_n == 12
+    assert s.context_budget == 3000
+    assert s.context_min_importance == 0.5
+
+
+def test_context_env_vars_drive_provider_persistent_context(tmp_path, monkeypatch):
+    """The provider's persistent-context build honours LUMINARY_CONTEXT_*."""
+    from luminary_memory.hermes.provider import LuminaryMemoryProvider
+
+    monkeypatch.setenv("LUMINARY_CONTEXT_TOP_N", "2")
+    monkeypatch.setenv("LUMINARY_CONTEXT_BUDGET", "2000")
+    monkeypatch.setenv("LUMINARY_CONTEXT_MIN_IMPORTANCE", "0.0")
+
+    p = LuminaryMemoryProvider()
+    p.initialize("s1", hermes_home=str(tmp_path), platform="cli", agent_identity="test")
+
+    class _E:
+        def embed(self, t): return [0.1, 0.1, 0.1]
+        def embed_batch(self, ts): return [[0.1, 0.1, 0.1] for _ in ts]
+
+    p._client.engine = _E()
+    for i in range(5):
+        p._client.ingest(f"fact number {i}", tags=["t"], source="test")
+
+    block = p._build_persistent_context()
+    # top_n=2 -> only 2 memories injected
+    assert block.count("\n- ") == 2
+    p.shutdown()
+
+
+def test_explicit_config_overrides_env_context(tmp_path, monkeypatch):
+    """A config.json value that differs from default wins over the env var
+    (dashboard edits must stay authoritative)."""
+    from luminary_memory.hermes.config import save_config
+    from luminary_memory.hermes.provider import LuminaryMemoryProvider
+
+    monkeypatch.setenv("LUMINARY_CONTEXT_TOP_N", "2")
+    save_config({"context_top_n": 5}, str(tmp_path))
+
+    p = LuminaryMemoryProvider()
+    p.initialize("s1", hermes_home=str(tmp_path), platform="cli", agent_identity="test")
+
+    class _E:
+        def embed(self, t): return [0.1, 0.1, 0.1]
+        def embed_batch(self, ts): return [[0.1, 0.1, 0.1] for _ in ts]
+
+    p._client.engine = _E()
+    for i in range(8):
+        p._client.ingest(f"fact number {i}", tags=["t"], source="test")
+
+    block = p._build_persistent_context()
+    assert block.count("\n- ") == 5, "config.json value (5) must override env (2)"
+    p.shutdown()

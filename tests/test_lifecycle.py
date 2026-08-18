@@ -187,3 +187,30 @@ def test_consolidate_degenerate_embedding_falls_back_jaccard(tmp_path):
     merged = consolidate(b, semantic=True, semantic_threshold=0.85)
     assert merged == 0, "degenerate embeddings must not merge unrelated memories"
     assert b.count() == 2
+
+
+def test_run_lifecycle_applies_max_memories_cap(tmp_path):
+    """run_lifecycle must enforce the max_memories cap (regression: the cap
+    was never passed to prune, so oversized stores never shrank)."""
+    from luminary_memory.api import MemoryClient
+
+    class _E:
+        def embed(self, t): return [0.1, 0.1, 0.1]
+        def embed_batch(self, ts): return [[0.1, 0.1, 0.1] for _ in ts]
+
+    c = MemoryClient(db_path=str(tmp_path / "cap.db"), engine=_E())
+    c.settings.max_memories = 5
+    for i in range(10):
+        c.ingest(f"fact number {i}", tags=["t"], source="test")
+    assert c.count() == 10
+
+    res = c.run_lifecycle()
+    assert res.get("prune", 0) >= 5, f"expected prune to enforce cap, got {res}"
+    assert c.count() <= 5, f"store must shrink to <=5, got {c.count()}"
+    c.close()
+
+
+def test_max_memories_env_var_maps_to_settings(monkeypatch):
+    from luminary_memory.config import Settings
+    monkeypatch.setenv("LUMINARY_MAX_MEMORIES", "250")
+    assert Settings().max_memories == 250

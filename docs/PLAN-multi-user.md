@@ -54,7 +54,7 @@
 
 ### B3, Docs
 
-- `docs/hermes-integration.md`, table already documents 20 fields; verify matches schema exactly.
+- `docs/hermes-integration.md`, table already documents 22 fields; verify matches schema exactly.
 
 ---
 
@@ -70,7 +70,7 @@
 - **Graph section**, showcase `luminary-memory graph` (new CLI feature) with an example output block.
 - **Multi-user**, add to features list (after Phase A ships).
 - **Version badge**, stays consistent (bump-version.sh handles).
-- **Performance numbers**, 230ms recall @5k, 0 LLM tokens (already in README; ensure site matches).
+- **Performance numbers**, ~77ms recall @5k, 0 LLM tokens (already in README; ensure site matches).
 - Any stale copy / broken links.
 
 ### C3, Verify
@@ -90,7 +90,7 @@
 - [ ] `user_id` column exists (SQLite + pgvector), existing stores migrate cleanly
 - [ ] ingest/recall/graph/list/count accept `user_id`; global default back-compat
 - [ ] Tests green, coverage ≥ 90%, ruff clean
-- [ ] Dashboard 20 fields verified live (save/load round-trip)
+- [ ] Dashboard 22 fields verified live (save/load round-trip)
 - [ ] Website polished (graph showcase + consistent version), screenshot-verified
 - [ ] Docs sweep complete; single consistent version
 - [ ] Release: v0.2.8 (B+C) then v0.3.0 (A)

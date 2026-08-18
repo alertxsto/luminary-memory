@@ -153,9 +153,9 @@
         <p class="stat-sub">Retrieval runs locally via CPU ONNX embeddings. You never burn API tokens to search memory.</p>
       </div>
       <div class="stat-card">
-        <span class="stat-num">~70<em>ms</em></span>
+        <span class="stat-num">~77<em>ms</em></span>
         <h3 class="stat-label">End-to-End Recall (p50, 5k store)</h3>
-        <p class="stat-sub">Measured on 5,000-memory stores. 4 parallel strategies fused, deterministic quality (MRR 1.0 on synthetic).</p>
+        <p class="stat-sub">Measured on 5,000-memory stores (deterministic pipeline). 4 parallel strategies fused, MRR 1.0.</p>
       </div>
       <div class="stat-card">
         <span class="stat-num">4</span>
@@ -224,12 +224,12 @@
       </div>
       <div class="bench-row">
         <div class="bench-metric">Recall latency, 1k store</div>
-        <div class="bench-sqlite">~10 ms p50 (real ONNX on CPU)</div>
+        <div class="bench-sqlite">~9 ms p50 (deterministic pipeline)</div>
         <div class="bench-pg bench-pg-missing">not yet benchmarked</div>
       </div>
       <div class="bench-row">
         <div class="bench-metric">Recall latency, 5k store</div>
-        <div class="bench-sqlite">~70 ms p50 (real ONNX, vectorized)</div>
+        <div class="bench-sqlite">~77 ms p50 (deterministic pipeline, vectorized)</div>
         <div class="bench-pg bench-pg-missing">not yet benchmarked</div>
       </div>
       <div class="bench-row">
