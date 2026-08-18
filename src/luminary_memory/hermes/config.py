@@ -7,8 +7,11 @@ defaults, so the file is optional and forward-compatible.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _CONFIG_DIR = "luminary"
 _CONFIG_FILE = "config.json"
@@ -71,7 +74,14 @@ def save_config(values: dict, hermes_home: str) -> None:
     used when nothing has been persisted yet.
     """
     current = load_config(hermes_home)
-    current.update({k: v for k, v in values.items() if k in _DEFAULTS})
+    known = {k: v for k, v in values.items() if k in _DEFAULTS}
+    unknown = {k for k in values if k not in _DEFAULTS}
+    if unknown:
+        logger.warning(
+            "save_config: dropping unknown keys (not in _DEFAULTS): %s",
+            sorted(unknown),
+        )
+    current.update(known)
 
     cfg_dir = Path(hermes_home) / _CONFIG_DIR
     cfg_dir.mkdir(parents=True, exist_ok=True)
