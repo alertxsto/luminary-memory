@@ -23,3 +23,39 @@ jobs:
         run: ruff check src tests
       - name: Test
         run: pytest -q
+
+  pgvector-integration:
+    name: PostgreSQL pgvector integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: luminary
+          POSTGRES_PASSWORD: luminary
+          POSTGRES_DB: luminary
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check src tests
+      - name: Run pgvector integration tests
+        env:
+          LUMINARY_PG_DSN: postgresql://luminary:luminary@localhost:5432/luminary
+        run: >-
+          python -m coverage run --source=src/luminary_memory/backends
+          -m pytest -q tests/test_backend_pgvector.py
+          && python -m coverage report -m
+          src/luminary_memory/backends/pgvector.py
