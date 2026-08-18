@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.2.14] - 2026-08-18
+
+### Fixed
+
+- **FTS5 index rebuild on schema upgrade** — a database created before the
+  FTS5 virtual table existed left every pre-existing memory keyword-invisible
+  (keyword recall returned zero hits even though the store was full). `init_schema`
+  now detects the upgrade and runs a one-time FTS `rebuild`.
+
+### Changed
+
+- `by_tags` uses the top-level `json` import instead of a redundant local one.
+
+### Removed
+
+- Dead `_FTS5_SPECIAL` constant (unused; `_sanitize_fts_query` relies on a regex).
+
+### Tests
+
+- Extended backend coverage (real `SQLiteBackend`, no stubs): FTS injection
+  sanitization, FTS sync through update/delete, keyword OR-join multi-term,
+  `vector_search` ordering/limits/degenerate-query, `by_tags` multi/corrupt,
+  `temporal_scan`, `scan_embeddings` vs matrix consistency, `recent`
+  pagination edges, embedding float32 round-trip, and a 4-thread
+  concurrent recall+ingest test.
+- Schema: FTS rebuild on upgrade + idempotent reopen tests.
+
+### Docs
+
+- `docs/backends.md` — SQLite section now documents FTS5 external-content
+  triggers + rebuild migration, thread-local connections, lean scans, and the
+  WAL status.
+
 ## [0.2.13] - 2026-08-18
 
 ### Added

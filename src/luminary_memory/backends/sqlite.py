@@ -13,10 +13,6 @@ from luminary_memory.types import Memory
 
 logger = logging.getLogger(__name__)
 
-# FTS5 special characters that can alter query semantics (syntax injection).
-_FTS5_SPECIAL = ('"', "*", ":", "^", "(", ")", "{", "}", "[", "]", "-", "+", "~", "NEAR", "AND", "OR", "NOT")
-
-
 def _sanitize_fts_query(query: str) -> str:
     """Build a safe FTS5 query from plain user text.
 
@@ -421,13 +417,11 @@ class SQLiteBackend(MemoryBackend):
         if not tags:
             return set()
         rows = self.conn.execute("SELECT id, tags FROM memories").fetchall()
-        import json as _json
-
         wanted = set(tags)
         ids: set[int] = set()
         for r in rows:
             try:
-                tlist = _json.loads(r["tags"] or "[]")
+                tlist = json.loads(r["tags"] or "[]")
             except Exception:  # noqa: BLE001
                 tlist = []
             if wanted & set(tlist):

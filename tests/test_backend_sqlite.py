@@ -157,3 +157,165 @@ def test_by_tag_top_respects_limit(tmp_path):
     for i in range(5):
         b.add(Memory(content=f"rule {i}", tags=["core"], importance=0.9))
     assert len(b.by_tag_top("core", 3)) == 3
+
+
+# ============================================================================
+# Extended backend coverage (Phase 3 — T3.x)
+# ============================================================================
+
+def test_fts_sanitize_neutralizes_injection(tmp_path):
+    from luminary_memory.backends.sqlite import _sanitize_fts_query
+
+    for nasty in ['o*r NEAR "x"', '();--', 'alpha OR beta', 'quote "q" xy', 'plus - minus']:
+        safe = _sanitize_fts_query(nasty)
+        # empty stays the empty-phrase sentinel; otherwise every term is
+        # wrapped in quotes and joined by OR so FTS5 operators can't leak.
+        assert safe == '" "' or (safe.startswith('"') and safe.endswith('"') and " OR " in safe), \
+            f"unsafe output for {nasty!r}: {safe!r}"
+    assert _sanitize_fts_query("") == '" "'
+    assert _sanitize_fts_query("   ") == '" "'
+
+
+def test_keyword_fts_syncs_through_update_and_delete(tmp_path):
+    b = _mk(tmp_path)
+    mid = b.add(Memory(content="original dog text", tags=[]))
+    assert b.keyword_search("dog", limit=5)
+    b.update(Memory(id=mid, content="now about cats", tags=[], importance=0.5))
+    assert not b.keyword_search("dog", limit=5)
+    assert b.keyword_search("cats", limit=5)
+    b.delete(mid)
+    assert not b.keyword_search("cat", limit=5)
+    assert b.count() == 0
+
+
+def test_keyword_search_or_join_multi_term(tmp_path):
+    b = _mk(tmp_path)
+    b.add(Memory(content="laporan pakai tabel", tags=[]))
+    b.add(Memory(content="resep smoothie pisang", tags=[]))
+    # multi-word query: FTS5 OR join matches a memory containing ANY term
+    hits = b.keyword_search("laporan tabel", limit=10)
+    assert any("tabel" in m.content for m, _ in hits), "OR join must surface partial-term match"
+
+
+def test_keyword_search_unlimited_and_zero(tmp_path):
+    b = _mk(tmp_path)
+    for i in range(4):
+        b.add(Memory(content=f"shared keyword token-{i}", tags=[]))
+    assert len(b.keyword_search("shared")) >= 4  # limit=None
+    assert len(b.keyword_search("shared", limit=None)) == 4
+    assert len(b.keyword_search("shared", limit=0)) <= 4
+
+
+def test_vector_search_ordering_and_limits(tmp_path):
+    b = _mk(tmp_path)
+    b.add(Memory(content="a", embedding=[1.0, 0.0]))
+    b.add(Memory(content="b", embedding=[0.9, 0.1]))
+    b.add(Memory(content="c", embedding=[0.0, 1.0]))
+    q = [1.0, 0.0]
+    top = b.vector_search(q, limit=2)
+    assert len(top) == 2
+    assert top[0][0].content == "a"  # closest to q
+    assert {m.content for m, _ in top} == {"a", "b"}
+
+    full = b.vector_search(q, limit=None)
+    assert [m.content for m, _ in full] == ["a", "b", "c"]
+    # backend level: limit=0 is zero results (the API maps 0 -> None/unlimited)
+    assert b.vector_search(q, limit=0) == []
+    assert b.vector_search([0.0, 0.0]) == []  # degenerate zero query
+
+
+def test_vector_search_single_row_and_large_limit(tmp_path):
+    b = _mk(tmp_path)
+    b.add(Memory(content="solo", embedding=[0.5, 0.5]))
+    res = b.vector_search([0.5, 0.5], limit=100)
+    assert len(res) == 1 and res[0][0].content == "solo"
+
+
+def test_by_tags_multi_and_corrupt(tmp_path):
+    b = _mk(tmp_path)
+    b.add(Memory(content="m1", tags=["database", "prod"]))
+    b.add(Memory(content="m2", tags=["database"]))
+    b.add(Memory(content="m3", tags=["frontend"]))
+    assert len(b.by_tags(["database"])) == 2
+    assert len(b.by_tags(["prod", "frontend"])) == 2  # m1(prod) + m3(frontend); m2 neither
+    assert b.by_tags([]) == set()
+
+    # corrupt JSON tag blob must not crash; treated as having no tags
+    b.conn.execute("UPDATE memories SET tags='{corrupt' WHERE content='m3'")
+    b.conn.commit()
+    assert b.by_tags(["frontend"]) == set()
+
+
+def test_temporal_scan_lightweight(tmp_path):
+    b = _mk(tmp_path)
+    b.add(Memory(content="fact one", tags=["x"], access_count=2))
+    rows = b.temporal_scan()
+    assert len(rows) == 1
+    mid, created, acc = rows[0]
+    assert mid is not None and created and acc == 2
+    assert not hasattr(rows[0], "metadata")  # tuple, not Memory
+
+
+def test_scan_embeddings_pair_matches_matrix(tmp_path):
+    b = _mk(tmp_path)
+    for i in range(3):
+        b.add(Memory(content=f"f{i}", embedding=[float(i), float(i + 1)]))
+    ids_pair, vecs = b.scan_embeddings()
+    ids_mat, mat = b.scan_embeddings_matrix()
+    assert ids_pair == ids_mat
+    assert mat.shape == (3, 2)
+    # float32 round-trip preserves values within tolerance
+    for m, row in zip(vecs, mat, strict=True):
+        for a, bb in zip(m, row, strict=True):
+            assert abs(a - bb) < 1e-6
+
+
+def test_recent_pagination_edge(tmp_path):
+    b = _mk(tmp_path)
+    b.add(Memory(content="oldest", created_at="2026-01-01T00:00:00+00:00"))
+    b.add(Memory(content="newest", created_at="2026-02-01T00:00:00+00:00"))
+    newest = b.recent(limit=1)
+    assert newest[0].content == "newest"
+    assert len(b.recent(limit=0)) == 2  # unlimited
+    assert len(b.recent(limit=10, offset=5)) == 0
+
+
+def test_embedding_roundtrip_preserves_values(tmp_path):
+    b = _mk(tmp_path)
+    vec = [0.1, -0.5, 0.33, 1.0]
+    mid = b.add(Memory(content="vec", embedding=vec))
+    got = b.get(mid)
+    assert got is not None and got.embedding is not None
+    for a, target in zip(got.embedding, vec, strict=True):
+        assert abs(a - target) < 1e-6
+
+
+def test_concurrent_recall_and_ingest(tmp_path):
+    import threading
+
+    from luminary_memory.api import MemoryClient
+
+    class _E:
+        def embed(self, t): return [len(t) % 10, 0.0, 0.0]
+        def embed_batch(self, ts): return [[len(t) % 10, 0.0, 0.0] for t in ts]
+
+    c = MemoryClient(db_path=str(tmp_path / "cc.db"), engine=_E())
+    for i in range(5):
+        c.ingest(f"deploy target host-{i}", tags=["infra"])
+    errors: list[Exception] = []
+
+    def worker():
+        try:
+            c.recall("deploy", limit=5)
+            c.ingest("banana smoothie", tags=["food"])
+            c.recall("deploy host", limit=5)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, f"cross-thread backend ops must not raise: {errors}"
+    c.close()

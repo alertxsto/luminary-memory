@@ -2,7 +2,7 @@
 
 > **Tagline:** A lightweight, self-hosted memory layer for AI agents.
 
-**Current release:** v0.2.13 (core memory + recall fixes) · **Tests:** 300+ passing · **Coverage:** 93% · **License:** Apache-2.0
+**Current release:** v0.2.14 (SQLite backend hardening) · **Tests:** 350+ passing · **Coverage:** 93% · **License:** Apache-2.0
 
 ---
 
@@ -62,6 +62,7 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 | v0.2.11 | 2026-08-18 | Persistent context injection, rule pinning + auto-replace, thread-safe recall, store hygiene |
 | v0.2.12 | 2026-08-18 | Performance: vectorized rule auto-replace, lean persistent-context scan, batched access bookkeeping, batched lifecycle passes, batched temporal fetch |
 | v0.2.13 | 2026-08-18 | Core memory (DB-backed MEMORY.md, auto-loaded every session), keyword recall OR join, prefetch core block |
+| v0.2.14 | 2026-08-18 | SQLite backend hardening: FTS5 rebuild migration, dead-code cleanup, 12 new backend tests, backends.md rewrite |
 
 ---
 

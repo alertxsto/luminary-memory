@@ -3,9 +3,30 @@
 ## SQLite (default)
 
 - Zero-configuration, stdlib `sqlite3` + FTS5.
-- Keyword search via FTS5 `MATCH` with `bm25()` ranking.
-- Vector search via in-process cosine similarity (linear scan).
-- Best for single-user, edge, and stores under ~100k memories.
+- Keyword search via FTS5 `MATCH` with `bm25()` ranking. Queries are
+  injection-safe: raw text is sanitized, each term quoted, and joined with
+  `OR` so a natural multi-term query matches any of its terms (plus `bm25`
+  lifts the ones that match several).
+- **External-content FTS5**: `memories_fts` does not duplicate the data; it is
+  kept in sync by `AFTER INSERT/UPDATE/DELETE` triggers on `memories`. When a
+  database created by an older schema is opened (predating the FTS virtual
+  table), `init_schema` detects it and runs a one-time FTS `rebuild` so
+  pre-existing rows become keyword-searchable.
+- Vector search via in-process cosine similarity (vectorized matmul over a
+  float32 embedding matrix — no per-row Python loop).
+- **Thread-local connections**: each thread owns its own SQLite connection, so
+  a background recall thread and the writer thread never trip
+  `sqlite3.ProgrammingError`. `close()` only touches the caller's thread-local
+  connection.
+- **Lean scans** power the per-turn persistent-context/core blocks and avoid
+  decoding the (large) embedding blobs for every row:
+  `top_by_importance`, `by_tag_top`, `temporal_scan`, `scan_embeddings`,
+  `scan_embeddings_matrix`. Writes are batched (`touch_memories`,
+  `update_importances`, `add_many`, `delete_many`).
+- Best for single-user, edge, and stores under ~100k memories (vector search
+  is a linear scan). WAL mode is not currently enabled; each thread uses its
+  own connection, so concurrent readers/writers do not block on the same
+  in-process connection.
 
 ## pgvector
 

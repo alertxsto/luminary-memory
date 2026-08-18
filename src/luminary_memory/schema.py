@@ -53,5 +53,20 @@ CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id);
 """
 
 def init_schema(conn: sqlite3.Connection) -> None:
+    # Rebuild the external-content FTS index when upgrading a database created
+    # by an older schema that predates the FTS5 table. In that case the virtual
+    # table is created empty and the AFTER INSERT/UPDATE/DELETE triggers never
+    # fire for rows that already existed, so keyword search would silently
+    # return zero hits. Detecting virtual tables in sqlite_master is the cheap,
+    # reliable signal (SELECT count(*) on an external-content FTS table counts
+    # the content rows, not the index, so it cannot be used). Runs at most once:
+    # only the first connection that creates the FTS table performs the rebuild.
+    had_fts = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories_fts'"
+    ).fetchone() is not None
     conn.executescript(SCHEMA_SQL)
+    if not had_fts:
+        mem_count = conn.execute("SELECT count(*) FROM memories").fetchone()[0]
+        if mem_count > 0:
+            conn.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
     conn.commit()
