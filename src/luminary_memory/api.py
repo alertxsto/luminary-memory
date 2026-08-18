@@ -494,6 +494,7 @@ class MemoryClient:
         budget = token_budget if token_budget is not None else self.settings.token_budget
         rrf_k = self.settings.rrf_k
         dedup_threshold = self.settings.dedup_jaccard_threshold
+        cliff_threshold = self.settings.recall_cliff_threshold
         use_planner = bool(getattr(self.settings, "query_planner", True))
         planner_threshold = float(getattr(self.settings, "query_planner_keyword_threshold", 0.9))
 
@@ -561,6 +562,7 @@ class MemoryClient:
         fused = reciprocal_rank_fusion(
             ranked_lists,
             k=rrf_k,
+            weights=self.settings.strategy_weights,
             strategy_labels=[name for name, _ in strat_fns],
         )
         scored: list[tuple[Memory, float]] = [
@@ -575,7 +577,35 @@ class MemoryClient:
                 scored = [(m, s) for m, s in scored if m.id in allowed]
 
         if not scored:
+            # Fallback: when no strategy matches the query, surface the most
+            # recent memories so recall never returns empty for a store that
+            # has content. This keeps "recent but weakly related" context
+            # available when the query is generic (e.g. mixed-language turns).
+            fallback = temporal_recall(self.backend, limit=eff or 5)
+            fallback_pairs: list[tuple] = [(m, s * 0.1) for m, s, _label in fallback]
+            if fallback_pairs:
+                return RecallResult(
+                    memories=[m for m, _s in fallback_pairs],
+                    scores=[s for _m, s in fallback_pairs],
+                    strategies_hit={**strategies_hit, "temporal_fallback": len(fallback_pairs)},
+                )
             return RecallResult(memories=[], scores=[], strategies_hit=strategies_hit)
+
+        # Adaptive relevance cutoff (cliff detection): walk the fused scores
+        # from the top and cut at the first steep drop (>= cliff_threshold,
+        # default 45% relative drop between consecutive candidates). This
+        # returns "the relevant ones" (fewer than the limit on a sparse store)
+        # instead of always padding to the limit with weak matches, while a
+        # dense relevant store keeps everything above the cliff (no
+        # over-filtering).
+        if scored and n_limit is not None:
+            keep = [scored[0]]
+            for prev, cur in zip(scored, scored[1:]):
+                prev_s = prev[1]
+                if prev_s > 0 and (prev_s - cur[1]) / prev_s >= cliff_threshold:
+                    break
+                keep.append(cur)
+            scored = keep
 
         scored = dedup_jaccard(scored, threshold=dedup_threshold)
 

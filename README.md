@@ -25,7 +25,7 @@ Agents are only as good as what they remember. A stateless agent re-learns the s
 - **Temporal**, recency decay × access count
 - **Graph**, entity co-occurrence with automatic curation
 
-Strategies run in parallel and fuse via **Reciprocal Rank Fusion (k=60)** → **Jaccard deduplication (0.85)** → **token budget (4096)**.
+Strategies run in parallel and fuse via **weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1)** → **adaptive cutoff (cliff detection)** → **Jaccard deduplication (0.85)** → **token budget (4096)**. Short queries are expanded with graph entities before embedding, so "deploy?" still finds "production cluster".
 
 ---
 
@@ -75,7 +75,7 @@ Two optional LLM-powered features keep the store sharp:
 - **`ingest_llm`**, evaluates every turn before saving: drops chit-chat, stores factual summaries instead of raw transcripts.
 - **`auto_maintain`**, reviews the store at session end: keeps current facts, updates changed ones, deletes stale or duplicate ones.
 
-18 settings are exposed in the [Hermes dashboard](https://alertxsto.github.io/luminary-memory) for zero-hassle tuning. See
+22 settings are exposed in the [Hermes dashboard](https://alertxsto.github.io/luminary-memory) for zero-hassle tuning. See
 [hermes/README.md](hermes/README.md) for the one-shot installer and full configuration.
 
 ---
@@ -93,32 +93,62 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `embedding_dim` | `LUMINARY_EMBEDDING_DIM` | `384` |
 | `ingest_llm` | `LUMINARY_INGEST_LLM` | `false` |
 | `rrf_k` | `LUMINARY_RRF_K` | `60` |
+| `strategy_weights` | `LUMINARY_WEIGHT_{SEMANTIC,KEYWORD,GRAPH,TEMPORAL}` | `0.4 / 0.3 / 0.2 / 0.1` |
+| `recall_cliff_threshold` | `LUMINARY_RECALL_CLIFF_THRESHOLD` | `0.45` |
 | `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | `0.85` |
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` |
+| `max_memories` | `LUMINARY_MAX_MEMORIES` | `1000` |
 | `ttl_default_seconds` | `LUMINARY_TTL_DEFAULT_SECONDS` | `null` |
 | `prune_min_importance` | `LUMINARY_PRUNE_MIN_IMPORTANCE` | `0.2` |
 | `consolidate_jaccard_threshold` | `LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD` | `0.9` |
 | `consolidate_semantic` | `LUMINARY_CONSOLIDATE_SEMANTIC` | `true` |
 | `importance_auto` | `LUMINARY_IMPORTANCE_AUTO` | `true` |
 
-See [hermes/SKILL.md](hermes/SKILL.md) for the full provider config table (18 settings).
+See [hermes/SKILL.md](hermes/SKILL.md) for the full provider config table (22 settings).
 
 ---
 
 ## Architecture
 
+Memory is a **loop**, not a pipeline you run once. Every turn, luminary
+recalls what is relevant before the agent answers, then ingests what mattered
+after, and a background lifecycle keeps the store lean.
+
 ```
-ingest(text) ──► whitelist filter ──► (LLM curation) ──► embed ──► SQLite / pgvector
-
-recall(query) ──► semantic │ keyword │ temporal │ graph
-               ──► RRF fusion ──► Jaccard dedup ──► token budget ──► ranked results
-
-lifecycle() ──► cleanup (TTL) ──► consolidate (near-dupes) ──► prune (low-value)
-
-maintenance() ──► LLM reviews store ──► keep │ update │ delete stale facts
+        ┌───────────────────────────── LOOP ─────────────────────────────┐
+        │                                                               │
+   recall(query) ──► 4 strategies in parallel ──► weighted RRF ──► adaptive cutoff ──► ranked results
+        ▲            semantic │ keyword │ temporal │ graph   (per-strategy weights)   (cliff detection)
+        │                                                               │
+        └── inject into agent context ◄── token budget (4096) ◄── dedup (Jaccard 0.85)
+                                                                        │
+   ingest(text) ──► whitelist ──► (LLM curation) ──► embed (ONNX 384-d) ─┘
+                                                                        │
+   lifecycle() ──► cleanup (TTL) ──► consolidate (semantic + Jaccard) ──► prune (importance)
+   maintenance() ──► LLM reviews store ──► keep │ update │ delete stale facts
 ```
 
-Built-in lifecycle keeps the store lean. LLM maintenance (optional) keeps it accurate. `health_score()` gives you a 0-100 checkup with actionable recommendations.
+**Why it is accurate:**
+
+| Stage | Mechanism |
+|-------|-----------|
+| **4 strategies** | Semantic (ONNX cosine) + keyword (FTS5 BM25) + temporal (recency × access) + graph (entity co-occurrence), all in parallel |
+| **Weighted fusion** | Each strategy carries a tunable weight (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1), so high-signal strategies dominate the ranking |
+| **Query expansion** | Short queries are expanded with co-occurring graph entities before embedding, so a bare "deploy?" still finds "production cluster" |
+| **Adaptive cutoff** | Cliff detection keeps only the relevant cluster: a sparse store returns 3 strong matches instead of padding to 20, while a dense relevant store keeps everything (no over-filtering) |
+| **Token budget** | Hard cap so memory injection never blows up the context window |
+
+**Why it stays clean:**
+
+| Stage | Mechanism |
+|-------|-----------|
+| **Lifecycle** | TTL cleanup, semantic consolidation (embedding cosine, fallback Jaccard), importance-based pruning |
+| **Auto importance** | Every memory is scored by recency + access + graph centrality; prune and health use live values |
+| **Max memories cap** | `max_memories` (default 1000) prunes the oldest/lowest-importance when the store exceeds it |
+| **LLM maintenance** | Optional `auto_maintain` reviews the store at session end: keep, update, or delete stale facts |
+| **Health score** | `health_score()` gives a 0-100 checkup with actionable recommendations |
+
+`health_score()` gives you a 0-100 checkup with actionable recommendations.
 
 ---
 

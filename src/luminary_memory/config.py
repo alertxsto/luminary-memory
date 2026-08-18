@@ -66,6 +66,15 @@ class Settings:
     # recall fusion
     rrf_k: int = field(default_factory=lambda: _env_int("LUMINARY_RRF_K", 60))
     dedup_jaccard_threshold: float = field(default_factory=lambda: _env_float("LUMINARY_DEDUP_JACCARD_THRESHOLD", 0.85))
+    recall_cliff_threshold: float = field(default_factory=lambda: _env_float("LUMINARY_RECALL_CLIFF_THRESHOLD", 0.45))
+    strategy_weights: dict[str, float] = field(
+        default_factory=lambda: {
+            "semantic": _env_float("LUMINARY_WEIGHT_SEMANTIC", 0.4),
+            "keyword": _env_float("LUMINARY_WEIGHT_KEYWORD", 0.3),
+            "graph": _env_float("LUMINARY_WEIGHT_GRAPH", 0.2),
+            "temporal": _env_float("LUMINARY_WEIGHT_TEMPORAL", 0.1),
+        }
+    )
     token_budget: int = field(default_factory=lambda: _env_int("LUMINARY_TOKEN_BUDGET", 4096))
     # lifecycle
     ttl_default_seconds: int | None = field(default_factory=lambda: _env_int("LUMINARY_TTL_DEFAULT_SECONDS", 0) or None)

@@ -32,6 +32,10 @@ importance dimension both use these live values.
 
 Removes memories below a minimum importance (`LUMINARY_PRUNE_MIN_IMPORTANCE`, default 0.2).
 
+When the store exceeds `max_memories` (default 1000), the oldest and
+lowest-importance memories are pruned first, keeping the store under a hard
+size cap even if importance-based pruning never fires.
+
 ## `run_maintenance()`, LLM-driven curation (v0.2.2+)
 
 Sends the store to the configured LLM enricher, which reviews every memory and

@@ -53,6 +53,22 @@ the query is expanded with co-occurring entity names from the knowledge
 graph, so relevant memories rank higher (`_expand_query`, best-effort , 
 falls back to the raw query on any error).
 
+## Adaptive cutoff
+
+After fusion, the ranked list is cut at the first **steep score drop**
+(cliff detection). Only the relevant cluster survives:
+
+```
+if (prev_score - cur_score) / prev_score >= cliff_threshold: cut here
+```
+
+| Behavior | Example |
+|----------|---------|
+| Sparse store | 3 strong matches among 20 candidates → returns 3, not padded to the limit |
+| Dense relevant store | 15 all-relevant candidates → keeps all 15 (no over-filtering) |
+
+Threshold configurable via `LUMINARY_RECALL_CLIFF_THRESHOLD` (default `0.45`).
+
 ## Dedup
 
 Jaccard similarity (token overlap) removes near-duplicates above a threshold (`LUMINARY_DEDUP_JACCARD_THRESHOLD`, default 0.85).
@@ -66,6 +82,8 @@ Results are truncated to a token budget (`LUMINARY_TOKEN_BUDGET`, default 4096) 
 | Knob | Env var | Effect |
 |------|---------|--------|
 | `rrf_k` | `LUMINARY_RRF_K` | higher = smoother fusion across strategies |
+| `strategy_weights` | `LUMINARY_WEIGHT_{SEMANTIC,KEYWORD,GRAPH,TEMPORAL}` | per-strategy fusion weight (default 0.4/0.3/0.2/0.1) |
+| `recall_cliff_threshold` | `LUMINARY_RECALL_CLIFF_THRESHOLD` | higher = more aggressive adaptive cutoff (default 0.45) |
 | `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | lower = more aggressive dedup |
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | caps total injected tokens |
 | `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | quality/speed tradeoff |

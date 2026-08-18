@@ -2,12 +2,15 @@
 
 ## Pipelines
 
+Memory is a **loop**, not a one-shot pipeline: recall happens before the
+agent answers, ingest after, lifecycle in the background.
+
 ```
 ingest(text) ──► whitelist filter ──► (LLM enrich, optional) ──► embed ──► backend
                                                                           │
-recall(query) ──► 4 strategies ──► RRF fusion ──► dedup ──► budget ──► results
-                                     │
-lifecycle() ──► cleanup (TTL) ──► consolidate (near-dupes) ──► prune (low-value)
+recall(query) ──► query expansion ──► 4 strategies ──► weighted RRF ──► adaptive cutoff ──► dedup ──► budget ──► results
+                                        │
+lifecycle() ──► cleanup (TTL) ──► consolidate (semantic) ──► prune (importance) ──► max_memories cap
 ```
 
 ## Ingest
@@ -19,14 +22,16 @@ lifecycle() ──► cleanup (TTL) ──► consolidate (near-dupes) ──►
 
 ## Recall
 
-1. **Four strategies run in parallel:**
+1. **Query expansion**, short queries are enriched with co-occurring graph entities before embedding (best-effort).
+2. **Four strategies run in parallel:**
    - *semantic*, embedding similarity.
    - *keyword*, FTS5 / BM25 term match.
    - *temporal*, recency decay × access popularity.
    - *graph*, entity co-occurrence traversal.
-2. **Weighted RRF fusion**, reciprocal-rank fusion with per-strategy weights (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1) combines the four ranked lists into one.
-3. **Dedup**, Jaccard similarity removes near-duplicates.
-4. **Budget**, results truncated to a token budget so the context window stays safe.
+3. **Weighted RRF fusion**, reciprocal-rank fusion with per-strategy weights (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1) combines the four ranked lists into one.
+4. **Adaptive cutoff** (cliff detection), cuts at the first steep score drop (default 45%) so a sparse store returns only the relevant cluster instead of padding to the limit.
+5. **Dedup**, Jaccard similarity removes near-duplicates.
+6. **Budget**, results truncated to a token budget so the context window stays safe.
 
 ## Backends
 
