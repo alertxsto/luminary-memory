@@ -110,3 +110,52 @@ def test_tools_mode_queue_prefetch_is_noop(tmp_path):
     block = p.prefetch("tool only", session_id="s1")
     assert block == ""
     p.shutdown()
+
+
+def test_do_retain_drops_raw_when_curation_yields_no_summary(tmp_path):
+    """With ingest_llm on, a turn whose LLM curation produced no distilled
+    summary must NOT be stored as a raw transcript (store hygiene)."""
+    from luminary_memory.ingest.llm import EnrichedContent
+
+    class _NoSummaryEnricher:
+        def enrich(self, text):
+            return EnrichedContent(content=text, summary=None, worth_saving=True)
+
+    p = _init_provider(tmp_path, ingest_llm=True)
+    p._client.enricher = _NoSummaryEnricher()
+    client = p._writer_client()
+    client.enricher = _NoSummaryEnricher()
+
+    p._do_retain("User: bikin PLAN dong\nAssistant: ok gw buat", [], {}, source="test")
+    p._writer_thread.join(timeout=5.0)
+
+    assert p._client.count() == 0, "raw transcript without curated summary must be dropped"
+    p.shutdown()
+
+
+def test_do_retain_stores_curated_summary(tmp_path):
+    """With ingest_llm on, a turn whose LLM curation produced a summary is
+    stored as the summary, never the raw transcript."""
+    from luminary_memory.ingest.llm import EnrichedContent
+
+    class _SummaryEnricher:
+        def enrich(self, text):
+            return EnrichedContent(
+                content=text,
+                summary="User WAJIB pakai markdown table di Telegram",
+                worth_saving=True,
+            )
+
+    p = _init_provider(tmp_path, ingest_llm=True)
+    p._client.enricher = _SummaryEnricher()
+    client = p._writer_client()
+    client.enricher = _SummaryEnricher()
+
+    p._do_retain("User: tolong pakai table ya\nAssistant: siap", [], {}, source="test")
+    p._writer_thread.join(timeout=5.0)
+
+    mems = p._client.list(limit=0)
+    assert len(mems) == 1
+    assert "markdown table" in mems[0].content
+    assert "tolong pakai table" not in mems[0].content
+    p.shutdown()

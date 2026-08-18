@@ -420,9 +420,15 @@ class LuminaryMemoryProvider(MemoryProvider):
                 if not enriched.worth_saving:
                     self._log.info("retain skipped (LLM: not worth saving) len=%d", len(content))
                     return
+                if not enriched.summary:
+                    # LLM curation was enabled but produced no distilled fact
+                    # (enrichment failure, empty reply, or "nothing durable").
+                    # Storing the raw transcript would pollute the store with
+                    # conversation noise that recall then surfaces. Drop it.
+                    self._log.info("retain skipped (LLM: no curated summary) len=%d", len(content))
+                    return
                 # Store the factual summary (not the raw transcript) as content.
-                if enriched.summary:
-                    content = enriched.summary
+                content = enriched.summary
             meta = {k: v for k, v in (metadata or {}).items() if v is not None}
             client.ingest(content, tags=tags, source=source, metadata=meta)
             self._log.info("retain stored len=%d tags=%s", len(content), tags)
