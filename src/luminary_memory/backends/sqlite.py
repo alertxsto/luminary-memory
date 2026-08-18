@@ -18,18 +18,31 @@ _FTS5_SPECIAL = ('"', "*", ":", "^", "(", ")", "{", "}", "[", "]", "-", "+", "~"
 
 
 def _sanitize_fts_query(query: str) -> str:
-    """Strip FTS5 query syntax so user input is treated as plain terms.
+    """Build a safe FTS5 query from plain user text.
 
     Without this, characters like ``*``, ``NEAR``, or quoted phrases can
     change the query into something the user did not intend (and can raise
-    syntax errors on malformed input). We keep only word characters, which
-    is the safest interpretation for plain keyword search.
+    syntax errors on malformed input). We keep only word characters.
+
+    Terms are joined with ``OR`` so a multi-word query matches memories that
+    contain *any* of the terms, and FTS5's ``bm25`` ranking lifts documents
+    that match more of them. A default AND join would return zero hits for
+    natural multi-term queries ("laporan pakai tabel") — the exact failure
+    that left keyword recall empty while the rule was in the store.
     """
     import re
 
     cleaned = re.sub(r"[^\w\s]", " ", query)
-    cleaned = " ".join(cleaned.split())
-    return cleaned or '" "'
+    terms = cleaned.split()
+    if not terms:
+        return '" "'
+    # Escape any stray FTS5 operators inside terms (defensive — \w already
+    # excludes them, but keep the query injection-safe).
+    safe_terms = []
+    for t in terms:
+        t = t.strip('"')
+        safe_terms.append(f'"{t}"')
+    return " OR ".join(safe_terms)
 
 
 class SQLiteBackend(MemoryBackend):

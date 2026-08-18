@@ -38,3 +38,27 @@ def test_keyword_recall_respects_limit(tmp_path):
         b.add(Memory(content=t))
     res = keyword_recall(b, "hello", limit=2)
     assert len(res) == 2
+
+
+def test_keyword_recall_multi_term_or_not_and(tmp_path):
+    """Multi-term queries must match memories that contain ANY term (OR),
+    not require all terms in one document (AND).
+
+    Regression: 'laporan pakai tabel' returned 0 hits because FTS5's default
+    AND join demanded all three words co-occur in a single memory, leaving
+    keyword recall empty while the rule was in the store.
+    """
+    b = _mk(tmp_path)
+    b.add(Memory(content="aturan format tabel markdown untuk laporan"))
+    b.add(Memory(content="pakai deploy target production"))
+    b.add(Memory(content="membuat sandwich untuk makan siang"))
+
+    # 'laporan pakai tabel' — each term lives in a different memory.
+    res = keyword_recall(b, "laporan pakai tabel", limit=10)
+    assert len(res) >= 2, "OR join must surface memories matching any term"
+    # The memory with the most term overlap ranks first.
+    assert res[0][0].content.startswith("aturan format tabel")
+
+    # bm25 still distinguishes: the doc matching two terms beats one-term docs.
+    scores = [s for _, s, _ in res]
+    assert scores == sorted(scores, reverse=True), "bm25 ordering must hold"
