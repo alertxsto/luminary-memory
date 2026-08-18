@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from luminary_memory.recall.dedup import cosine_similarity, jaccard_similarity
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
@@ -63,4 +66,8 @@ def consolidate(
                 visited.add(c.id)  # type: ignore[arg-type]
                 merged += 1
         visited.add(master.id)  # type: ignore[arg-type]
+    logger.info(
+        "consolidate mode=%s merged=%d reviewed=%d",
+        "semantic" if semantic else "jaccard", merged, len(memories),
+    )
     return merged

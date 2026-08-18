@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
@@ -26,4 +29,5 @@ def cleanup_expired(backend: MemoryBackend, now: datetime | None = None) -> int:
         if expiry < now.timestamp():
             backend.delete(m.id)  # type: ignore[arg-type]
             count += 1
+    logger.info("cleanup removed=%d", count)
     return count

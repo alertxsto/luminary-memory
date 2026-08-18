@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import math
 from datetime import UTC, datetime
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_dt(value: str | None) -> datetime:

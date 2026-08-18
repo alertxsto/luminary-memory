@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
@@ -25,4 +28,5 @@ def prune(
             for m in to_drop:
                 backend.delete(m.id)  # type: ignore[arg-type]
                 removed += 1
+    logger.info("prune removed=%d min_importance=%s", removed, min_importance)
     return removed

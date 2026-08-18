@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 
 import numpy as np
@@ -8,6 +9,8 @@ import numpy as np
 from luminary_memory.backends.base import MemoryBackend
 from luminary_memory.schema import init_schema
 from luminary_memory.types import Memory
+
+logger = logging.getLogger(__name__)
 
 # FTS5 special characters that can alter query semantics (syntax injection).
 _FTS5_SPECIAL = ('"', "*", ":", "^", "(", ")", "{", "}", "[", "]", "-", "+", "~", "NEAR", "AND", "OR", "NOT")
@@ -151,6 +154,7 @@ class SQLiteBackend(MemoryBackend):
                 ids.append(int(cur.lastrowid))
             self.conn.commit()
         except Exception:
+            logger.exception("add_many batch failed — rolling back")
             self.conn.rollback()
             raise
         return ids

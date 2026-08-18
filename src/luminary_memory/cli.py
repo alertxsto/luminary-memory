@@ -99,7 +99,15 @@ def recall(
             if json_out:
                 payload = {
                     "memories": [
-                        {"id": m.id, "content": m.content, "tags": m.tags} for m in result.memories
+                        {
+                            "id": m.id,
+                            "content": m.content,
+                            "tags": m.tags,
+                            "source": m.source,
+                            "created_at": m.created_at,
+                            "importance": m.importance,
+                        }
+                        for m in result.memories
                     ],
                     "scores": result.scores,
                     "strategies_hit": result.strategies_hit,

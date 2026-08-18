@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+import time
 from typing import TYPE_CHECKING
 
 from luminary_memory.lifecycle.cleanup import cleanup_expired
 from luminary_memory.lifecycle.consolidate import consolidate
 from luminary_memory.lifecycle.prune import prune
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
@@ -37,9 +41,12 @@ def run_lifecycle(
                 backend.update(m)  # type: ignore[arg-type]
                 reestimated += 1
 
-    return {
+    start = time.monotonic()
+    result = {
         "cleanup": int(cleanup_expired(backend)),
         "consolidate": int(consolidate(backend, threshold=consolidate_threshold, semantic=semantic)),
         "prune": int(prune(backend, min_importance=min_importance)),
         "reestimated": reestimated,
     }
+    logger.info("run_lifecycle %s (%.1fs)", result, time.monotonic() - start)
+    return result

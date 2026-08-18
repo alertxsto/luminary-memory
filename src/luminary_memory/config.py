@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -19,6 +22,7 @@ def _env_int(name: str, default: int) -> int:
     try:
         return int(v)
     except ValueError:
+        logger.warning("invalid int for %s=%r — using default %s", name, v, default)
         return default
 
 
@@ -29,6 +33,7 @@ def _env_float(name: str, default: float) -> float:
     try:
         return float(v)
     except ValueError:
+        logger.warning("invalid float for %s=%r — using default %s", name, v, default)
         return default
 
 

@@ -40,6 +40,8 @@ CONFIG_SCHEMA = ProviderConfigSchema(
         {"key": "retain_assistant_prefix", "label": "Assistant prefix", "type": "text"},
         {"key": "ingest_llm", "label": "LLM memory curation", "type": "boolean"},
         {"key": "auto_maintain", "label": "Auto-maintain store (LLM)", "type": "boolean"},
+        {"key": "consolidate_semantic", "label": "Semantic consolidation", "type": "boolean"},
+        {"key": "importance_auto", "label": "Auto importance estimation", "type": "boolean"},
         {"key": "llm_base_url", "label": "LLM base URL", "type": "text"},
         {"key": "llm_model", "label": "LLM model", "type": "text"},
         {"key": "llm_timeout", "label": "LLM timeout (s)", "type": "number"},
