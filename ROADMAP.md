@@ -2,7 +2,7 @@
 
 > **Tagline:** A lightweight, self-hosted memory layer for AI agents.
 
-**Current release:** v0.2.12 (persistent context + rule hygiene + performance) · **Tests:** 200+ passing · **Coverage:** 93% · **License:** Apache-2.0
+**Current release:** v0.2.13 (core memory + recall fixes) · **Tests:** 300+ passing · **Coverage:** 93% · **License:** Apache-2.0
 
 ---
 
@@ -24,19 +24,20 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 
 | Area | Status |
 |------|--------|
-| Core library (ingest / recall / lifecycle) | ✅ Done (v0.2.12) |
+| Core library (ingest / recall / lifecycle) | ✅ Done (v0.2.13) |
 | Backends (SQLite default, pgvector optional) | ✅ Done (v0.2.9) |
-| Python API (`MemoryClient`) | ✅ Done (v0.2.12) |
+| Python API (`MemoryClient`) | ✅ Done (v0.2.13) |
 | CLI (`luminary-memory`) | ✅ Done (v0.2.7) |
-| Hermes memory provider | ✅ Done (v0.2.1, enhanced v0.2.11) |
-| Dashboard settings (22 fields) | ✅ Done (v0.2.10) |
+| Hermes memory provider | ✅ Done (v0.2.1, enhanced v0.2.13) |
+| Dashboard settings | ✅ Done (v0.2.10) |
 | Recall quality (weighted fusion + query expansion) | ✅ Done (v0.2.10) |
 | Persistent context (per-turn rule injection) | ✅ Done (v0.2.11) |
+| Core memory (DB-backed, auto-loaded every session) | ✅ Done (v0.2.13) |
 | Rule hygiene (pinning, auto-replace, summary-only) | ✅ Done (v0.2.11) |
 | Performance (vectorized scans, batched writes) | ✅ Done (v0.2.12) |
-| Store hardening (max cap, dedup, selective curation) | ✅ Done (v0.2.10) |
-| Website | ✅ Done (v0.2.12 redesign) |
-| Documentation | ✅ Done (v0.2.12) |
+| Store hardening (max cap, dedup, selective curation) | ✅ Done (v0.2.12) |
+| Website | ✅ Done (v0.2.13) |
+| Documentation | ✅ Done (v0.2.13) |
 | Test coverage | ✅ 93% total |
 
 ---
@@ -60,6 +61,7 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 | v0.2.10 | 2026-08-18 | Smarter recall (weighted fusion + query expansion), store cap, memory fixes |
 | v0.2.11 | 2026-08-18 | Persistent context injection, rule pinning + auto-replace, thread-safe recall, store hygiene |
 | v0.2.12 | 2026-08-18 | Performance: vectorized rule auto-replace, lean persistent-context scan, batched access bookkeeping, batched lifecycle passes, batched temporal fetch |
+| v0.2.13 | 2026-08-18 | Core memory (DB-backed MEMORY.md, auto-loaded every session), keyword recall OR join, prefetch core block |
 
 ---
 

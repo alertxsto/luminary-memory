@@ -132,3 +132,28 @@ def test_scan_embeddings_matrix_shape(tmp_path):
     assert len(mid) == 3
     assert mat.shape == (3, 3)
     assert mat.dtype.name == "float32"
+
+
+def test_by_tag_top_returns_core_memories_by_importance(tmp_path):
+    b = _mk(tmp_path)
+    b.add(Memory(content="rule tabel wajib", tags=["core"], importance=0.9))
+    b.add(Memory(content="rule em dash", tags=["core"], importance=0.95))
+    b.add(Memory(content="fakta biasa", tags=["other"], importance=0.3))
+    b.add(Memory(content="core-x mirip", tags=["core-x"], importance=0.99))
+
+    top = b.by_tag_top("core", 10)
+    contents = [m.content for m in top]
+    assert "rule em dash" in contents
+    assert "rule tabel wajib" in contents
+    assert "fakta biasa" not in contents
+    assert "core-x mirip" not in contents, "core-x tag must not match core"
+    # ordered by importance desc
+    imps = [m.importance for m in top]
+    assert imps == sorted(imps, reverse=True)
+
+
+def test_by_tag_top_respects_limit(tmp_path):
+    b = _mk(tmp_path)
+    for i in range(5):
+        b.add(Memory(content=f"rule {i}", tags=["core"], importance=0.9))
+    assert len(b.by_tag_top("core", 3)) == 3

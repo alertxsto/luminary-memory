@@ -43,6 +43,9 @@ _DEFAULTS: dict = {
     "context_top_n": 8,  # top-N memories injected into the system prompt (persistent context)
     "context_budget": 2000,  # max tokens of persistent context in the system prompt
     "context_min_importance": 0.0,  # only inject memories at/above this importance
+    "core_tag": "core",  # tag marking DB-backed core memories (always loaded every session, like MEMORY.md)
+    "core_top_n": 12,  # max core memories injected into the system prompt
+    "core_budget": 8000,  # max chars of core memory injected into the system prompt
 }
 
 

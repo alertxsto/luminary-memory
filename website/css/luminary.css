@@ -1062,6 +1062,13 @@ summary:focus-visible {
   transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
 }
 
+.backend-cards {
+  margin-top: var(--s5);
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--s4);
+}
+
 .backend-card:hover {
   border-color: var(--line-highlight);
   background: var(--surface-1);

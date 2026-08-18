@@ -60,6 +60,28 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `context_budget` | `2000` | Max tokens of persistent context per turn |
 | `context_min_importance` | `0.0` | Only inject memories at/above this importance into persistent context |
 | `importance_recall_boost` | `1.0` | Ranking bonus multiplier for memories at importance ≥ 0.8, so durable rules surface in recall |
+| `core_tag` | `core` | Tag marking DB-backed core memories — always auto-loaded into the system prompt every session (like MEMORY.md) |
+| `core_top_n` | `12` | Max core memories injected into the system prompt |
+| `core_budget` | `8000` | Max characters of core memory injected into the system prompt |
+
+### Core memory (DB-backed, v0.2.13+)
+
+Luminary equivalent of Hermes' native `MEMORY.md`, but stored in the
+database. Memories tagged `core` are **auto-loaded into the system prompt
+every session**, before persistent context and recall — so a new session that
+never mentions "tabel" still gets the table rule from the very first prompt.
+
+```
+Core memory (auto-loaded every session):
+- <rule 1>
+- <rule 2>
+```
+
+Managed via tools (`luminary_core_add` / `luminary_core_remove` /
+`luminary_core_list`) or by ingesting with the `core` tag. The block is capped
+by `core_top_n` memories and `core_budget` characters. Core memories are
+pinned (importance ≥ 0.9, exempt from prune/consolidate) and deduplicated
+against persistent context and recall — nothing appears twice.
 
 ### Persistent context (v0.2.11+)
 

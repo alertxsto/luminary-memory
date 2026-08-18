@@ -511,6 +511,9 @@ class LuminaryMemoryProvider(MemoryProvider):
         ]
         if mode in ("context", "hybrid"):
             lines.append("Persistent context: important memories are always available.")
+            core = self._build_core_memory()
+            if core:
+                lines.append(core)
             ctx = self._build_persistent_context()
             if ctx:
                 lines.append(ctx)
@@ -553,7 +556,12 @@ class LuminaryMemoryProvider(MemoryProvider):
             picked: list[str] = []
             picked_ids: set[int] = set()
             total = 0
+            with self._prefetch_lock:
+                already = set(self._injected_ids)
             for m in mems:
+                if m.id is not None and m.id in already:
+                    # Already injected via core memory — skip (no duplicate).
+                    continue
                 imp = float(getattr(m, "importance", 0.0) or 0.0)
                 if imp < min_imp:
                     continue
@@ -571,13 +579,68 @@ class LuminaryMemoryProvider(MemoryProvider):
                 if len(picked) >= top_n:
                     break
             with self._prefetch_lock:
-                # Always replace — never accumulate stale ids across turns.
-                self._injected_ids = picked_ids
+                # Union with any previously injected ids (e.g. core memory) —
+                # never replace, so recall skips everything already in context.
+                self._injected_ids = picked_ids | self._injected_ids
             if not picked:
                 return ""
             return "Key memories:\n" + "\n".join(picked)
         except Exception:
             logging.getLogger(__name__).exception("persistent context build failed")
+            return ""
+
+    def _core_tag(self) -> str:
+        if self._client is not None:
+            return str(getattr(self._client.settings, "core_tag", "core") or "core")
+        return str(self._config.get("core_tag", "core") or "core")
+
+    def _build_core_memory(self) -> str:
+        """DB-backed core memory block for the system prompt.
+
+        Luminary equivalent of Hermes' native ``MEMORY.md``: memories tagged
+        ``core`` (configurable via ``LUMINARY_CORE_TAG`` / ``core_tag``) are
+        auto-loaded into the system prompt every session, before persistent
+        context. The model always sees the durable rules from the very first
+        prompt — no query match needed — so a new session that never mentions
+        "tabel" still gets the table rule.
+
+        Capped by ``core_top_n`` memories and ``core_budget`` characters.
+        """
+        if not self._client:
+            return ""
+        try:
+            tag = self._core_tag()
+            top_n = int(getattr(self._client.settings, "core_top_n", 12))
+            budget = int(getattr(self._client.settings, "core_budget", 8000))
+            by_tag = getattr(self._client.backend, "by_tag_top", None)
+            if by_tag is not None:
+                mems = by_tag(tag, top_n)
+            else:
+                mems = [m for m in (self._client.list(limit=0) or []) if tag in (m.tags or [])]
+                mems.sort(key=lambda m: (m.importance, m.access_count), reverse=True)
+                mems = mems[:top_n]
+            picked: list[str] = []
+            picked_ids: set[int] = set()
+            total = 0
+            for m in mems:
+                content = str(getattr(m, "content", "") or "").strip()
+                if not content:
+                    continue
+                if total + len(content) > budget:
+                    break
+                picked.append(f"- {content}")
+                if m.id is not None:
+                    picked_ids.add(m.id)
+                total += len(content)
+            with self._prefetch_lock:
+                # Core memories are also injected ids, so recall skips them
+                # (no duplicate between the core block and query recall).
+                self._injected_ids = picked_ids | self._injected_ids
+            if not picked:
+                return ""
+            return "Core memory (auto-loaded every session):\n" + "\n".join(picked)
+        except Exception:
+            logging.getLogger(__name__).exception("core memory build failed")
             return ""
 
     # ------------------------------------------------------------------ #
@@ -664,8 +727,12 @@ class LuminaryMemoryProvider(MemoryProvider):
         if self._config.get("mode", "hybrid") == "tools":
             return ""
 
-        # Persistent rules first: always-present context. Tracks injected ids
+        # Core memory first (DB-backed MEMORY.md equivalent): always present.
+        # Then persistent rules. Both union into the per-turn injected-id set
         # so the recall block below skips duplicates.
+        with self._prefetch_lock:
+            self._injected_ids = set()  # fresh per turn — never accumulate
+        core_block = self._build_core_memory()
         ctx_block = self._build_persistent_context()
 
         recall_block = ""
@@ -694,9 +761,10 @@ class LuminaryMemoryProvider(MemoryProvider):
                 recall_block = self._format_recall_block(memories, scores)
                 self._last_recall_returned = bool(recall_block)
 
-        if ctx_block and recall_block:
-            return f"{ctx_block}\n\n{recall_block}"
-        return ctx_block or recall_block
+        # Merge: core + persistent + recall, each deduplicated against the
+        # previously injected ids.
+        parts = [b for b in (core_block, ctx_block, recall_block) if b]
+        return "\n\n".join(parts)
 
     def recall_status(self):
         """Return the deterministic RecallStatus for the last prefetch."""
@@ -786,6 +854,47 @@ class LuminaryMemoryProvider(MemoryProvider):
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "luminary_core_add",
+                    "description": "Add a durable rule/fact to core memory. Core memories are auto-loaded into the system prompt every session (like MEMORY.md) — always visible to the agent, never pruned, no recall needed.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string", "description": "The durable rule/fact to pin as core memory"},
+                        },
+                        "required": ["content"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "luminary_core_remove",
+                    "description": "Remove a memory from core memory by id (keeps the memory in the store, just un-pins it from the always-loaded system prompt block).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer", "description": "Memory id to remove from core"},
+                        },
+                        "required": ["id"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "luminary_core_list",
+                    "description": "List current core memories (the rules auto-loaded into every system prompt).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {"type": "integer", "description": "Max results"},
+                        },
+                    },
+                },
+            },
         ]
 
     def _handle_recall(self, args: dict) -> str:
@@ -832,6 +941,60 @@ class LuminaryMemoryProvider(MemoryProvider):
         except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
             return self._tool_error(f"list failed: {exc}")
 
+    def _handle_core_add(self, args: dict) -> str:
+        content = args.get("content")
+        if not content or not str(content).strip():
+            return self._tool_error("luminary_core_add requires non-empty 'content'")
+        try:
+            tag = self._core_tag()
+            mid = self._client.ingest(str(content), tags=[tag], source="hermes-core")
+            if mid is None:
+                return json.dumps({"result": "Memory rejected by whitelist."})
+            # Pin importance high so it ranks top in the core block and is
+            # exempt from pruning (>= pin_threshold).
+            m = self._client.get(mid)
+            if m is not None and float(m.importance or 0) < 0.9:
+                m.importance = 0.9
+                self._client.update(m)
+            return json.dumps({"result": f"Core memory stored (id={mid})."})
+        except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
+            return self._tool_error(f"core_add failed: {exc}")
+
+    def _handle_core_remove(self, args: dict) -> str:
+        try:
+            mid = int(args.get("id"))
+        except (TypeError, ValueError):
+            return self._tool_error("luminary_core_remove requires an integer 'id'")
+        try:
+            m = self._client.get(mid)
+            if m is None:
+                return self._tool_error(f"memory {mid} not found")
+            tag = self._core_tag()
+            new_tags = [t for t in (m.tags or []) if t != tag]
+            if len(new_tags) == len(m.tags or []):
+                return json.dumps({"result": f"memory {mid} was not core (no change)"})
+            m.tags = new_tags
+            self._client.update(m)
+            return json.dumps({"result": f"memory {mid} removed from core"})
+        except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
+            return self._tool_error(f"core_remove failed: {exc}")
+
+    def _handle_core_list(self, args: dict) -> str:
+        try:
+            limit = int(args.get("limit") or 50)
+            tag = self._core_tag()
+            by_tag = getattr(self._client.backend, "by_tag_top", None)
+            if by_tag is not None:
+                mems = by_tag(tag, limit)
+            else:
+                mems = [m for m in (self._client.list(limit=0) or []) if tag in (m.tags or [])][:limit]
+            payload = [
+                {"id": m.id, "content": m.content, "importance": m.importance} for m in mems
+            ]
+            return json.dumps({"core": payload})
+        except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
+            return self._tool_error(f"core_list failed: {exc}")
+
     def handle_tool_call(self, name: str, args: dict) -> str:
         """Dispatch a tool call to the client and return a JSON string."""
         if not self._client:
@@ -842,4 +1005,10 @@ class LuminaryMemoryProvider(MemoryProvider):
             return self._handle_ingest(args)
         if name == "luminary_list":
             return self._handle_list(args)
+        if name == "luminary_core_add":
+            return self._handle_core_add(args)
+        if name == "luminary_core_remove":
+            return self._handle_core_remove(args)
+        if name == "luminary_core_list":
+            return self._handle_core_list(args)
         return self._tool_error(f"unknown tool: {name}")

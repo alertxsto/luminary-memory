@@ -122,6 +122,9 @@ Provider config lives in `~/.hermes/luminary/config.json` (auto-created,
 | `context_top_n` | `8` | **Persistent context**, top-N important memories injected every turn (always in context, independent of query) |
 | `context_budget` | `2000` | Max tokens of persistent context per turn |
 | `context_min_importance` | `0.0` | Only inject memories at/above this importance into persistent context |
+| `core_tag` | `core` | **Core memory**, tag marking rules auto-loaded into the system prompt every session (DB-backed MEMORY.md) |
+| `core_top_n` | `12` | Max core memories in the system prompt |
+| `core_budget` | `8000` | Max chars of core memory in the system prompt |
 
 **Persistent context (v0.2.11+):** the system prompt is byte-stable for prompt
 caching, so the provider rebuilds the top-N-by-importance block **every turn**
@@ -129,6 +132,12 @@ in `prefetch()` and merges it with query recall under anti-duplication. Durable
 rules and critical facts are always in context, even when the current query
 never mentions them — the agent cannot "forget" a rule that exists in the
 store.
+
+**Core memory (v0.2.13+):** memories tagged `core` are auto-loaded into the
+system prompt every session — the DB-backed equivalent of Hermes' native
+`MEMORY.md`. Rules the user wants always present (e.g. "WAJIB markdown table")
+should be stored with the `core` tag (or via `luminary_core_add`). Capped by
+`core_top_n` / `core_budget` (characters). Use `luminary_core_remove` to unpin.
 
 **LLM memory curation:** with `ingest_llm: true`, the enricher evaluates each
 turn and keeps only durable facts, greetings, chit-chat, and trivial
@@ -168,6 +177,19 @@ Example, save less often, no indicators:
 
 Check this first when memory seems wrong or missing.
 
+## Verification
+
+Run the full suite plus a live Hermes runtime smoke test in one command:
+
+```bash
+bash hermes/test.sh            # pytest + ruff + hermes runtime smoke
+bash hermes/test.sh --quick    # pytest + ruff only
+bash hermes/test.sh --hermes   # hermes runtime smoke only
+```
+
+Run this before every push (see AGENTS-workflow: laporan + tes + verifikasi
+hermes wajib sebelum push).
+
 ## Dashboard settings
 
 All provider settings (including `max_memories`, `consolidate_semantic`,
@@ -204,7 +226,7 @@ bash ~/.hermes/scripts/restart-bots.sh
 ### Manual
 
 ```bash
-pip install "luminary-memory[hermes]>=0.2.12"
+pip install "luminary-memory[hermes]>=0.2.13"
 # config.yaml → memory: provider: luminary
 mkdir -p ~/.hermes/hooks/luminary-activity
 cp hermes/hooks/luminary-activity/*.py hermes/hooks/luminary-activity/HOOK.yaml ~/.hermes/hooks/luminary-activity/

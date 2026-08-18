@@ -21,11 +21,14 @@ def _init_provider(tmp_path, **overrides):
     return p
 
 
-def test_get_tool_schemas_hybrid_returns_three(tmp_path):
+def test_get_tool_schemas_hybrid_returns_all(tmp_path):
     p = _init_provider(tmp_path, mode="hybrid")
     schemas = p.get_tool_schemas()
     names = {s["function"]["name"] for s in schemas}
-    assert names == {"luminary_recall", "luminary_ingest", "luminary_list"}
+    assert names == {
+        "luminary_recall", "luminary_ingest", "luminary_list",
+        "luminary_core_add", "luminary_core_remove", "luminary_core_list",
+    }
     p.shutdown()
 
 

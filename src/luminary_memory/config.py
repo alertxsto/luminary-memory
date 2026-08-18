@@ -82,6 +82,10 @@ class Settings:
     context_top_n: int = field(default_factory=lambda: _env_int("LUMINARY_CONTEXT_TOP_N", 8))
     context_budget: int = field(default_factory=lambda: _env_int("LUMINARY_CONTEXT_BUDGET", 2000))
     context_min_importance: float = field(default_factory=lambda: _env_float("LUMINARY_CONTEXT_MIN_IMPORTANCE", 0.0))
+    # core memory (DB-backed, auto-loaded into the system prompt every session)
+    core_tag: str = field(default_factory=lambda: os.environ.get("LUMINARY_CORE_TAG", "core"))
+    core_top_n: int = field(default_factory=lambda: _env_int("LUMINARY_CORE_TOP_N", 12))
+    core_budget: int = field(default_factory=lambda: _env_int("LUMINARY_CORE_BUDGET", 8000))
     # lifecycle
     ttl_default_seconds: int | None = field(default_factory=lambda: _env_int("LUMINARY_TTL_DEFAULT_SECONDS", 0) or None)
     prune_min_importance: float = field(default_factory=lambda: _env_float("LUMINARY_PRUNE_MIN_IMPORTANCE", 0.2))
@@ -128,6 +132,9 @@ class Settings:
             "context_top_n": self.context_top_n,
             "context_budget": self.context_budget,
             "context_min_importance": self.context_min_importance,
+            "core_tag": self.core_tag,
+            "core_top_n": self.core_top_n,
+            "core_budget": self.core_budget,
             "ttl_default_seconds": self.ttl_default_seconds,
             "prune_min_importance": self.prune_min_importance,
             "consolidate_jaccard_threshold": self.consolidate_jaccard_threshold,

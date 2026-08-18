@@ -27,7 +27,7 @@ Agents are only as good as what they remember. A stateless agent re-learns the s
 
 Strategies run in parallel and fuse via **weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1)** → **adaptive cutoff (cliff detection)** → **Jaccard deduplication (0.85)** → **token budget (4096)**. Short queries are expanded with graph entities before embedding, so "deploy?" still finds "production cluster".
 
-**Important rules always in context.** In the Hermes provider, the top-N most important memories are injected every turn (persistent context) and merged with query recall under anti-duplication — so the agent never forgets a rule that exists in the store. Rules are pinned (never pruned), and similar rule ingests auto-replace the old one instead of stacking contradictions.
+**Important rules always in context.** In the Hermes provider, the top-N most important memories are injected every turn (persistent context) and merged with query recall under anti-duplication — so the agent never forgets a rule that exists in the store. Rules are pinned (never pruned), and similar rule ingests auto-replace the old one instead of stacking contradictions. **Core memory** (tagged `core`) is auto-loaded into the system prompt every session — the DB-backed equivalent of `MEMORY.md` — so durable rules are present from the very first prompt, no query needed.
 
 ---
 
@@ -115,6 +115,9 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `context_top_n` | `LUMINARY_CONTEXT_TOP_N` | `8` |
 | `context_budget` | `LUMINARY_CONTEXT_BUDGET` | `2000` |
 | `context_min_importance` | `LUMINARY_CONTEXT_MIN_IMPORTANCE` | `0.0` |
+| `core_tag` | `LUMINARY_CORE_TAG` | `core` |
+| `core_top_n` | `LUMINARY_CORE_TOP_N` | `12` |
+| `core_budget` | `LUMINARY_CORE_BUDGET` | `8000` |
 | `query_planner` | `LUMINARY_QUERY_PLANNER` | `true` |
 | `query_planner_keyword_threshold` | `LUMINARY_QUERY_PLANNER_KEYWORD_THRESHOLD` | `0.9` |
 | `ingest_whitelist` | `LUMINARY_INGEST_WHITELIST` | `[]` |
@@ -197,7 +200,7 @@ after, and a background lifecycle keeps the store lean.
 | [Lifecycle](docs/lifecycle.md) | Cleanup, consolidation, pruning, LLM maintenance |
 | [Backends](docs/backends.md) | SQLite vs pgvector |
 | [Hermes integration](docs/hermes-integration.md) | Provider, config, installer |
-| [Roadmap](ROADMAP.md) | v0.2.12 → v1.0.0 |
+| [Roadmap](ROADMAP.md) | v0.2.13 → v1.0.0 |
 | [Benchmarks](benchmarks/RESULTS.md) | ~77 ms recall @ 5k (p50), 0 LLM tokens |
 
 ---

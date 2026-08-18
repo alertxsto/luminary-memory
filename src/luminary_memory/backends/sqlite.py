@@ -255,6 +255,31 @@ class SQLiteBackend(MemoryBackend):
             out.append(m)
         return out
 
+    def by_tag_top(self, tag: str, top_n: int) -> list[Memory]:
+        """Top-N memories carrying *tag*, by importance (desc) then access.
+
+        Lean scan (no embedding blobs) for the DB-backed core-memory block
+        that is auto-loaded into the system prompt every session — the
+        luminary equivalent of a native ``MEMORY.md``.
+        """
+        rows = self.conn.execute(
+            "SELECT id, content, importance, access_count FROM memories "
+            "WHERE tags LIKE ? "
+            "ORDER BY importance DESC, access_count DESC, id DESC "
+            "LIMIT ?",
+            (f'%"{tag}"%', int(max(0, top_n) or 0) or 1),
+        ).fetchall()
+        out: list[Memory] = []
+        for r in rows:
+            m = Memory(
+                id=int(r["id"]),
+                content=str(r["content"] or ""),
+                importance=float(r["importance"] or 0.0),
+                access_count=int(r["access_count"] or 0),
+            )
+            out.append(m)
+        return out
+
     def temporal_scan(self, limit: int | None = None) -> list[tuple[int, str, int]]:
         """Lightweight rows (id, created_at, access_count) for temporal scoring.
 

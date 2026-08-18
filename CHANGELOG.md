@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.13] - 2026-08-18
+
+### Added
+
+- **Core memory (DB-backed)** — memories tagged `core` are auto-loaded into the system prompt every session, before persistent context and recall. The luminary equivalent of Hermes' native `MEMORY.md`, stored in the database: durable rules are present from the very first prompt with no query match needed.
+  - Configurable via `LUMINARY_CORE_TAG` (default `core`), `LUMINARY_CORE_TOP_N` (12), `LUMINARY_CORE_BUDGET` (8000 chars).
+  - New tools: `luminary_core_add` (pin a rule, importance ≥ 0.9), `luminary_core_remove` (unpin, keeps the memory), `luminary_core_list`.
+  - Deduplicated against persistent context and recall (a core memory never appears twice).
+
+### Fixed
+
+- **`prefetch()` now includes the core-memory block** — previously core rules only reached the system prompt; mid-session turns got core rules only via system prompt. Now merged into every prefetch like persistent context.
+- **Keyword recall OR join** — multi-term queries ("laporan pakai tabel") returned 0 hits with FTS5 default AND; terms now join with OR and bm25 ranking lifts the best matches.
+
 ## [0.2.12] - 2026-08-18
 
 ### Added
