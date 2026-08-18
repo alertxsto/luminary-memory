@@ -80,6 +80,11 @@ to two of its keywords are appended so the rule surfaces in semantic recall
 even when the query uses different words. Both expansions keep the original
 query tokens, so recall quality can never get worse than baseline.
 
+
+## Adaptive importance (v0.2.15)
+
+Memories that keep getting recalled have their importance re-estimated immediately during the recall pass (based on access count and recency). This allows frequently accessed facts to naturally climb in importance and eventually enter the persistent context, adapting to the agent's current focus.
+
 ## Adaptive cutoff
 
 After fusion, the ranked list is cut at the first **steep score drop**

@@ -128,6 +128,18 @@ luminary-memory health --json    # raw JSON
 Empty store scores 100 (nothing wrong); low-scoring dimensions produce
 recommendations.
 
+
+## Backup before lifecycle
+
+It is good practice to backup your store before running destructive lifecycle operations:
+
+```bash
+luminary-memory export --path backup.json
+luminary-memory lifecycle
+# if something goes wrong:
+# luminary-memory import --path backup.json
+```
+
 ## Scheduling
 
 Run via cron for a self-maintaining store:

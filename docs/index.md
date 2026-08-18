@@ -26,6 +26,8 @@ A lightweight, self-hosted memory layer for AI agents.
 - **Automated contribution tooling**, CI (3.11/3.12 + pgvector), triage auto-labeling, stale bot, contributor account check.
 
 ## Quick links
+- [CLI reference](cli.md)
+- [Agent tools](agent-tools.md)
 
 - [Quickstart](quickstart.md)
 - [Architecture](architecture.md)

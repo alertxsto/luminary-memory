@@ -187,7 +187,7 @@ forward-compatible. This is what the dashboard (`Settings → Memory`) and
 
 | Key | Env var / config | Default | Meaning |
 |-----|------------------|---------|---------|
-| `llm_api_key` | `LUMINARY_LLM_API_KEY` | `""` | Enricher API key. Treated as a secret by the provider schema (never echoed by the CLI/setup). |
+| `llm_api_key` | `LUMINARY_LLM_API_KEY` | `""` | Enricher API key. Treated as a secret by the provider schema (never echoed by the CLI/setup). Appears as a secret field in the dashboard. |
 
 ---
 
