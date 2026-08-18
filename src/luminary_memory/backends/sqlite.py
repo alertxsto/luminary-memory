@@ -268,4 +268,11 @@ class SQLiteBackend(MemoryBackend):
         return ids
 
     def close(self) -> None:
-        self.conn.close()
+        try:
+            self.conn.close()
+        except sqlite3.ProgrammingError:
+            # Connection was created on a different thread (e.g. provider writer
+            # thread) and cannot be closed from here. Skip silently: the owning
+            # thread's exit will close it, and SQLite cleans up on GC anyway.
+            logger.warning("sqlite close skipped: connection owned by another thread")
+            return
