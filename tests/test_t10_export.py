@@ -69,6 +69,7 @@ def test_cli_export_import(tmp_path):
 def test_import_bare_list_format(tmp_path):
     """Bare JSON list (no wrapper dict) imports fine."""
     import json as _json
+
     from luminary_memory.api import MemoryClient
 
     payload = [
@@ -100,6 +101,7 @@ def test_import_missing_file_raises_cleanly(tmp_path):
 def test_import_engine_embed_failure_falls_back(tmp_path):
     """Engine embed failure falls back to embedding=None instead of crashing."""
     import json as _json
+
     from luminary_memory.api import MemoryClient
 
     class _BrokenEngine(_FakeEngine):
