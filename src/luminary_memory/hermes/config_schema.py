@@ -48,5 +48,17 @@ CONFIG_SCHEMA = ProviderConfigSchema(
         {"key": "llm_timeout", "label": "LLM timeout (s)", "type": "number"},
         {"key": "recall_indicator", "label": "Recall indicator", "type": "boolean"},
         {"key": "retain_indicator", "label": "Retain indicator", "type": "boolean"},
+        # Persistent context
+        {"key": "context_top_n", "label": "Persistent context: top N", "type": "number"},
+        {"key": "context_budget", "label": "Persistent context: token budget", "type": "number"},
+        {"key": "context_min_importance", "label": "Persistent context: min importance", "type": "number"},
+        # Core memory
+        {"key": "core_tag", "label": "Core memory tag", "type": "text"},
+        {"key": "core_top_n", "label": "Core memory: max top N", "type": "number"},
+        {"key": "core_budget", "label": "Core memory: max chars", "type": "number"},
+        # Session
+        {"key": "extract_on_session_end", "label": "Extract memories on session end", "type": "boolean"},
+        # Recall tuning
+        {"key": "importance_recall_boost", "label": "Recall boost for important memories", "type": "number"},
     ],
 )

@@ -24,7 +24,7 @@ lifecycle() ──► cleanup (TTL) ──► consolidate (semantic) ──► p
 
 ## Recall
 
-1. **Query expansion**, short queries are enriched with co-occurring graph entities before embedding (best-effort).
+1. **Query expansion**, short queries are enriched with co-occurring graph entities before embedding (best-effort). When the graph yields nothing, rule-aware query expansion adds keywords from a topically-related durable rule.
 2. **Four strategies run in parallel:**
    - *semantic*, embedding similarity (vectorized cosine matmul).
    - *keyword*, FTS5 / BM25 term match.
@@ -35,15 +35,14 @@ lifecycle() ──► cleanup (TTL) ──► consolidate (semantic) ──► p
 5. **Adaptive cutoff** (cliff detection), cuts at the first steep score drop (default 45%) so a sparse store returns only the relevant cluster instead of padding to the limit.
 6. **Dedup**, Jaccard similarity removes near-duplicates.
 7. **Budget**, results truncated to a token budget so the context window stays safe.
-8. **Batched access bookkeeping**, recalled memories are marked accessed with one batched UPDATE (not N writes).
+8. **Batched access bookkeeping**, recalled memories are marked accessed with one batched UPDATE (not N writes), and their importance is adaptively re-estimated on the spot so frequently used facts climb into persistent context.
 
 ## Persistent context (Hermes provider)
 
 The system prompt is byte-stable for prompt caching, so mid-session memories
 never reach the model through it. The provider therefore builds the top-N
 by-importance block **every turn** in `prefetch()` (lean backend scan, no
-embedding decode), merges it with the query-recall block, and deduplicates so
-nothing appears twice in one turn.
+embedding decode), merges it with the query-recall block, and applies content-level anti-duplication (by id and content hash) so identical text never appears twice in one turn even if stored under different ids.
 
 ## Backends
 

@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.16] - 2026-08-19
+
+### Added
+
+- **Complete dashboard config coverage** — 7 provider-config keys that were
+  active at runtime but invisible in the dashboard (`context_top_n`,
+  `context_budget`, `context_min_importance`, `core_tag`, `core_top_n`,
+  `core_budget`, `extract_on_session_end`) are now exposed in `CONFIG_SCHEMA`
+  and editable via `Settings → Memory` in the Hermes dashboard.
+- **`importance_recall_boost` in provider config** — previously env-var-only
+  (`LUMINARY_IMPORTANCE_RECALL_BOOST`), now also available as a `config.json`
+  key and dashboard field. Dashboard value overrides the env-var default.
+  Controls the ranking multiplier for high-importance (≥ 0.8) memories in recall.
+
+### Docs
+
+- **`docs/config-reference.md`** (new) — single authoritative reference for
+  every config input: all 37 `Settings` env vars (library-level) + all
+  `_DEFAULTS` provider keys, with defaults, allowed values, and meaning.
+- `docs/index.md` — link to config-reference.
+- `docs/hermes-integration.md` — link to config-reference; `importance_recall_boost`
+  now correctly documented as both a provider config key and env var.
+
 ## [0.2.15] - 2026-08-18
 
 ### Added

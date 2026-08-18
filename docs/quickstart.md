@@ -31,6 +31,13 @@ for memory, score in zip(result.memories, result.scores):
 # 3. maintain the store
 client.run_lifecycle()
 
+# bulk ingest (faster than individual calls)
+client.ingest_batch([
+    "staging database password is test",
+    "production database is read-only for agents"
+], tags=[["infra"], ["infra", "prod"]])
+
+
 # 4. check store health (0-100 score + recommendations)
 print(client.health_score())
 
@@ -55,6 +62,16 @@ luminary-memory import --path backup.json
 
 `export` writes all memories to a JSON file (migration/backup); `import`
 restores them (recomputing embeddings when absent).
+
+
+## Hermes Agent Integration
+
+Set the memory provider in your Hermes `config.yaml`:
+
+```yaml
+memory:
+  provider: luminary
+```
 
 ## Optional: LLM memory curation
 

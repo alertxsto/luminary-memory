@@ -32,6 +32,8 @@ On the next session Hermes will:
 The provider reads `$HERMES_HOME/luminary/config.json` (created on first save with
 `0600` permissions). Key settings:
 
+> For the complete reference of every config key and environment variable, see [Configuration reference](config-reference.md).
+
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `mode` | `hybrid` | `context` (auto-inject only) · `tools` (tool-only) · `hybrid` (both) |
@@ -47,19 +49,20 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `ingest_llm` | `false` | **LLM memory curation on retain**, the enricher decides whether a turn is worth saving (drops chit-chat) and stores a factual summary instead of the raw transcript |
 | `llm_base_url` | `""` | OpenAI-compatible endpoint for the enricher (e.g. `https://api.commandcode.ai/provider/v1`) |
 | `llm_model` | `""` | Enricher model (e.g. `deepseek/deepseek-v4-flash`) |
-| `llm_api_key` | `""` | Enricher API key |
+| `llm_api_key` | `""` | Enricher API key (settable as a secret field in the dashboard) |
 | `llm_timeout` | `60` | Enricher request timeout (seconds) |
 | `recall_indicator` | `true` | Show `🌙 Luminary, recalled N memories` |
 | `retain_indicator` | `true` | Show `🌙 Luminary, memory saved` |
 | `retain_user_prefix` | `User` | Prefix used when formatting retained user turns |
 | `retain_assistant_prefix` | `Assistant` | Prefix used when formatting retained assistant turns |
+| `extract_on_session_end` | `false` | Run an extraction pass at session end (requires `ingest_llm`) |
 | `auto_maintain` | `false` | **LLM store review at session end**, keeps/updates/deletes stale, contradicted, or duplicate facts (requires `ingest_llm`) |
 | `consolidate_semantic` | `true` | **Embedding-cosine consolidation** in lifecycle, merges paraphrases (falls back to Jaccard when embeddings are degenerate/missing) |
 | `importance_auto` | `true` | **Auto importance estimation**, scores each memory from access, recency, and graph centrality on ingest/lifecycle |
 | `context_top_n` | `8` | Top-N important memories injected into context every turn (persistent context) |
 | `context_budget` | `2000` | Max tokens of persistent context per turn |
 | `context_min_importance` | `0.0` | Only inject memories at/above this importance into persistent context |
-| `importance_recall_boost` | `1.0` | Ranking bonus multiplier for memories at importance ≥ 0.8, so durable rules surface in recall |
+| `importance_recall_boost` | `1.0` | Ranking bonus multiplier for memories at importance ≥ 0.8, so durable rules surface in recall (configurable via config.json / dashboard OR via LUMINARY_IMPORTANCE_RECALL_BOOST env var) |
 | `core_tag` | `core` | Tag marking DB-backed core memories — always auto-loaded into the system prompt every session (like MEMORY.md) |
 | `core_top_n` | `12` | Max core memories injected into the system prompt |
 | `core_budget` | `8000` | Max characters of core memory injected into the system prompt |

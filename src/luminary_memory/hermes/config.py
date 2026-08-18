@@ -46,6 +46,7 @@ _DEFAULTS: dict = {
     "core_tag": "core",  # tag marking DB-backed core memories (always loaded every session, like MEMORY.md)
     "core_top_n": 12,  # max core memories injected into the system prompt
     "core_budget": 8000,  # max chars of core memory injected into the system prompt
+    "importance_recall_boost": 1.0,  # ranking bonus multiplier for memories at importance >= 0.8
 }
 
 
