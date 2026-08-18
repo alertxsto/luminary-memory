@@ -76,6 +76,85 @@ def test_pg_integration_smoke():
         b.close()
 
 
+@pytest.mark.skipif(not _pg_available(), reason=_SKIP_MSG)
+def test_pg_integration_mutations_tags_and_hnsw():
+    """Exercise real Postgres mutations, JSONB round-trips, tags, and HNSW setup."""
+    dsn = os.environ.get("LUMINARY_PG_DSN", os.environ.get("PG_DSN", ""))
+    from luminary_memory.backends.pgvector import PGVectorBackend
+
+    b = PGVectorBackend(dsn=dsn, embedding_dim=384, hnsw=True)
+    ids: list[int] = []
+    try:
+        cur = b.conn.cursor()
+        cur.execute(
+            "SELECT indexname FROM pg_indexes "
+            "WHERE tablename = 'memories' AND indexname = 'memories_embedding_hnsw'"
+        )
+        assert cur.fetchone() is not None
+
+        memories = [
+            Memory(
+                content="batch alpha",
+                metadata={"kind": "alpha"},
+                tags=["ci", "alpha"],
+                embedding=[0.0] * 384,
+            ),
+            Memory(
+                content="batch beta",
+                metadata={"kind": "beta"},
+                tags=["ci", "beta"],
+                embedding=[1.0] + [0.0] * 383,
+            ),
+        ]
+        ids = b.add_many(memories)
+        assert len(ids) == 2 and all(ids)
+
+        first = b.get(ids[0])
+        assert first is not None
+        assert first.metadata == {"kind": "alpha"}
+        assert first.tags == ["ci", "alpha"]
+
+        first.content = "batch alpha updated"
+        first.metadata = {"kind": "updated"}
+        first.tags = ["ci", "updated"]
+        first.embedding = [0.0] * 384
+        b.update(first)
+        updated = b.get(ids[0])
+        assert updated is not None
+        assert updated.content == "batch alpha updated"
+        assert updated.metadata == {"kind": "updated"}
+        assert updated.tags == ["ci", "updated"]
+
+        assert ids[0] in b.by_tags(["updated"])
+        assert ids[1] in b.by_tags(["beta"])
+        b.delete(ids[1])
+        assert b.get(ids[1]) is None
+    finally:
+        for memory_id in ids:
+            b.delete(memory_id)
+        b.close()
+
+
+@pytest.mark.skipif(not _pg_available(), reason=_SKIP_MSG)
+def test_pg_integration_add_many_rolls_back_on_failure():
+    """A failed batch must not leave earlier rows committed in Postgres."""
+    dsn = os.environ.get("LUMINARY_PG_DSN", os.environ.get("PG_DSN", ""))
+    from psycopg.errors import NotNullViolation
+
+    from luminary_memory.backends.pgvector import PGVectorBackend
+
+    b = PGVectorBackend(dsn=dsn, embedding_dim=384)
+    try:
+        baseline = b.count()
+        valid = Memory(content="should roll back", embedding=[0.0] * 384)
+        invalid = Memory(content=None, embedding=[0.0] * 384)  # type: ignore[arg-type]
+        with pytest.raises(NotNullViolation):
+            b.add_many([valid, invalid])
+        assert b.count() == baseline
+    finally:
+        b.close()
+
+
 def test_pgvector_backend_unit_add_encodes_embedding():
     with patch("psycopg.connect") as mock_connect:
         from luminary_memory.backends.pgvector import PGVectorBackend
