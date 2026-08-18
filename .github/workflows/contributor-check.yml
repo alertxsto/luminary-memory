@@ -91,3 +91,4 @@ jobs:
               owner, repo, issue_number: pr.number, body,
             });
             console.log("posted contributor check for " + login + ": " + verdict + " (" + Math.round(confidence * 100) + "%)");
+test contributor check workflow
