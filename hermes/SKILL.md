@@ -113,6 +113,9 @@ Provider config lives in `~/.hermes/luminary/config.json` (auto-created,
 | `ingest_llm` | `false` | **LLM memory curation** — drops chit-chat, stores factual summary instead of raw transcript |
 | `llm_base_url` / `llm_model` / `llm_api_key` | `""` | OpenAI-compatible enricher endpoint/model/key |
 | `auto_maintain` | `false` | **LLM store review at session end** — keeps/updates/deletes stale or duplicate facts (needs `ingest_llm`) |
+| `consolidate_semantic` | `true` | **Semantic consolidation** — merge near-duplicates via embedding cosine (fallback Jaccard) during lifecycle |
+| `importance_auto` | `true` | **Auto importance estimation** — score memories by recency + access + graph centrality; drives prune & health score |
+| `max_memories` | `1000` | **Hard store cap** — oldest/lowest-importance memories pruned when the store exceeds this |
 | `recall_indicator` | `true` | Show `🌙 Luminary — recalled N memories` |
 | `retain_indicator` | `true` | Show `🌙 Luminary — memory saved` |
 | `backend` | `sqlite` | `sqlite` (zero config) or `pgvector` (scale) |
@@ -154,6 +157,19 @@ Example — save less often, no indicators:
 ```
 
 Check this first when memory seems wrong or missing.
+
+## Dashboard settings
+
+All provider settings (including `max_memories`, `consolidate_semantic`,
+`importance_auto`) are editable from the **Hermes dashboard**: open
+**Config → Memory → Luminary** (or `/api/memory/providers/luminary/config`).
+The dashboard renders the provider's `get_config_schema()` — if a new setting
+is missing there, the installed package is stale: reinstall
+(`pip install -e ".[hermes]"`) and restart the dashboard service.
+
+Saving writes to `~/.hermes/luminary/config.json` via `save_config()`.
+Unknown keys are dropped with a warning (never silently) — check the dashboard
+or gateway logs if a value does not persist.
 
 ## Troubleshooting
 

@@ -283,9 +283,33 @@ class LuminaryMemoryProvider(MemoryProvider):
             },
             {
                 "key": "ingest_llm",
-                "label": "LLM enrichment",
+                "label": "LLM memory curation",
                 "type": "boolean",
                 "default": _DEFAULTS["ingest_llm"],
+            },
+            {
+                "key": "auto_maintain",
+                "label": "Auto-maintain store (LLM)",
+                "type": "boolean",
+                "default": _DEFAULTS["auto_maintain"],
+            },
+            {
+                "key": "consolidate_semantic",
+                "label": "Semantic consolidation",
+                "type": "boolean",
+                "default": _DEFAULTS["consolidate_semantic"],
+            },
+            {
+                "key": "importance_auto",
+                "label": "Auto importance estimation",
+                "type": "boolean",
+                "default": _DEFAULTS["importance_auto"],
+            },
+            {
+                "key": "max_memories",
+                "label": "Max memories (store cap)",
+                "type": "number",
+                "default": _DEFAULTS["max_memories"],
             },
             {
                 "key": "llm_base_url",
