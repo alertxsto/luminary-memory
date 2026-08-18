@@ -134,7 +134,7 @@ Built-in lifecycle keeps the store lean. LLM maintenance (optional) keeps it acc
 | [Lifecycle](docs/lifecycle.md) | Cleanup, consolidation, pruning, LLM maintenance |
 | [Backends](docs/backends.md) | SQLite vs pgvector |
 | [Hermes integration](docs/hermes-integration.md) | Provider, config, installer |
-| [Roadmap](ROADMAP.md) | v0.2.7 → v1.0.0 |
+| [Roadmap](ROADMAP.md) | v0.2.8 → v1.0.0 |
 | [Benchmarks](benchmarks/RESULTS.md) | 230 ms recall @ 5k, 0 LLM tokens |
 
 ---

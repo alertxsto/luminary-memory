@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.8] - 2026-08-18
+
+### Fixed
+
+- **Dashboard save bug** — `consolidate_semantic` and `importance_auto` were missing from `_DEFAULTS`, so the Hermes dashboard rendered them but silently dropped the values on save. Now persisted correctly.
+
+### Docs
+
+- `docs/hermes-integration.md` — config table now covers all **20 provider settings** (added `retain_user_prefix`, `retain_assistant_prefix`, `consolidate_semantic`, `importance_auto`).
+
+### Website
+
+- New use-case card **"A Graph You Can See"** (showcases `luminary-memory graph`).
+- New FAQ: **"Can I see how my memories connect?"**.
+
 ## [0.2.7] - 2026-08-18
 
 ### Added
