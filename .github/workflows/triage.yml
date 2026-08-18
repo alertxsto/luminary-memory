@@ -1,0 +1,73 @@
+name: Triage
+
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auto-label issues and PRs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const isIssue = !!context.payload.issue;
+            const item = context.payload.issue || context.payload.pull_request;
+            const number = item.number;
+            const title = item.title || "";
+            const body = item.body || "";
+            const text = (title + " " + body).toLowerCase();
+
+            const rules = [
+              { label: "pgvector", patterns: ["pgvector", "postgres", "postgresql"] },
+              { label: "sqlite", patterns: ["sqlite", "fts5"] },
+              { label: "cli", patterns: ["cli", "command", "terminal"] },
+              { label: "documentation", patterns: ["doc", "readme", "website", "changelog"] },
+              { label: "bug", patterns: ["bug", "crash", "fails", "broken", "error"] },
+              { label: "enhancement", patterns: ["feature", "feat:", "add ", "new ", "support"] },
+              { label: "tests", patterns: ["test", "coverage", "integration"] },
+            ];
+
+            const labels = [];
+            for (const r of rules) {
+              if (r.patterns.some((p) => text.includes(p))) labels.push(r.label);
+            }
+            if (labels.length === 0) labels.push("triage-needed");
+
+            const endpoint = isIssue ? "issues" : "pulls";
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: number, labels,
+            });
+            console.log(`labeled #${number}: ${labels.join(", ")}`);
+
+      - name: Welcome first-time contributor
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const login = pr.user.login;
+
+            const isFirst = await github.rest.repos
+              .checkIfUserIsFirstTimeContributor(owner, repo, login)
+              .then(() => true)
+              .catch(() => false)
+              .catch(() => false);
+
+            if (isFirst) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: pr.number,
+                body: `Welcome @${login}! Thanks for your first PR to luminary-memory. 🚀\n\nA maintainer will review shortly. Meanwhile, the CI checks will run automatically — keep an eye on the **Checks** tab.\n\n- [CONTRIBUTING.md](https://github.com/alertxsto/luminary-memory/blob/main/CONTRIBUTING.md) has the workflow\n- Tests: \`python -m pytest\` · Lint: \`python -m ruff check src tests\`\n- Coverage must stay ≥ 90%`,
+              });
+              console.log(`welcomed first-time contributor ${login}`);
+            }
