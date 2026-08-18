@@ -1,10 +1,25 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from luminary_memory.backends.base import MemoryBackend
 from luminary_memory.types import Memory
+
+logger = logging.getLogger(__name__)
+
+
+def _json_load(value, default):
+    """Safely parse a JSON column value; fall back to *default* on failure."""
+    if value is None or value == "":
+        return default
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return default
 
 
 class PGVectorBackend(MemoryBackend):
@@ -45,7 +60,8 @@ class PGVectorBackend(MemoryBackend):
                 f"WITH (m = {int(m)}, ef_construction = {int(ef_construction)})"
             )
             self.conn.commit()
-        except Exception:  # noqa: BLE001 -- index is best-effort
+        except Exception:
+            logger.warning("HNSW index creation failed (non-fatal)", exc_info=True)
             try:
                 self.conn.rollback()
             except Exception:  # noqa: BLE001, S110
@@ -115,9 +131,9 @@ class PGVectorBackend(MemoryBackend):
         return Memory(
             id=int(d["id"]) if d.get("id") is not None else None,
             content=str(d.get("content") or ""),
-            metadata=d.get("metadata") if isinstance(d.get("metadata"), dict) else json.loads(d.get("metadata") or "{}") if d.get("metadata") else {},
+            metadata=_json_load(d.get("metadata"), {}),
             source=d.get("source"),
-            tags=d.get("tags") if isinstance(d.get("tags"), list) else json.loads(d.get("tags") or "[]") if d.get("tags") else [],
+            tags=_json_load(d.get("tags"), []),
             importance=float(d.get("importance") or 0.5),
             ttl_seconds=d.get("ttl_seconds"),
             created_at=str(d.get("created_at") or ""),
@@ -125,6 +141,7 @@ class PGVectorBackend(MemoryBackend):
             last_accessed_at=str(d["last_accessed_at"]) if d.get("last_accessed_at") else None,
             access_count=int(d.get("access_count") or 0),
             embedding=list(emb) if isinstance(emb, (list, tuple)) else None,
+            snippet=None,
         )
 
     def add(self, m: Memory) -> int:

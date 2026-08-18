@@ -609,6 +609,10 @@ class LuminaryMemoryProvider(MemoryProvider):
             except Exception:
                 logging.getLogger(__name__).exception("prefetch recall failed")
 
+        # Join any in-flight prefetch first so a fast double-call never leaks
+        # a thread or lets an older worker overwrite a newer cache.
+        if self._prefetch_thread is not None and self._prefetch_thread.is_alive():
+            self._prefetch_thread.join(timeout=3.0)
         t = threading.Thread(target=_worker, name="luminary-prefetch", daemon=True)
         t.start()
         self._prefetch_thread = t
