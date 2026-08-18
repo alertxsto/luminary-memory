@@ -58,6 +58,17 @@ luminary-memory stats
 
 Prints store statistics as JSON.
 
+### health
+
+```bash
+luminary-memory health
+luminary-memory health --json
+```
+
+Prints a 0-100 store health score with a per-dimension breakdown (duplicate
+rate, staleness, importance, graph density, size) and actionable
+recommendations. `--json` emits the raw report.
+
 ## Exit codes
 
 - `0` — success.

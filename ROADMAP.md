@@ -33,7 +33,7 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 | Packaging (PyPI, GitHub release, tags) | ✅ v0.1.1 |
 | Website (landing page) | ✅ v0.1.1 |
 | Hermes integration skill | ✅ v0.1.1 |
-| Test coverage | ✅ 91% total (pgvector 82%) |
+| Test coverage | ✅ 90% total |
 
 ---
 

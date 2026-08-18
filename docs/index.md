@@ -12,6 +12,8 @@ A lightweight, self-hosted memory layer for AI agents.
 
 - Four retrieval strategies fused into one ranked recall (semantic, keyword, temporal, graph).
 - **First-class Hermes Agent memory provider** — auto-recall every turn, auto-save every session, zero LLM tokens per turn (`memory.provider: luminary`).
+- **LLM memory curation** — optional `ingest_llm` drops chit-chat and stores factual summaries; `auto_maintain` prunes stale/duplicate facts at session end.
+- **Health score** — `health_score()` / `luminary-memory health` reports store quality (0-100) with recommendations.
 - SQLite out of the box, optional pgvector for scale.
 - Local CPU embeddings via ONNX — no GPU, no cloud.
 - Configurable token budget so memory never overflows the agent's context.

@@ -31,6 +31,9 @@ for memory, score in zip(result.memories, result.scores):
 # 3. maintain the store
 client.run_lifecycle()
 
+# 4. check store health (0-100 score + recommendations)
+print(client.health_score())
+
 client.close()
 ```
 
