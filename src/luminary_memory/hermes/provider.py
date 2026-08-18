@@ -211,124 +211,30 @@ class LuminaryMemoryProvider(MemoryProvider):
     # ------------------------------------------------------------------ #
 
     def get_config_schema(self) -> list[dict]:
-        """Declare the config fields surfaced by ``hermes memory setup``."""
-        return [
-            {
-                "key": "mode",
-                "label": "Mode",
-                "type": "select",
-                "choices": _MODE_CHOICES,
-                "default": _DEFAULTS["mode"],
-            },
-            {
-                "key": "db_path",
-                "label": "Database path",
-                "type": "text",
-                "default": _DEFAULTS["db_path"],
-            },
-            {
-                "key": "backend",
-                "label": "Backend",
-                "type": "select",
-                "choices": ["sqlite", "pgvector"],
-                "default": _DEFAULTS["backend"],
-            },
-            {
-                "key": "recall_limit",
-                "label": "Recall limit",
-                "type": "number",
-                "default": _DEFAULTS["recall_limit"],
-            },
-            {
-                "key": "token_budget",
-                "label": "Token budget",
-                "type": "number",
-                "default": _DEFAULTS["token_budget"],
-            },
-            {
-                "key": "auto_recall",
-                "label": "Auto recall",
-                "type": "boolean",
-                "default": _DEFAULTS["auto_recall"],
-            },
-            {
-                "key": "recall_sync",
-                "label": "Synchronous recall",
-                "type": "boolean",
-                "default": _DEFAULTS["recall_sync"],
-            },
-            {
-                "key": "auto_retain",
-                "label": "Auto retain",
-                "type": "boolean",
-                "default": _DEFAULTS["auto_retain"],
-            },
-            {
-                "key": "retain_every_n_turns",
-                "label": "Retain every N turns",
-                "type": "number",
-                "default": _DEFAULTS["retain_every_n_turns"],
-            },
-            {
-                "key": "retain_user_prefix",
-                "label": "User prefix",
-                "type": "text",
-                "default": _DEFAULTS["retain_user_prefix"],
-            },
-            {
-                "key": "retain_assistant_prefix",
-                "label": "Assistant prefix",
-                "type": "text",
-                "default": _DEFAULTS["retain_assistant_prefix"],
-            },
-            {
-                "key": "ingest_llm",
-                "label": "LLM memory curation",
-                "type": "boolean",
-                "default": _DEFAULTS["ingest_llm"],
-            },
-            {
-                "key": "auto_maintain",
-                "label": "Auto-maintain store (LLM)",
-                "type": "boolean",
-                "default": _DEFAULTS["auto_maintain"],
-            },
-            {
-                "key": "consolidate_semantic",
-                "label": "Semantic consolidation",
-                "type": "boolean",
-                "default": _DEFAULTS["consolidate_semantic"],
-            },
-            {
-                "key": "importance_auto",
-                "label": "Auto importance estimation",
-                "type": "boolean",
-                "default": _DEFAULTS["importance_auto"],
-            },
-            {
-                "key": "max_memories",
-                "label": "Max memories (store cap)",
-                "type": "number",
-                "default": _DEFAULTS["max_memories"],
-            },
-            {
-                "key": "llm_base_url",
-                "label": "LLM base URL",
-                "type": "text",
-                "default": _DEFAULTS["llm_base_url"],
-            },
-            {
-                "key": "llm_model",
-                "label": "LLM model",
-                "type": "text",
-                "default": _DEFAULTS["llm_model"],
-            },
-            {
-                "key": "llm_timeout",
-                "label": "LLM timeout (s)",
-                "type": "number",
-                "default": _DEFAULTS["llm_timeout"],
-            },
+        """Declare the config fields surfaced by ``hermes memory setup``.
+
+        Derived from ``hermes.config_schema.CONFIG_SCHEMA`` (single source of
+        truth for dashboard + CLI). ``llm_api_key`` is appended as a secret;
+        select fields get their choices from the shared constants.
+        """
+        from luminary_memory.hermes.config_schema import CONFIG_SCHEMA
+
+        fields: list[dict] = []
+        for f in CONFIG_SCHEMA.fields:
+            key = f["key"]
+            entry: dict = {
+                "key": key,
+                "label": f["label"],
+                "type": f["type"],
+                "default": _DEFAULTS.get(key, ""),
+            }
+            if key == "mode":
+                entry["choices"] = _MODE_CHOICES
+            elif key == "backend":
+                entry["choices"] = ["sqlite", "pgvector"]
+            fields.append(entry)
+
+        fields.append(
             {
                 "key": "llm_api_key",
                 "label": "LLM API key",
@@ -336,20 +242,9 @@ class LuminaryMemoryProvider(MemoryProvider):
                 "secret": True,
                 "env_var": "LUMINARY_LLM_API_KEY",
                 "default": "",
-            },
-            {
-                "key": "recall_indicator",
-                "label": "Recall indicator",
-                "type": "boolean",
-                "default": _DEFAULTS["recall_indicator"],
-            },
-            {
-                "key": "retain_indicator",
-                "label": "Retain indicator",
-                "type": "boolean",
-                "default": _DEFAULTS["retain_indicator"],
-            },
-        ]
+            }
+        )
+        return fields
 
     def save_config(self, values: dict, hermes_home: str | None = None) -> None:
         """Persist config values to the provider config file.
