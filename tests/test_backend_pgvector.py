@@ -325,3 +325,62 @@ def test_pgvector_row_to_memory_tuple():
     assert m.id == 1
     assert m.content == "content here"
     assert m.embedding == [0.5]
+
+
+def test_pgvector_unit_update_and_delete():
+    """update() executes UPDATE and commits; delete() executes DELETE."""
+    with patch("psycopg.connect") as mock_connect:
+        from luminary_memory.backends.pgvector import PGVectorBackend
+
+        fake = _FakeConn()
+        fake.cur._one = None
+        mock_connect.return_value = fake
+        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
+        committed_before = fake.committed
+
+        m = Memory(id=7, content="updated content", embedding=[0.1, 0.2, 0.3])
+        b.update(m)
+        assert fake.committed == committed_before + 1
+        update_sql = " ".join(fake.cur.executed[-1][0].split())
+        assert "UPDATE memories" in update_sql
+
+        b.delete(7)
+        assert fake.committed == committed_before + 2
+        delete_sql = " ".join(fake.cur.executed[-1][0].split())
+        assert "DELETE FROM memories" in delete_sql
+
+
+def test_pgvector_unit_by_tags_builds_query():
+    """by_tags filters with jsonb containment."""
+    with patch("psycopg.connect") as mock_connect:
+        from luminary_memory.backends.pgvector import PGVectorBackend
+
+        fake = _FakeConn()
+        fake.cur._rows = []
+        mock_connect.return_value = fake
+        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
+        res = b.by_tags(["ci", "alpha"])
+        assert res == set()  # by_tags returns a set of ids
+        sql = " ".join(fake.cur.executed[-1][0].split())
+        assert "SELECT id, tags FROM memories" in sql
+
+
+def test_pgvector_unit_row_to_memory_json_fallback():
+    """Corrupt metadata/tags JSON falls back gracefully (no crash)."""
+    with patch("psycopg.connect") as mock_connect:
+        from luminary_memory.backends.pgvector import PGVectorBackend
+
+        fake = _FakeConn()
+        fake.cur._rows = [
+            # id, content, metadata(corrupt), source, tags(corrupt), importance,
+            # ttl, created, updated, last_access, access_count, embedding
+            (1, "hello", "not-json{", None, "[corrupt", 0.5,
+             None, "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00",
+             "2026-01-01T00:00:00+00:00", 0, None),
+        ]
+        mock_connect.return_value = fake
+        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
+        res = b.all()
+        assert len(res) == 1
+        assert res[0].metadata == {}  # fallback, not crash
+        assert res[0].tags == []      # fallback, not crash

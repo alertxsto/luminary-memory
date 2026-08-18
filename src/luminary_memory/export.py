@@ -56,15 +56,14 @@ def import_memories(
 ) -> dict:
     p = Path(path)
     payload = json.loads(p.read_text())
-    memories_data = payload.get("memories") or []
-    if not memories_data and isinstance(payload, list):
-        memories_data = payload
 
-    # Normalize: versioned wrapper vs bare list.
-    if isinstance(payload, dict) and "memories" in payload:
-        memories_data = payload["memories"]
+    # Normalize: versioned wrapper (dict) vs bare list.
+    if isinstance(payload, dict):
+        memories_data = payload.get("memories") or []
     elif isinstance(payload, list):
         memories_data = payload
+    else:
+        memories_data = []
 
     # Build Memory objects; optionally recompute embeddings when absent.
     from luminary_memory.types import Memory

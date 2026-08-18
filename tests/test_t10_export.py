@@ -64,3 +64,54 @@ def test_cli_export_import(tmp_path):
     r = runner.invoke(app, ["import", "--path", str(path), "--db-path", str(dst_db)])
     assert r.exit_code == 0, r.output
     assert "imported" in r.output.lower()
+
+
+def test_import_bare_list_format(tmp_path):
+    """Bare JSON list (no wrapper dict) imports fine."""
+    import json as _json
+    from luminary_memory.api import MemoryClient
+
+    payload = [
+        {"content": "bare list memory one", "tags": ["a"]},
+        {"content": "bare list memory two", "tags": ["b"]},
+    ]
+    p = tmp_path / "bare.json"
+    p.write_text(_json.dumps(payload))
+
+    dst = MemoryClient(db_path=str(tmp_path / "dst.db"), engine=_FakeEngine(), enricher=NoopEnricher())
+    imported = dst.import_memories(p)
+    assert imported["imported"] == 2
+    contents = {m.content for m in dst.list(limit=0)}
+    assert "bare list memory one" in contents
+
+
+def test_import_missing_file_raises_cleanly(tmp_path):
+    """Missing file raises FileNotFoundError (not swallowed)."""
+    from luminary_memory.api import MemoryClient
+
+    dst = MemoryClient(db_path=str(tmp_path / "dst2.db"), engine=_FakeEngine(), enricher=NoopEnricher())
+    try:
+        dst.import_memories(tmp_path / "does-not-exist.json")
+        assert False, "should have raised"
+    except FileNotFoundError:
+        pass
+
+
+def test_import_engine_embed_failure_falls_back(tmp_path):
+    """Engine embed failure falls back to embedding=None instead of crashing."""
+    import json as _json
+    from luminary_memory.api import MemoryClient
+
+    class _BrokenEngine(_FakeEngine):
+        def embed(self, t):
+            raise RuntimeError("embed failed")
+
+    payload = [{"content": "no embedding memory"}]
+    p = tmp_path / "noemb2.json"
+    p.write_text(_json.dumps(payload))
+
+    dst = MemoryClient(db_path=str(tmp_path / "dst3.db"), engine=_BrokenEngine(), enricher=NoopEnricher())
+    imported = dst.import_memories(p)  # embed fails -> falls back to None
+    assert imported["imported"] == 1
+    mems = dst.list(limit=0)
+    assert mems[0].content == "no embedding memory"
