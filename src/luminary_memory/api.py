@@ -569,6 +569,19 @@ class MemoryClient:
             (id_to_mem[mid], score) for mid, score in fused if mid in id_to_mem
         ]
 
+        # Importance boost: high-importance memories (durable rules, critical
+        # facts) get a ranking bonus so they surface even when the query only
+        # loosely matches. Importance alone never tops an exact match, but it
+        # lifts critical rules above weak-but-recent noise.
+        if scored:
+            boost = self.settings.importance_recall_boost
+            if boost > 1.0:
+                scored = [
+                    (m, s * (boost if float(getattr(m, "importance", 0.5)) >= 0.8 else 1.0))
+                    for m, s in scored
+                ]
+                scored.sort(key=lambda x: -x[1])
+
         # Tag-scoped filter: restrict to allowed id set before fusion-derived dedup.
         if tags:
             by_tags = getattr(self.backend, "by_tags", None)

@@ -67,6 +67,7 @@ class Settings:
     rrf_k: int = field(default_factory=lambda: _env_int("LUMINARY_RRF_K", 60))
     dedup_jaccard_threshold: float = field(default_factory=lambda: _env_float("LUMINARY_DEDUP_JACCARD_THRESHOLD", 0.85))
     recall_cliff_threshold: float = field(default_factory=lambda: _env_float("LUMINARY_RECALL_CLIFF_THRESHOLD", 0.45))
+    importance_recall_boost: float = field(default_factory=lambda: _env_float("LUMINARY_IMPORTANCE_RECALL_BOOST", 1.0))
     strategy_weights: dict[str, float] = field(
         default_factory=lambda: {
             "semantic": _env_float("LUMINARY_WEIGHT_SEMANTIC", 0.4),
