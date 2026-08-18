@@ -87,6 +87,7 @@ class Settings:
     llm_api_key: str | None = field(default_factory=lambda: os.environ.get("LUMINARY_LLM_API_KEY") or None)
     llm_model: str = field(default_factory=lambda: os.environ.get("LUMINARY_LLM_MODEL", "gpt-4o-mini"))
     llm_timeout: int = field(default_factory=lambda: _env_int("LUMINARY_LLM_TIMEOUT", 10))
+    llm_max_tokens: int = field(default_factory=lambda: _env_int("LUMINARY_LLM_MAX_TOKENS", 512))
     # query planner
     query_planner: bool = field(default_factory=lambda: _env_bool("LUMINARY_QUERY_PLANNER", True))
     query_planner_keyword_threshold: float = field(
@@ -119,6 +120,7 @@ class Settings:
             "llm_api_key": self.llm_api_key,
             "llm_model": self.llm_model,
             "llm_timeout": self.llm_timeout,
+            "llm_max_tokens": self.llm_max_tokens,
             "query_planner": self.query_planner,
             "query_planner_keyword_threshold": self.query_planner_keyword_threshold,
             "pg_hnsw_index": self.pg_hnsw_index,

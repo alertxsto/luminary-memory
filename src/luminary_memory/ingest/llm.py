@@ -85,6 +85,7 @@ class OpenAICompatibleEnricher(LLMEnricher):
         api_key: str | None = None,
         model: str | None = None,
         timeout: int | None = None,
+        max_tokens: int | None = None,
     ):
         from luminary_memory.config import Settings
 
@@ -93,13 +94,19 @@ class OpenAICompatibleEnricher(LLMEnricher):
         self.api_key = api_key if api_key is not None else s.llm_api_key
         self.model = model if model is not None else s.llm_model
         self.timeout = int(timeout if timeout is not None else s.llm_timeout)
+        self.max_tokens = int(max_tokens if max_tokens is not None else s.llm_max_tokens)
 
     def _call_llm(self, messages: list[dict]) -> str:
         """Call the OpenAI-compatible endpoint, return the assistant content."""
         import urllib.request
 
         url = f"{self.base_url}/chat/completions"
-        body = json.dumps({"model": self.model, "messages": messages, "temperature": 0}).encode()
+        body = json.dumps({
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0,
+            "max_tokens": self.max_tokens,
+        }).encode()
         headers = {
             "Content-Type": "application/json",
             "User-Agent": "luminary-memory",
