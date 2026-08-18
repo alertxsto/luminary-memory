@@ -25,23 +25,23 @@ python -m ruff check src tests
 
 ## Branch model
 
-- **`develop`** — integration branch. **All pull requests target `develop`.**
-- **`main`** — stable release branch, protected. Only maintainers merge release
+- **`develop`**, integration branch. **All pull requests target `develop`.**
+- **`main`**, stable release branch, protected. Only maintainers merge release
   commits into it (feature → develop → main → tag).
 
 ## Commit conventions
 
-- `feat:` — new feature
-- `fix:` — bug fix
-- `docs:` — documentation only
-- `improve:` — refactor or enhancement without behavior change
-- `chore:` — build/tooling
+- `feat:`, new feature
+- `fix:`, bug fix
+- `docs:`, documentation only
+- `improve:`, refactor or enhancement without behavior change
+- `chore:`, build/tooling
 
 ## Coding standards
 
 - Python 3.11+, type-hinted.
 - `ruff` clean, `pytest` green.
-- TDD where feasible — test first, then implement.
+- TDD where feasible, test first, then implement.
 - Keep the public API (`MemoryClient`) stable; add rather than break.
 - Coverage must stay ≥ 90%.
 
@@ -57,7 +57,7 @@ example:
 > authored manually.
 
 This helps reviewers apply the right level of scrutiny. AI assistance isn't
-always perfect, even when used with the utmost care — a quick disclosure goes a
+always perfect, even when used with the utmost care, a quick disclosure goes a
 long way. Please don't use AI to write the pull request description or
 contributor communication; keep it concise and in your own voice.
 
@@ -68,10 +68,10 @@ contributor communication; keep it concise and in your own voice.
 - Link the issue if applicable.
 - CI must pass before merge.
 - Automated checks run on every PR:
-  - **CI** — unit tests (Python 3.11 & 3.12) + lint.
-  - **pgvector integration** — real Postgres round-trips (HNSW, JSONB, rollback).
-  - **Triage** — auto-labels the PR and welcomes first-time contributors.
-  - **Contributor check** — a soft account/language triage hint for maintainers.
+  - **CI**, unit tests (Python 3.11 & 3.12) + lint.
+  - **pgvector integration**, real Postgres round-trips (HNSW, JSONB, rollback).
+  - **Triage**, auto-labels the PR and welcomes first-time contributors.
+  - **Contributor check**, a soft account/language triage hint for maintainers.
 
 ## Testing
 

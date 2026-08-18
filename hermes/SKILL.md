@@ -15,30 +15,30 @@ metadata:
 **luminary-memory** is a self-hosted memory layer that plugs into Hermes as a
 first-class memory provider. It gives agents durable cross-session memory:
 auto-recall relevant context every turn, auto-save completed turns, and
-explicit tools for on-demand memory access — all local, zero LLM tokens.
+explicit tools for on-demand memory access, all local, zero LLM tokens.
 
 **What your agent remembers is what it becomes.**
 
 ## When to Use
 
-- **Recall context** — when the current task depends on things said or done in
+- **Recall context**, when the current task depends on things said or done in
   earlier sessions (preferences, decisions, environment details, past fixes).
-- **Store durable facts** — after learning something that will matter later
+- **Store durable facts**, after learning something that will matter later
   (a user preference, a project convention, a config decision).
-- **Inspect the store** — list what luminary currently remembers, or check
+- **Inspect the store**, list what luminary currently remembers, or check
   whether a fact is already known before storing it again.
-- **Troubleshoot** — when memory seems stale or missing, check the store and
+- **Troubleshoot**, when memory seems stale or missing, check the store and
   the transparency log.
 
 ## How It Works (3 ways to interact)
 
 | Path | When | Trigger |
 |------|------|---------|
-| **Auto-recall** | Every turn | `memory.provider: luminary` — background recall injected into context (🌙 indicator) |
+| **Auto-recall** | Every turn | `memory.provider: luminary`, background recall injected into context (🌙 indicator) |
 | **Auto-retain** | After each turn | provider saves `User: ... / Assistant: ...` to the store |
 | **Explicit tools** | On demand | `luminary_recall` / `luminary_ingest` / `luminary_list` |
 
-## Agent Usage — Explicit Tools
+## Agent Usage, Explicit Tools
 
 ### Recall relevant memories
 
@@ -73,7 +73,7 @@ will not matter later.
 client.list(limit=20)   # most recent first
 ```
 
-Use this before re-ingesting — if a fact is already stored, update instead of
+Use this before re-ingesting, if a fact is already stored, update instead of
 duplicating.
 
 ### Store maintenance
@@ -92,11 +92,11 @@ report = client.health_score()
 ```
 
 In the Hermes provider, `auto_maintain: true` (plus `ingest_llm: true`) runs
-`run_maintenance()` automatically at every session end — no manual trigger
+`run_maintenance()` automatically at every session end, no manual trigger
 needed. Results are logged to `~/.hermes/luminary/luminary.log`. CLI:
 `luminary-memory health` (human bar) or `--json`.
 
-## Configuration — Tweaks
+## Configuration, Tweaks
 
 Provider config lives in `~/.hermes/luminary/config.json` (auto-created,
 0600 perms). Defaults work out of the box; tweak only what you need.
@@ -110,24 +110,24 @@ Provider config lives in `~/.hermes/luminary/config.json` (auto-created,
 | `token_budget` | `2048` | Max tokens of injected memory |
 | `auto_retain` | `true` | Auto-save turns to the store |
 | `retain_every_n_turns` | `1` | Save every N turns (higher = fewer, batched saves) |
-| `ingest_llm` | `false` | **LLM memory curation** — drops chit-chat, stores factual summary instead of raw transcript |
+| `ingest_llm` | `false` | **LLM memory curation**, drops chit-chat, stores factual summary instead of raw transcript |
 | `llm_base_url` / `llm_model` / `llm_api_key` | `""` | OpenAI-compatible enricher endpoint/model/key |
-| `auto_maintain` | `false` | **LLM store review at session end** — keeps/updates/deletes stale or duplicate facts (needs `ingest_llm`) |
-| `consolidate_semantic` | `true` | **Semantic consolidation** — merge near-duplicates via embedding cosine (fallback Jaccard) during lifecycle |
-| `importance_auto` | `true` | **Auto importance estimation** — score memories by recency + access + graph centrality; drives prune & health score |
-| `max_memories` | `1000` | **Hard store cap** — oldest/lowest-importance memories pruned when the store exceeds this |
-| `recall_indicator` | `true` | Show `🌙 Luminary — recalled N memories` |
-| `retain_indicator` | `true` | Show `🌙 Luminary — memory saved` |
+| `auto_maintain` | `false` | **LLM store review at session end**, keeps/updates/deletes stale or duplicate facts (needs `ingest_llm`) |
+| `consolidate_semantic` | `true` | **Semantic consolidation**, merge near-duplicates via embedding cosine (fallback Jaccard) during lifecycle |
+| `importance_auto` | `true` | **Auto importance estimation**, score memories by recency + access + graph centrality; drives prune & health score |
+| `max_memories` | `1000` | **Hard store cap**, oldest/lowest-importance memories pruned when the store exceeds this |
+| `recall_indicator` | `true` | Show `🌙 Luminary, recalled N memories` |
+| `retain_indicator` | `true` | Show `🌙 Luminary, memory saved` |
 | `backend` | `sqlite` | `sqlite` (zero config) or `pgvector` (scale) |
 
 **LLM memory curation:** with `ingest_llm: true`, the enricher evaluates each
-turn and keeps only durable facts — greetings, chit-chat, and trivial
+turn and keeps only durable facts, greetings, chit-chat, and trivial
 acknowledgements are dropped, and kept turns are stored as concise factual
 summaries (e.g. `"Deploy target is the staging cluster."`) instead of raw
 `User: ... / Assistant: ...` transcripts. Without it (default), turns are
 stored verbatim with zero LLM cost.
 
-Example — save less often, no indicators:
+Example, save less often, no indicators:
 
 ```json
 {
@@ -163,12 +163,12 @@ Check this first when memory seems wrong or missing.
 All provider settings (including `max_memories`, `consolidate_semantic`,
 `importance_auto`) are editable from the **Hermes dashboard**: open
 **Config → Memory → Luminary** (or `/api/memory/providers/luminary/config`).
-The dashboard renders the provider's `get_config_schema()` — if a new setting
+The dashboard renders the provider's `get_config_schema()`, if a new setting
 is missing there, the installed package is stale: reinstall
 (`pip install -e ".[hermes]"`) and restart the dashboard service.
 
 Saving writes to `~/.hermes/luminary/config.json` via `save_config()`.
-Unknown keys are dropped with a warning (never silently) — check the dashboard
+Unknown keys are dropped with a warning (never silently), check the dashboard
 or gateway logs if a value does not persist.
 
 ## Troubleshooting
@@ -177,7 +177,7 @@ or gateway logs if a value does not persist.
 |---------|-------------|
 | No 🌙 indicator | `recall_indicator` off, or store empty, or provider not active (`hermes memory status`) |
 | Recall returns nothing | Store empty; or `auto_recall` / mode `tools` disables auto-injection (use the tool) |
-| Turns not saved | `auto_retain` off, or `retain_every_n_turns` batching — wait N turns |
+| Turns not saved | `auto_retain` off, or `retain_every_n_turns` batching, wait N turns |
 | Slow first recall | ONNX model loads on first use (one-time cost) |
 | Errors | Check `~/.hermes/luminary/luminary.log` |
 
@@ -204,5 +204,5 @@ mkdir -p ~/.hermes/skills/luminary-memory && cp hermes/SKILL.md ~/.hermes/skills
 ## Notes
 
 - Default backend SQLite (zero config); pgvector via `LUMINARY_BACKEND=pgvector`.
-- Recall runs four strategies (semantic, keyword, temporal, graph) fused by RRF.
+- Recall runs four strategies (semantic, keyword, temporal, graph) fused by weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1).
 - The store is local; no data leaves the machine. Zero LLM tokens per turn.

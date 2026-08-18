@@ -21,10 +21,10 @@ memory:
 
 On the next session Hermes will:
 
-- **Auto-recall every turn** — the current user message is used to recall relevant memories from the local store, injected as a `# Luminary Memory (persistent cross-session context)` block.
-- **Auto-save every session** — completed turns are persisted under session lineage tags (`session:<id>`, `parent:<id>`, `platform:<p>`, `agent:<identity>`).
-- **Expose explicit tools** — `luminary_recall` / `luminary_ingest` / `luminary_list` are registered for the model in `tools` and `hybrid` modes.
-- **Report a deterministic indicator** — a `🌙 Luminary — recalled N memories` status line appears whenever recall injected context.
+- **Auto-recall every turn**, the current user message is used to recall relevant memories from the local store, injected as a `# Luminary Memory (persistent cross-session context)` block.
+- **Auto-save every session**, completed turns are persisted under session lineage tags (`session:<id>`, `parent:<id>`, `platform:<p>`, `agent:<identity>`).
+- **Expose explicit tools**, `luminary_recall` / `luminary_ingest` / `luminary_list` are registered for the model in `tools` and `hybrid` modes.
+- **Report a deterministic indicator**, a `🌙 Luminary, recalled N memories` status line appears whenever recall injected context.
 
 ### Configuration
 
@@ -37,44 +37,44 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `db_path` | `""` | Override store path; `""` = `$HERMES_HOME/luminary/memory.db` |
 | `backend` | `sqlite` | `sqlite` or `pgvector` |
 | `recall_limit` | `10` | Top-N memories per recall |
-| `max_memories` | `1000` | Hard cap on store size — oldest/lowest-importance pruned when exceeded |
+| `max_memories` | `1000` | Hard cap on store size, oldest/lowest-importance pruned when exceeded |
 | `token_budget` | `2048` | Recall context budget |
 | `auto_recall` | `true` | Enable per-turn background recall |
 | `recall_sync` | `false` | Synchronous (live) recall instead of warm prefetch |
 | `auto_retain` | `true` | Enable per-turn auto-save |
 | `retain_every_n_turns` | `1` | Batch N turns into one store write |
-| `ingest_llm` | `false` | **LLM memory curation on retain** — the enricher decides whether a turn is worth saving (drops chit-chat) and stores a factual summary instead of the raw transcript |
+| `ingest_llm` | `false` | **LLM memory curation on retain**, the enricher decides whether a turn is worth saving (drops chit-chat) and stores a factual summary instead of the raw transcript |
 | `llm_base_url` | `""` | OpenAI-compatible endpoint for the enricher (e.g. `https://api.commandcode.ai/provider/v1`) |
 | `llm_model` | `""` | Enricher model (e.g. `deepseek/deepseek-v4-flash`) |
 | `llm_api_key` | `""` | Enricher API key |
 | `llm_timeout` | `60` | Enricher request timeout (seconds) |
-| `recall_indicator` | `true` | Show `🌙 Luminary — recalled N memories` |
-| `retain_indicator` | `true` | Show `🌙 Luminary — memory saved` |
+| `recall_indicator` | `true` | Show `🌙 Luminary, recalled N memories` |
+| `retain_indicator` | `true` | Show `🌙 Luminary, memory saved` |
 | `retain_user_prefix` | `User` | Prefix used when formatting retained user turns |
 | `retain_assistant_prefix` | `Assistant` | Prefix used when formatting retained assistant turns |
-| `auto_maintain` | `false` | **LLM store review at session end** — keeps/updates/deletes stale, contradicted, or duplicate facts (requires `ingest_llm`) |
-| `consolidate_semantic` | `true` | **Embedding-cosine consolidation** in lifecycle — merges paraphrases (falls back to Jaccard when embeddings are degenerate/missing) |
-| `importance_auto` | `true` | **Auto importance estimation** — scores each memory from access, recency, and graph centrality on ingest/lifecycle |
+| `auto_maintain` | `false` | **LLM store review at session end**, keeps/updates/deletes stale, contradicted, or duplicate facts (requires `ingest_llm`) |
+| `consolidate_semantic` | `true` | **Embedding-cosine consolidation** in lifecycle, merges paraphrases (falls back to Jaccard when embeddings are degenerate/missing) |
+| `importance_auto` | `true` | **Auto importance estimation**, scores each memory from access, recency, and graph centrality on ingest/lifecycle |
 
 ### LLM memory curation (v0.2.2+)
 
 With `ingest_llm: true`, every retained turn is sent to the enricher, which
 returns:
 
-- **`worth_saving`** — `false` drops the turn entirely (chit-chat, greetings,
+- **`worth_saving`**, `false` drops the turn entirely (chit-chat, greetings,
   trivial acknowledgements never reach the store).
-- **`summary`** — a concise factual summary in the turn's language that
+- **`summary`**, a concise factual summary in the turn's language that
   becomes the stored content, instead of the raw `User: ... / Assistant: ...`
   transcript.
-- **`entities` / `tags`** — attached as metadata/tags for richer recall.
+- **`entities` / `tags`**, attached as metadata/tags for richer recall.
 
-Without `ingest_llm` (default), turns are stored verbatim — zero LLM cost.
+Without `ingest_llm` (default), turns are stored verbatim, zero LLM cost.
 
 ### Store layout
 
 ```
 $HERMES_HOME/luminary/
-├── config.json          # provider config — 0600
+├── config.json          # provider config, 0600
 ├── memory.db            # SQLite store (created by MemoryClient)
 └── luminary.log         # transparency log (initialize/recall/retain/errors)
 ```
@@ -98,11 +98,11 @@ cp hermes/SKILL.md ~/.hermes/skills/luminary-memory/SKILL.md
 
 ## How the agent uses it
 
-1. **Ingest on tool call** — after learning a durable fact (preference, environment detail), call `client.ingest(...)`.
-2. **Recall into the system prompt** — before answering, call `client.recall(query)` and inject the top memories as context.
-3. **Lifecycle via cron** — schedule `luminary-memory lifecycle` to keep the store clean.
-4. **Monitor health** — `luminary-memory health` (or `client.health_score()`) reports store quality; run it in a cron to catch drift.
-5. **LLM curation (optional)** — with `ingest_llm` + `auto_maintain`, turns are curated and stale facts pruned automatically.
+1. **Ingest on tool call**, after learning a durable fact (preference, environment detail), call `client.ingest(...)`.
+2. **Recall into the system prompt**, before answering, call `client.recall(query)` and inject the top memories as context.
+3. **Lifecycle via cron**, schedule `luminary-memory lifecycle` to keep the store clean.
+4. **Monitor health**, `luminary-memory health` (or `client.health_score()`) reports store quality; run it in a cron to catch drift.
+5. **LLM curation (optional)**, with `ingest_llm` + `auto_maintain`, turns are curated and stale facts pruned automatically.
 
 ## Example
 

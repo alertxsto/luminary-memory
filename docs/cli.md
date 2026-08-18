@@ -4,8 +4,8 @@
 
 Every command accepts:
 
-- `--db-path PATH` — override the SQLite path.
-- `--backend sqlite|pgvector` — select the backend.
+- `--db-path PATH`, override the SQLite path.
+- `--backend sqlite|pgvector`, select the backend.
 
 ## Commands
 
@@ -112,5 +112,5 @@ Prints the installed version and Python runtime.
 
 ## Exit codes
 
-- `0` — success.
-- `1` — error (e.g. invalid backend, rejected ingest).
+- `0`, success.
+- `1`, error (e.g. invalid backend, rejected ingest).

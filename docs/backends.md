@@ -2,7 +2,7 @@
 
 ## SQLite (default)
 
-- Zero-configuration — stdlib `sqlite3` + FTS5.
+- Zero-configuration, stdlib `sqlite3` + FTS5.
 - Keyword search via FTS5 `MATCH` with `bm25()` ranking.
 - Vector search via in-process cosine similarity (linear scan).
 - Best for single-user, edge, and stores under ~100k memories.

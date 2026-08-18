@@ -3,17 +3,17 @@
 Two maintenance layers keep the store lean: deterministic passes
 (`run_lifecycle()`) and LLM-driven curation (`run_maintenance()`).
 
-## `run_lifecycle()` — deterministic passes
+## `run_lifecycle()`, deterministic passes
 
-### cleanup — TTL expiry
+### cleanup, TTL expiry
 
 Removes memories whose `ttl_seconds` has elapsed.
 
-### consolidate — merge near-duplicates
+### consolidate, merge near-duplicates
 
-Clusters memories by Jaccard similarity (`LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD`, default 0.9) **or embedding-cosine similarity** (`LUMINARY_CONSOLIDATE_SEMANTIC`, default `true`) and merges each cluster into a single memory — keeping the longest content, summing access counts, and unioning tags. Semantic mode (default) merges paraphrases that token overlap would miss; it falls back to Jaccard when embeddings are missing. Disable with `LUMINARY_CONSOLIDATE_SEMANTIC=false` or `luminary-memory lifecycle --no-semantic`.
+Clusters memories by Jaccard similarity (`LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD`, default 0.9) **or embedding-cosine similarity** (`LUMINARY_CONSOLIDATE_SEMANTIC`, default `true`) and merges each cluster into a single memory, keeping the longest content, summing access counts, and unioning tags. Semantic mode (default) merges paraphrases that token overlap would miss; it falls back to Jaccard when embeddings are missing. Disable with `LUMINARY_CONSOLIDATE_SEMANTIC=false` or `luminary-memory lifecycle --no-semantic`.
 
-### importance — auto-estimation
+### importance, auto-estimation
 
 On ingest and before each prune, each memory's importance is estimated from behavior:
 
@@ -21,26 +21,26 @@ On ingest and before each prune, each memory's importance is estimated from beha
 importance = access_norm × 0.4 + recency_norm × 0.3 + centrality_norm × 0.3
 ```
 
-- `access_norm` — `log1p(access_count)` normalized to the store's max.
-- `recency_norm` — `exp(-age_hours / 24h)` (fresh memories score higher).
-- `centrality_norm` — graph relation degree normalized (0 when no graph).
+- `access_norm`, `log1p(access_count)` normalized to the store's max.
+- `recency_norm`, `exp(-age_hours / 24h)` (fresh memories score higher).
+- `centrality_norm`, graph relation degree normalized (0 when no graph).
 
 Disable with `LUMINARY_IMPORTANCE_AUTO=false`. Pruning and the health score's
 importance dimension both use these live values.
 
-### prune — drop low-value memories
+### prune, drop low-value memories
 
 Removes memories below a minimum importance (`LUMINARY_PRUNE_MIN_IMPORTANCE`, default 0.2).
 
-## `run_maintenance()` — LLM-driven curation (v0.2.2+)
+## `run_maintenance()`, LLM-driven curation (v0.2.2+)
 
 Sends the store to the configured LLM enricher, which reviews every memory and
 decides **keep** / **update** / **delete**:
 
-- **delete** — obsolete, contradicted, or duplicate facts (e.g. the old
+- **delete**, obsolete, contradicted, or duplicate facts (e.g. the old
   deploy target after it changed).
-- **update** — facts that changed, with replacement content.
-- **keep** — still-current facts.
+- **update**, facts that changed, with replacement content.
+- **keep**, still-current facts.
 
 Requires an LLM enricher (set `ingest_llm: true` + `llm_*` config); no-ops
 otherwise. One LLM call per review run (all memories in a single call).
@@ -70,7 +70,7 @@ every session end:
 Results are recorded in the transparency log
 (`~/.hermes/luminary/luminary.log`): `maintenance {'reviewed': N, 'deleted': N, 'updated': N}`.
 
-## `health_score()` — store health report (v0.2.4+)
+## `health_score()`, store health report (v0.2.4+)
 
 Returns a 0-100 health score with a per-dimension breakdown, computed from
 existing store data (no new schema):
@@ -100,7 +100,7 @@ luminary-memory health --json    # raw JSON
 📊 Memory Health: 87.5/100 █████████░
   ✅ duplicate_rate: 98%
   ⚠️ density: 33%
-  → 2 stale memories (>30d) — run lifecycle prune or LLM maintenance
+  → 2 stale memories (>30d), run lifecycle prune or LLM maintenance
 ```
 
 Empty store scores 100 (nothing wrong); low-scoring dimensions produce

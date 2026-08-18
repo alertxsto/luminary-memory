@@ -1,162 +1,85 @@
-# Luminary Memory — Product Roadmap
+# Luminary Memory, Product Roadmap
 
 > **Tagline:** A lightweight, self-hosted memory layer for AI agents.
 
-**Current release:** v0.2.10 (polish & hardening) · **Tests:** 200+ passing · **Coverage:** 91% · **License:** Apache-2.0
+**Current release:** v0.2.10 (smarter recall + memory fixes) · **Tests:** 200+ passing · **Coverage:** 91% · **License:** Apache-2.0
 
 ---
 
 ## Vision
 
-Every AI agent deserves durable memory that lives on its own infrastructure. Luminary Memory is a self-hosted memory layer that gives agents cross-session persistence with four complementary retrieval strategies — semantic, keyword, temporal, and graph — fused into one ranked recall. Private by design, lightweight by construction, and scalable when you need it.
+Every AI agent deserves durable memory that lives on its own infrastructure. Luminary Memory is a self-hosted memory layer that gives agents cross-session persistence with four complementary retrieval strategies (semantic, keyword, temporal, graph) fused into one ranked recall. Private by design, lightweight by construction, scalable when you need it.
 
 ### Principles
 
-1. **Private by default** — all data stays on the machine. No cloud, no telemetry, no per-token memory cost.
-2. **Lightweight by construction** — SQLite + local CPU embeddings out of the box. No GPU required.
-3. **Budget-aware** — memory injection never blows up an agent's context window.
-4. **Self-maintaining** — the store keeps itself tidy via lifecycle passes.
-5. **Pluggable** — swap backends without touching application code.
+1. **Private by default**, all data stays on the machine. No cloud, no telemetry, no per-token memory cost.
+2. **Lightweight by construction**, SQLite + local CPU embeddings out of the box. No GPU required.
+3. **Budget-aware**, memory injection never blows up an agent's context window.
+4. **Self-maintaining**, the store keeps itself tidy via lifecycle passes.
+5. **Pluggable**, swap backends without touching application code.
 
 ---
 
-## Status Overview
+## Status
 
 | Area | Status |
 |------|--------|
-| Core library (ingest / recall / lifecycle) | ✅ v0.1.1 |
-| Backends (SQLite default, pgvector optional) | ✅ v0.1.1 |
-| Python API (`MemoryClient`) | ✅ v0.1.1 |
-| CLI (`luminary-memory`) | ✅ v0.1.1 |
-| Documentation (docs/, README, CONTRIBUTING, SECURITY) | ✅ v0.1.1 |
-| CI (lint + test, Python 3.11/3.12) | ✅ v0.1.1 |
-| Packaging (PyPI, GitHub release, tags) | ✅ v0.1.1 |
-| Website (landing page) | ✅ v0.1.1 |
-| Hermes integration skill | ✅ v0.1.1 |
+| Core library (ingest / recall / lifecycle) | ✅ Done (v0.2.10) |
+| Backends (SQLite default, pgvector optional) | ✅ Done (v0.2.9) |
+| Python API (`MemoryClient`) | ✅ Done (v0.2.10) |
+| CLI (`luminary-memory`) | ✅ Done (v0.2.7) |
+| Hermes memory provider | ✅ Done (v0.2.1, enhanced v0.2.10) |
+| Dashboard settings (22 fields) | ✅ Done (v0.2.10) |
+| Recall quality (weighted fusion + query expansion) | ✅ Done (v0.2.10) |
+| Store hardening (max cap, dedup, selective curation) | ✅ Done (v0.2.10) |
+| Website | ✅ Done (v0.2.10 redesign) |
+| Documentation | ✅ Done (v0.2.10) |
 | Test coverage | ✅ 91% total |
 
 ---
 
 ## Release History
 
-### v0.1.0 — MVP (2026-08-17)
-
-First public release.
-
-- Four-strategy recall: semantic (ONNX embeddings), keyword (FTS5 BM25), temporal (decay × access), graph (entity co-occurrence)
-- RRF fusion + Jaccard dedup + token budget
-- SQLite backend (zero-config) + pgvector backend (scale)
-- Ingest pipeline: whitelist filter + optional LLM enrichment + local embeddings
-- Lifecycle: TTL cleanup, consolidation, pruning
-- Python API + CLI
-- Full documentation + CI + Hermes skill
-
-### v0.1.1 — Bugfix (2026-08-17)
-
-Post-MVP audit hardening.
-
-- **Fixed:** enricher crash when `ingest_llm=True`
-- **Fixed:** timestamp parsing crash on corrupt data (lifecycle/temporal)
-- **Fixed:** FTS5 query syntax injection (sanitized to plain terms)
-- **Fixed:** `list()` performance (SQL-level pagination)
-- **Fixed:** CLI raw tracebacks → clean errors; `--limit` clamped
-- **Fixed:** whitelist regex crash on invalid patterns
-- **Added:** pgvector test coverage 51% → 82%
+| Version | Date | Highlights |
+|---------|------|------------|
+| v0.1.0 | 2026-08-17 | MVP: 4-strategy recall, SQLite + pgvector, lifecycle, CLI, docs |
+| v0.1.1 | 2026-08-17 | Bugfix: enricher crash, FTS5 injection, list() perf, pgvector 82% |
+| v0.2.0 | 2026-08-17 | Real LLM enricher, tag-scoped recall, export/import, query planner |
+| v0.2.1 | 2026-08-17 | Hermes memory provider (auto-recall/auto-save, 230 ms @5k, 0 tokens) |
+| v0.2.2 | 2026-08-18 | (dashboard schema + balanced curation) |
+| v0.2.3 | 2026-08-18 | Dashboard schema 18 fields, balanced curation |
+| v0.2.4 | 2026-08-18 | Health score, coverage 90% |
+| v0.2.5 | 2026-08-18 | Semantic consolidation, auto importance |
+| v0.2.6 | 2026-08-18 | Polish: lifecycle logging, CLI metadata, schema 20 fields |
+| v0.2.7 | 2026-08-18 | Graph CLI + version command |
+| v0.2.8 | 2026-08-18 | Dashboard save fix, docs 20/20, website polish |
+| v0.2.9 | 2026-08-18 | pgvector CI (PR #2), contributor tooling (triage/stale/check) |
+| v0.2.10 | 2026-08-18 | Smarter recall (weighted fusion + query expansion), store cap, memory fixes |
 
 ---
 
 ## Roadmap
 
-### v0.2.0 — Quality & Scale (next)
+### v0.3.0, Multi-User (next)
 
-**Goal:** Production hardening — performance at scale, richer recall, real LLM enrichment.
+**Goal:** scoped memory with `user_id` per memory, per-user recall.
 
-#### Performance & Scale
-- [ ] HNSW index for pgvector (scale beyond 100k memories)
-- [ ] Benchmark suite: recall quality vs latency on realistic data
-- [ ] Query planner: skip temporal/graph strategies when not needed
-- [ ] Batch ingest API for bulk import
+- [ ] `user_id` column + schema migration
+- [ ] Per-user ingest / recall / list
+- [ ] CLI flag + API parameter
+- [ ] Dashboard scoping
 
-#### Recall & Ingest
-- [ ] Real LLM enricher implementation (provider-agnostic; replaces `NotImplementedError`)
-- [ ] Tag-scoped recall (`recall(query, tags=[...])`)
-- [ ] `updated_at` auto-bump in `update()`
-- [ ] Result highlights/snippets (matched fragment in keyword/semantic hits)
+Details: [docs/PLAN-multi-user.md](./docs/PLAN-multi-user.md)
 
-#### API & CLI
-- [ ] JSON output for `search` and `list` (parity with `recall --json`)
-- [ ] Export/import memories (backup & restore)
-- [ ] `--limit 0` semantics (no limit) instead of error
-- [ ] Python API docs generated from docstrings (mkdocstrings / pdoc)
+### v1.0.0, Stable (when ready)
 
-#### Integrations
-- [ ] GitHub Pages deployment for website (repo settings → /website)
-- [ ] Publish `hermes/SKILL.md` as standalone installable skill
-- [ ] PyPI auto-publish workflow (tag → build → upload)
-- [ ] README badges (CI, PyPI version, license, Python versions)
-
----
-
-### v0.3.0 — Intelligence (post-v0.2)
-
-**Goal:** Smarter memory — structure, insight, and visualization.
-
-- [x] Knowledge graph visualization (entity relations browser) — v0.2.7 (CLI: `luminary-memory graph`)
-- [x] Memory health score (duplicate rate, staleness, importance distribution) — v0.2.4
-- [ ] Multi-user scoping (`user_id` per memory, per-user recall)
-- [x] Memory importance auto-estimation (recency + access + semantic centrality) — v0.2.5
-- [x] Consolidation v2: semantic-aware merging (not just Jaccard token overlap) — v0.2.5
-
----
-
-### v1.0.0 — Stable (when ready)
-
-**Goal:** Production-ready, API-stable, ecosystem-integrated.
+**Goal:** production-ready, API-stable, ecosystem-integrated.
 
 - [ ] API freeze (semver 1.0 contract)
 - [ ] Async API (`async def`) for agent loops
 - [ ] Web dashboard (browse/query memories via UI)
 - [ ] Plugin system for custom retrieval strategies
-- [ ] Full benchmark report published
-
----
-
-### v0.2.1 — Hermes Memory Provider ✅ released
-
-**Goal:** Luminary becomes a first-class Hermes memory provider — auto-recall every turn, auto-save every session, matching (and beating) Hindsight's integration with a fraction of the resources.
-
-- [x] Implement `MemoryProvider` ABC as a standalone pip entry-point provider (`luminary_memory.hermes`)
-- [x] `prefetch()` / `queue_prefetch()` — auto-recall into agent context each turn
-- [x] `on_session_end()` — auto-save conversation turns (buffered `sync_turn`, session-boundary flush)
-- [x] `get_tool_schemas()` — expose `luminary_recall` / `luminary_ingest` / `luminary_list` tools
-- [x] `system_prompt_block()` — provider context injection
-- [x] Register provider: `memory.provider = luminary`
-- [x] Benchmark — 230 ms recall p50 @ 5k, 179 MB RSS, **0 LLM tokens** (see `benchmarks/RESULTS.md`)
-- [x] Performance: recall 4.1× faster, temporal 7.8×, graph store 3.5× smaller
-
----
-
-## Completed Work Log (2026-08-17)
-
-Full day-one build from scratch to public release.
-
-| Milestone | Detail |
-|-----------|--------|
-| Plan | 26 tasks across 8 phases (TDD, exact file paths, verification) |
-| Scaffolding | `pyproject.toml`, package structure, CI-ready |
-| Schema | SQLite FTS5 + triggers + entities/relations tables |
-| Backends | SQLite (zero-config) + pgvector (HNSW-ready) + factory |
-| Embeddings | fastembed (BAAI/bge-small-en-v1.5, 384-dim, CPU/ONNX) |
-| Ingest | whitelist filter + optional LLM enricher + graph indexing |
-| Recall | semantic + keyword + temporal + graph → RRF → dedup → budget |
-| Lifecycle | TTL cleanup, consolidation, pruning, runner |
-| CLI | `add` / `recall` / `search` / `list` / `lifecycle` / `stats` |
-| Docs | 9 pages + README + CONTRIBUTING + SECURITY + CHANGELOG + CODE_OF_CONDUCT |
-| CI | lint (ruff) + test (pytest), matrix 3.11/3.12 |
-| Website | moonlit editorial landing page (stats, use cases, backends, FAQ, CTA) |
-| Publishing | PyPI 0.1.0 + 0.1.1, GitHub releases, tags, SOCIAL.md copy |
-| Audit | full code/test/CLI/website/infra/security audit, all criticals fixed |
-| History hygiene | `.commandcode/` + `SOCIAL.md` scrubbed from git history |
+- [ ] Full benchmark report published (SQLite vs pgvector, issue #6)
 
 ---
 
@@ -170,6 +93,7 @@ Full day-one build from scratch to public release.
 - [ ] Version bumped (semver)
 - [ ] Tag + GitHub release + PyPI upload
 - [ ] Website badge updated (if version displayed)
+- [ ] Docs consistent (README / docs/ / skill / website)
 
 ---
 
@@ -177,12 +101,10 @@ Full day-one build from scratch to public release.
 
 | Risk | Mitigation |
 |------|------------|
-| Linear vector scan slow >100k | pgvector backend + HNSW index (v0.2) |
-| Google Fonts = external dependency | Self-host fonts (v0.2, aligns with "zero cloud" claim) |
-| LLM enricher unimplemented | Noop default; real provider-agnostic enricher in v0.2 |
+| Linear vector scan slow >100k | pgvector backend + HNSW index |
+| Google Fonts = external dependency | Self-host fonts (aligns with zero-cloud claim) |
+| Store bloat (work-log accumulation) | Selective LLM curation + `max_memories` cap |
 | Single-maintainer bus factor | Docs-first culture, CONTRIBUTING guide, issue templates |
-| GitHub API instability (incidents observed) | Retry with backoff; PyPI as independent publish path |
+| GitHub API instability | Retry with backoff; PyPI as independent publish path |
 
----
-
-*Implementation detail: see [PLAN.md](./PLAN.md). Changelog: see [CHANGELOG.md](./CHANGELOG.md).*
+*Changelog: see [CHANGELOG.md](./CHANGELOG.md).*

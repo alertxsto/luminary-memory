@@ -1,8 +1,8 @@
-# luminary-memory — Hermes integration
+# luminary-memory, Hermes integration
 
 One-shot installer for using luminary-memory as a first-class Hermes Agent
 memory provider: auto-recall every turn, auto-save every session, zero LLM
-tokens per turn — plus an optional chat-activity hook and a skill.
+tokens per turn, plus an optional chat-activity hook and a skill.
 
 ## Quick install
 
@@ -17,7 +17,7 @@ That installs everything:
 | Component | What it does |
 |-----------|--------------|
 | **Provider** | `pip install luminary-memory[hermes]` + `memory.provider: luminary` in Hermes config |
-| **Hook** | `luminary-activity` — posts `🌙 Luminary — N memories recalled/stored` to chat |
+| **Hook** | `luminary-activity`, posts `🌙 Luminary, N memories recalled/stored` to chat |
 | **Skill** | `luminary-memory` skill for agent use |
 
 Then restart your gateway:
@@ -40,9 +40,9 @@ bash hermes/install.sh --no-hook --no-skill   # provider only
 By default the provider stores every turn verbatim (zero LLM cost). With LLM
 curation enabled, an enricher evaluates each turn and:
 
-- **Drops chit-chat** — greetings, "ok", trivial acknowledgements never reach
+- **Drops chit-chat**, greetings, "ok", trivial acknowledgements never reach
   the store (`worth_saving: false`).
-- **Stores factual summaries** — kept turns are saved as concise facts (e.g.
+- **Stores factual summaries**, kept turns are saved as concise facts (e.g.
   `"Deploy target is the staging cluster."`) instead of raw transcripts.
 
 Enable it (after `bash hermes/install.sh --llm`, edit
@@ -59,12 +59,12 @@ Enable it (after `bash hermes/install.sh --llm`, edit
 
 Any OpenAI-compatible endpoint works. Costs one small LLM call per retained
 turn (temperature 0, strict JSON). If the enricher fails, the provider falls
-back to storing the turn verbatim — it never blocks.
+back to storing the turn verbatim, it never blocks.
 
 ### Store maintenance (auto_maintain)
 
 With `auto_maintain: true` (plus `ingest_llm: true`), the provider also
-reviews the store at every session end — the LLM keeps current facts, updates
+reviews the store at every session end, the LLM keeps current facts, updates
 changed ones, and **deletes stale, contradicted, or duplicate memories**:
 
 ```json
@@ -85,7 +85,7 @@ Results land in the transparency log:
 ```bash
 pip install "luminary-memory[hermes]>=0.2.10"
 
-# config.yaml — add under memory:
+# config.yaml, add under memory:
 #   provider: luminary
 
 # hook
@@ -100,17 +100,17 @@ cp hermes/SKILL.md ~/.hermes/skills/luminary-memory/SKILL.md
 
 ## What you get
 
-- 🌙 **Auto-recall** — relevant memories retrieved in the background and
+- 🌙 **Auto-recall**, relevant memories retrieved in the background and
   injected into agent context every turn.
-- 💾 **Auto-save** — completed turns persisted automatically; session
+- 💾 **Auto-save**, completed turns persisted automatically; session
   boundaries flush buffered turns.
-- 🛠️ **Explicit tools** — `luminary_recall` / `luminary_ingest` /
+- 🛠️ **Explicit tools**, `luminary_recall` / `luminary_ingest` /
   `luminary_list` on demand.
-- 📋 **Deterministic indicator** — `🌙 Luminary — recalled N memories` in the
+- 📋 **Deterministic indicator**, `🌙 Luminary, recalled N memories` in the
   agent UI.
-- 🔔 **Chat activity hook** — optional mirror of store activity to your chat.
-- 🧠 **Skill** — agent-side guidance for store usage.
-- 📜 **Transparency log** — `~/.hermes/luminary/luminary.log` records every
+- 🔔 **Chat activity hook**, optional mirror of store activity to your chat.
+- 🧠 **Skill**, agent-side guidance for store usage.
+- 📜 **Transparency log**, `~/.hermes/luminary/luminary.log` records every
   recall, retain, and error (initialize/recall/retain lines), so you can see
   exactly what the provider is doing and whether anything failed.
 

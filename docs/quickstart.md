@@ -59,8 +59,8 @@ restores them (recomputing embeddings when absent).
 ## Optional: LLM memory curation
 
 By default every ingest is stored verbatim (zero LLM cost). To have an LLM
-evaluate each turn — dropping chit-chat and storing concise factual summaries
-instead of raw transcripts — enable `ingest_llm` and `auto_maintain`:
+evaluate each turn, dropping chit-chat and storing concise factual summaries
+instead of raw transcripts, enable `ingest_llm` and `auto_maintain`:
 
 ```bash
 pip install "luminary-memory[hermes]"
@@ -78,7 +78,7 @@ pip install "luminary-memory[hermes]"
 ```
 
 Any OpenAI-compatible endpoint works. `auto_maintain` reviews the store at
-session end — keeping current facts, updating changed ones, deleting stale or
+session end, keeping current facts, updating changed ones, deleting stale or
 duplicate memories.
 
 ## Configuration

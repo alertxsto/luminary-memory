@@ -16,14 +16,14 @@
 
 ## What your agent remembers is what it becomes.
 
-Agents are only as good as what they remember. A stateless agent re-learns the same context every session — paying the same tokens, making the same mistakes. luminary-memory closes that gap with a local memory store that persists between runs, retrieves the right context on demand, and keeps itself tidy over time.
+Agents are only as good as what they remember. A stateless agent re-learns the same context every session, paying the same tokens, making the same mistakes. luminary-memory closes that gap with a local memory store that persists between runs, retrieves the right context on demand, and keeps itself tidy over time.
 
 **Four retrieval strategies. One fused answer. Zero cloud.**
 
-- **Semantic** — ONNX embeddings (384-dim, CPU, no GPU needed)
-- **Keyword** — FTS5 BM25 (SQLite, zero config)
-- **Temporal** — recency decay × access count
-- **Graph** — entity co-occurrence with automatic curation
+- **Semantic**, ONNX embeddings (384-dim, CPU, no GPU needed)
+- **Keyword**, FTS5 BM25 (SQLite, zero config)
+- **Temporal**, recency decay × access count
+- **Graph**, entity co-occurrence with automatic curation
 
 Strategies run in parallel and fuse via **Reciprocal Rank Fusion (k=60)** → **Jaccard deduplication (0.85)** → **token budget (4096)**.
 
@@ -43,7 +43,7 @@ client = MemoryClient(db_path="memory.db")
 # store a durable fact
 client.ingest("The deploy target is the staging cluster", tags=["deploy", "infra"])
 
-# recall — four strategies fused into one ranked answer
+# recall, four strategies fused into one ranked answer
 result = client.recall("where do we deploy?")
 for memory, score in zip(result.memories, result.scores):
     print(f"{score:.3f}  {memory.content}")
@@ -61,7 +61,7 @@ luminary-memory stats
 
 ---
 
-## Hermes Agent — first-class memory provider
+## Hermes Agent, first-class memory provider
 
 Drop-in. Install the provider with `pip install "luminary-memory[hermes]"`, then add
 `memory.provider: luminary` to your Hermes config. That's it.
@@ -72,8 +72,8 @@ From the next session: **auto-recall** injects relevant memories every turn,
 
 Two optional LLM-powered features keep the store sharp:
 
-- **`ingest_llm`** — evaluates every turn before saving: drops chit-chat, stores factual summaries instead of raw transcripts.
-- **`auto_maintain`** — reviews the store at session end: keeps current facts, updates changed ones, deletes stale or duplicate ones.
+- **`ingest_llm`**, evaluates every turn before saving: drops chit-chat, stores factual summaries instead of raw transcripts.
+- **`auto_maintain`**, reviews the store at session end: keeps current facts, updates changed ones, deletes stale or duplicate ones.
 
 18 settings are exposed in the [Hermes dashboard](https://alertxsto.github.io/luminary-memory) for zero-hassle tuning. See
 [hermes/README.md](hermes/README.md) for the one-shot installer and full configuration.
@@ -88,7 +88,7 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 |---------|---------|---------|
 | `backend` | `LUMINARY_BACKEND` | `sqlite` |
 | `db_path` | `LUMINARY_DB_PATH` | `luminary_memory.db` |
-| `pg_dsn` | `LUMINARY_PG_DSN` | — (pgvector only) |
+| `pg_dsn` | `LUMINARY_PG_DSN` |, (pgvector only) |
 | `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` |
 | `embedding_dim` | `LUMINARY_EMBEDDING_DIM` | `384` |
 | `ingest_llm` | `LUMINARY_INGEST_LLM` | `false` |

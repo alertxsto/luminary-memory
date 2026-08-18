@@ -40,7 +40,7 @@ score(m) = Σ weight(strategy) / (k + rank(m) + 1)
 | semantic | 0.4 | matches meaning, strongest signal |
 | keyword  | 0.3 | exact match |
 | graph    | 0.2 | entity co-occurrence |
-| temporal | 0.1 | recency/popularity only — kept low so "recent but irrelevant" cannot top the ranking |
+| temporal | 0.1 | recency/popularity only, kept low so "recent but irrelevant" cannot top the ranking |
 
 `k` is configurable (`LUMINARY_RRF_K`, default 60). The query planner
 additionally gates strategies: temporal is skipped when a strong keyword
@@ -50,7 +50,7 @@ match exists, and graph is skipped when the query has no entity tokens.
 
 Short queries ("deploy?") produce weak embeddings. Before semantic search,
 the query is expanded with co-occurring entity names from the knowledge
-graph, so relevant memories rank higher (`_expand_query`, best-effort —
+graph, so relevant memories rank higher (`_expand_query`, best-effort , 
 falls back to the raw query on any error).
 
 ## Dedup
