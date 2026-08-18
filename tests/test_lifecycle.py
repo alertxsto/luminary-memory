@@ -90,3 +90,89 @@ def test_runner_cleanup_consolidate_prune_orchestrator(tmp_path):
     assert isinstance(result, dict)
     assert "cleanup" in result and "consolidate" in result and "prune" in result
     assert c.count() <= before
+
+
+class _FakeSemanticBackend:
+    """In-memory backend whose embeddings encode semantic similarity."""
+
+    def __init__(self, items):
+        self.items = list(items)
+        self._next = 100
+
+    def all(self):
+        return list(self.items)
+
+    def update(self, m):
+        for i, x in enumerate(self.items):
+            if x.id == m.id:
+                self.items[i] = m
+
+    def delete(self, mid):
+        self.items = [x for x in self.items if x.id != mid]
+
+    def count(self):
+        return len(self.items)
+
+
+def _mem_with_embedding(mid, content, emb):
+    from luminary_memory.types import Memory
+    return Memory(id=mid, content=content, embedding=emb, access_count=0, tags=[])
+
+
+def test_consolidate_semantic_merges_same_meaning_different_words(tmp_path):
+    """Embedding-cosine merges paraphrases that Jaccard would miss."""
+    # two vectors that are near-identical (cosine ~1.0) but texts share no tokens
+    v = [1.0, 0.5, 0.25]
+    m1 = _mem_with_embedding(1, "deploy target is the staging cluster", v)
+    m2 = _mem_with_embedding(2, "we ship to the production cluster now", [0.98, 0.5, 0.25])
+    b = _FakeSemanticBackend([m1, m2])
+    merged = consolidate(b, semantic=True, semantic_threshold=0.9)
+    assert merged == 1
+    assert b.count() == 1
+
+
+def test_consolidate_semantic_falls_back_to_jaccard_without_embeddings(tmp_path):
+    """Memories without embeddings fall back to Jaccard token overlap."""
+    from luminary_memory.types import Memory
+    m1 = Memory(id=1, content="postgres index tuning guide", embedding=None, access_count=0, tags=[])
+    m2 = Memory(id=2, content="postgres index tuning guide for latency", embedding=None, access_count=0, tags=[])
+    b = _FakeSemanticBackend([m1, m2])
+    merged = consolidate(b, semantic=True, threshold=0.6)
+    assert merged == 1  # Jaccard fallback merged them
+
+
+def test_consolidate_semantic_keeps_unrelated(tmp_path):
+    v = [1.0, 0.0]
+    m1 = _mem_with_embedding(1, "deploy to staging", v)
+    m2 = _mem_with_embedding(2, "user prefers dark mode", [0.0, 1.0])
+    b = _FakeSemanticBackend([m1, m2])
+    merged = consolidate(b, semantic=True, semantic_threshold=0.9)
+    assert merged == 0
+    assert b.count() == 2
+
+
+def test_consolidate_jaccard_only_when_semantic_false(tmp_path):
+    """semantic=False keeps legacy Jaccard-only behavior."""
+    v = [1.0, 0.5]
+    m1 = _mem_with_embedding(1, "alpha beta gamma delta", v)
+    m2 = _mem_with_embedding(2, "alpha beta gamma delta epsilon", [0.99, 0.5])
+    b = _FakeSemanticBackend([m1, m2])
+    # Jaccard = 4/5 = 0.8 → threshold 0.7 merges, threshold 0.9 doesn't
+    assert consolidate(b, semantic=False, threshold=0.7) == 1
+    b3 = _FakeSemanticBackend([_mem_with_embedding(1, "alpha beta gamma delta", v),
+                               _mem_with_embedding(2, "alpha beta gamma delta epsilon", [0.99, 0.5])])
+    assert consolidate(b3, semantic=False, threshold=0.9) == 0
+
+
+def test_runner_env_semantic_false(monkeypatch, tmp_path):
+    """LUMINARY_CONSOLIDATE_SEMANTIC=false disables semantic consolidation."""
+    from luminary_memory.config import Settings
+    monkeypatch.setenv("LUMINARY_CONSOLIDATE_SEMANTIC", "false")
+    s = Settings()
+    assert s.consolidate_semantic is False
+
+
+def test_runner_env_semantic_default_true():
+    from luminary_memory.config import Settings
+    s = Settings()
+    assert s.consolidate_semantic is True

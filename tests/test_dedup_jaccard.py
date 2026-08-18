@@ -44,3 +44,35 @@ def test_dedup_threshold_boundary():
     b = Memory(id=2, content="alpha beta gamma")
     assert len(dedup_jaccard([(a, 1.0), (b, 0.9)], threshold=1.0)) == 1
     assert len(dedup_jaccard([(a, 1.0), (b, 0.9)], threshold=1.01)) == 2
+
+
+def test_cosine_identical_vectors():
+    from luminary_memory.recall.dedup import cosine_similarity
+    v = [1.0, 2.0, 3.0]
+    assert cosine_similarity(v, v) == 1.0
+
+
+def test_cosine_orthogonal_vectors():
+    from luminary_memory.recall.dedup import cosine_similarity
+    assert cosine_similarity([1.0, 0.0], [0.0, 1.0]) == 0.0
+
+
+def test_cosine_similar_vectors_high():
+    import pytest
+
+    from luminary_memory.recall.dedup import cosine_similarity
+    # same direction, different magnitude → cosine ~1.0 (scale-invariant)
+    assert cosine_similarity([1.0, 2.0], [2.0, 4.0]) == pytest.approx(1.0)
+
+
+def test_cosine_empty_or_mismatched():
+    from luminary_memory.recall.dedup import cosine_similarity
+    assert cosine_similarity([], [1.0]) == 0.0
+    assert cosine_similarity([1.0, 2.0], [1.0]) == 0.0
+    assert cosine_similarity([0.0, 0.0], [0.0, 0.0]) == 0.0
+
+
+def test_cosine_clamped():
+    from luminary_memory.recall.dedup import cosine_similarity
+    # negative direction → clamped to 0.0 (no negative similarity exposed)
+    assert cosine_similarity([1.0], [-1.0]) == 0.0

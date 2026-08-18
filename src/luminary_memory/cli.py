@@ -235,13 +235,15 @@ def import_cmd(
 
 @app.command()
 def lifecycle(
+    semantic: bool = typer.Option(True, "--semantic/--no-semantic",
+                                  help="Use embedding-cosine consolidation (default: on)"),
     db_path: str | None = typer.Option(None, "--db-path", help="Override SQLite path"),
     backend: str | None = typer.Option(None, "--backend", help="sqlite | pgvector"),
 ) -> None:
     """Run cleanup + consolidate + prune."""
     client = _client(db_path, backend)
     try:
-        result = client.run_lifecycle()
+        result = client.run_lifecycle(semantic=semantic)
         console.print(json.dumps(result, indent=2))
     finally:
         client.close()

@@ -77,6 +77,10 @@ class MemoryClient:
             ttl_seconds=self.settings.ttl_default_seconds,
             embedding=self.engine.embed(content),
         )
+        if self.settings.importance_auto:
+            from luminary_memory.lifecycle.importance import estimate_importance
+
+            m.importance = estimate_importance(m)
         mid = self.backend.add(m)
         m.id = mid
         _try_index_graph(self.backend, m)
@@ -250,10 +254,10 @@ class MemoryClient:
     def count(self) -> int:
         return self.backend.count()
 
-    def run_lifecycle(self) -> dict[str, int]:
+    def run_lifecycle(self, semantic: bool | None = None) -> dict[str, int]:
         from luminary_memory.lifecycle.runner import run_lifecycle
 
-        return run_lifecycle(self.backend, self.settings)
+        return run_lifecycle(self.backend, self.settings, semantic=semantic)
 
     def health_score(self) -> dict:
         """Store health report: overall 0-100 plus per-dimension breakdown.

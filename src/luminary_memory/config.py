@@ -66,6 +66,8 @@ class Settings:
     ttl_default_seconds: int | None = field(default_factory=lambda: _env_int("LUMINARY_TTL_DEFAULT_SECONDS", 0) or None)
     prune_min_importance: float = field(default_factory=lambda: _env_float("LUMINARY_PRUNE_MIN_IMPORTANCE", 0.2))
     consolidate_jaccard_threshold: float = field(default_factory=lambda: _env_float("LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD", 0.9))
+    consolidate_semantic: bool = field(default_factory=lambda: _env_bool("LUMINARY_CONSOLIDATE_SEMANTIC", True))
+    importance_auto: bool = field(default_factory=lambda: _env_bool("LUMINARY_IMPORTANCE_AUTO", True))
     # LLM enrichment (provider-agnostic, stdlib HTTP)
     llm_base_url: str | None = field(default_factory=lambda: os.environ.get("LUMINARY_LLM_BASE_URL") or None)
     llm_api_key: str | None = field(default_factory=lambda: os.environ.get("LUMINARY_LLM_API_KEY") or None)
@@ -97,6 +99,8 @@ class Settings:
             "ttl_default_seconds": self.ttl_default_seconds,
             "prune_min_importance": self.prune_min_importance,
             "consolidate_jaccard_threshold": self.consolidate_jaccard_threshold,
+            "consolidate_semantic": self.consolidate_semantic,
+            "importance_auto": self.importance_auto,
             "llm_base_url": self.llm_base_url,
             "llm_api_key": self.llm_api_key,
             "llm_model": self.llm_model,

@@ -61,7 +61,9 @@ def test_lifecycle(tmp_path):
     db = tmp_path / "t.db"
     r = _invoke(["lifecycle"], db)
     assert r.exit_code == 0
-    assert json.loads(r.output) == {"cleanup": 0, "consolidate": 0, "prune": 0}
+    data = json.loads(r.output)
+    assert data["cleanup"] == 0 and data["consolidate"] == 0 and data["prune"] == 0
+    assert "reestimated" in data
 
 
 def test_help():
@@ -118,3 +120,11 @@ def test_health_human_mode(tmp_path):
     r = _invoke(["health"], db)  # no --json → bar
     assert r.exit_code == 0
     assert "Health" in r.output
+
+
+def test_lifecycle_semantic_flag(tmp_path):
+    db = tmp_path / "t.db"
+    _invoke(["add", "deploy target production cluster", "--db-path", str(db)], db)
+    r = _invoke(["lifecycle", "--no-semantic"], db)
+    assert r.exit_code == 0
+    assert "consolidate" in r.output

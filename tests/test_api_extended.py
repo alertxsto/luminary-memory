@@ -369,3 +369,14 @@ def test_health_score_density_fallback(tmp_path):
     report = c.health_score()  # must not crash without relations table
     assert "density" in report["dimensions"]
     c.close()
+
+
+def test_health_importance_dimension_reflects_auto(tmp_path):
+    """With auto importance, fresh store has high importance dimension."""
+    c = MemoryClient(db_path=str(tmp_path / "hi.db"), engine=_E())
+    c.ingest("fresh fact one")
+    c.ingest("fresh fact two")
+    report = c.health_score()
+    # auto-estimated importance for fresh memories >= 0.3 → above prune_min 0.2
+    assert report["dimensions"]["importance"]["health"] > 50
+    c.close()
