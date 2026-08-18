@@ -176,3 +176,14 @@ def test_runner_env_semantic_default_true():
     from luminary_memory.config import Settings
     s = Settings()
     assert s.consolidate_semantic is True
+
+
+def test_consolidate_degenerate_embedding_falls_back_jaccard(tmp_path):
+    """All-equal embeddings carry no signal — must NOT merge unrelated text."""
+    v = [0.5] * 384  # degenerate: identical constant vector
+    m1 = _mem_with_embedding(1, "deploy target is the staging cluster", v)
+    m2 = _mem_with_embedding(2, "user prefers dark mode", v)
+    b = _FakeSemanticBackend([m1, m2])
+    merged = consolidate(b, semantic=True, semantic_threshold=0.85)
+    assert merged == 0, "degenerate embeddings must not merge unrelated memories"
+    assert b.count() == 2

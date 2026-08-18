@@ -23,9 +23,23 @@ def _similar(
         ea = getattr(a, "embedding", None)
         eb = getattr(b, "embedding", None)
         if ea and eb and len(ea) == len(eb):
+            # Degenerate embeddings (all-equal values) carry no semantic
+            # signal — cosine of identical constant vectors is 1.0 for any
+            # content. Fall back to Jaccard in that case.
+            if _is_degenerate(ea) or _is_degenerate(eb):
+                return jaccard_similarity(a.content, b.content) >= jaccard_threshold
             return cosine_similarity(ea, eb) >= semantic_threshold
         # Missing/invalid embeddings → fall back to token overlap.
     return jaccard_similarity(a.content, b.content) >= jaccard_threshold
+
+
+def _is_degenerate(vec: list[float]) -> bool:
+    """True when the vector carries no directional signal (all values equal)."""
+    if not vec:
+        return True
+    first = vec[0]
+    # Sample a few positions — full scan is overkill for typical 384-dim.
+    return all(v == first for v in vec[:16])
 
 
 def consolidate(
