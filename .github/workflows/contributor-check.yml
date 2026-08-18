@@ -20,9 +20,17 @@ jobs:
             const pr = context.payload.pull_request;
             const login = pr.user.login;
             const body = (pr.body || "") + "\n" + (pr.title || "");
-            const commitMessages = (context.payload.pull_request.commits || [])
-              .map((c) => c.commit && c.commit.message)
-              .join("\n");
+
+            // Fetch PR commits via API (payload.commits is not an array on 'opened').
+            let commitMessages = "";
+            try {
+              const cm = await github.rest.pulls.listCommits({
+                owner, repo, pull_number: pr.number, per_page: 50,
+              });
+              commitMessages = (cm.data || []).map((c) => c.commit && c.commit.message).join("\n");
+            } catch (e) {
+              console.log("could not list commits: " + e.message);
+            }
 
             let user;
             try {
