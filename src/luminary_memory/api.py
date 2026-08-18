@@ -599,8 +599,10 @@ class MemoryClient:
         # dense relevant store keeps everything above the cliff (no
         # over-filtering).
         if scored and n_limit is not None:
+            from itertools import pairwise
+
             keep = [scored[0]]
-            for prev, cur in zip(scored, scored[1:]):
+            for prev, cur in pairwise(scored):
                 prev_s = prev[1]
                 if prev_s > 0 and (prev_s - cur[1]) / prev_s >= cliff_threshold:
                     break
