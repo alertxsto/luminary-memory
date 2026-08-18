@@ -1,6 +1,9 @@
-# PLAN — Multi-User Scoping + Dashboard Explore + Website Polish
+# PLAN — Multi-User Scoping
 
-**Target:** v0.3.0 (multi-user = roadmap item terakhir) · **Companion:** dashboard settings explore + website polish
+**Target:** v0.3.0 (multi-user = roadmap item terakhir)
+
+> Status: **Phase A active** · Phases B (dashboard explore) and C (website polish)
+> shipped in v0.2.8.
 
 ---
 
