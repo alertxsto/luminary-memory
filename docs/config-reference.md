@@ -172,20 +172,14 @@ forward-compatible. This is what the dashboard (`Settings → Memory`) and
 | `llm_timeout` | `60` | Enricher request timeout (seconds). | ✅ |
 | `recall_indicator` | `true` | Show `🌙 Luminary, recalled N memories`. | ✅ |
 | `retain_indicator` | `true` | Show `🌙 Luminary, memory saved`. | ✅ |
-| `context_top_n` | `8` | Top-N important memories injected every turn. | ❌ **missing** |
-| `context_budget` | `2000` | Max tokens of persistent context per turn. | ❌ **missing** |
-| `context_min_importance` | `0.0` | Only inject memories at/above this importance. | ❌ **missing** |
-| `core_tag` | `core` | Tag marking DB-backed core memories. | ❌ **missing** |
-| `core_top_n` | `12` | Max core memories injected into the system prompt. | ❌ **missing** |
-| `core_budget` | `8000` | Max characters of core memory injected. | ❌ **missing** |
-| `extract_on_session_end` | `false` | Run extraction at session end. | ❌ **missing** |
-
-### Known gap
-
-The `context_*` and `core_*` fields (7 config keys plus `extract_on_session_end`)
-exist in `_DEFAULTS` and work at runtime, but are **not yet exposed in the
-dashboard schema** (`CONFIG_SCHEMA`, currently 21 fields). They can only be set
-by editing `config.json` directly. This is the target of the next release.
+| `context_top_n` | `8` | Top-N important memories injected every turn. | ✅ |
+| `context_budget` | `2000` | Max tokens of persistent context per turn. | ✅ |
+| `context_min_importance` | `0.0` | Only inject memories at/above this importance. | ✅ |
+| `core_tag` | `core` | Tag marking DB-backed core memories. | ✅ |
+| `core_top_n` | `12` | Max core memories injected into the system prompt. | ✅ |
+| `core_budget` | `8000` | Max characters of core memory injected. | ✅ |
+| `extract_on_session_end` | `false` | Run extraction at session end. | ✅ |
+| `importance_recall_boost` | `1.0` | Ranking multiplier for memories at importance ≥ 0.8 — durable rules surface first in recall. | ✅ |
 
 ---
 

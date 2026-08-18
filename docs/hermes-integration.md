@@ -32,6 +32,8 @@ On the next session Hermes will:
 The provider reads `$HERMES_HOME/luminary/config.json` (created on first save with
 `0600` permissions). Key settings:
 
+> For the complete reference of every config key and environment variable, see [Configuration reference](config-reference.md).
+
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `mode` | `hybrid` | `context` (auto-inject only) · `tools` (tool-only) · `hybrid` (both) |

@@ -29,6 +29,7 @@ A lightweight, self-hosted memory layer for AI agents.
 
 - [Quickstart](quickstart.md)
 - [Architecture](architecture.md)
+- [Configuration reference](config-reference.md)
 - [Python API](api.md)
 - [CLI](cli.md)
 - [Recall](recall.md)

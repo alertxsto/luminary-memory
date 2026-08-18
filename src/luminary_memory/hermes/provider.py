@@ -164,6 +164,17 @@ class LuminaryMemoryProvider(MemoryProvider):
         ):
             if key in self._config and self._config.get(key) != defaults.get(key):
                 setattr(settings, attr, self._config[key])
+        
+        # Core memory and recall tuning knobs
+        for key, attr in (
+            ("core_tag", "core_tag"),
+            ("core_top_n", "core_top_n"),
+            ("core_budget", "core_budget"),
+            ("importance_recall_boost", "importance_recall_boost"),
+        ):
+            if key in self._config and self._config.get(key) != defaults.get(key):
+                setattr(settings, attr, self._config[key])
+        
         self._client = MemoryClient(settings=settings)
         self._shutting_down.clear()
         self._start_writer()
