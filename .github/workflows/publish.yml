@@ -35,9 +35,9 @@ jobs:
           ls -lh skill_asset/luminary-memory-skill.zip
       - name: Publish to PyPI (trusted publishing / OIDC)
         uses: pypa/gh-action-pypi-publish@release/v1
-        # Requires one-time setup on PyPI: configure this repo as a trusted
-        # publisher for project luminary-memory (https://pypi.org/manage/account/publishing/).
-        # Fallback: python -m build && twine upload dist/*
+        # Trusted Publisher only — no API token. Configured at
+        # https://pypi.org/manage/account/publishing/. Never fall back to twine:
+        # an API token upload alongside Trusted Publishing triggers a PyPI alert.
       - name: Attach skill asset to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
