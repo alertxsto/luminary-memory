@@ -938,6 +938,14 @@ summary:focus-visible {
   border-top: 1px solid var(--line-soft);
 }
 
+.arch-sub {
+  margin-top: var(--s1);
+  max-width: 46rem;
+  color: var(--ink-soft);
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+
 .arch-flow {
   margin-top: var(--s5);
   display: grid;

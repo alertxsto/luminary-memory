@@ -252,7 +252,7 @@
     <div class="usecases-head reveal-on-scroll">
       <p class="kicker">Practical Workflows</p>
       <h2>Built for Agents That Do Real Work.</h2>
-      <p class="usecases-sub">Every interaction compounds into durable context your agents can recall on demand.</p>
+      <p class="usecases-sub">Three ways teams actually run luminary-memory in production.</p>
     </div>
 
     <div class="usecases-grid reveal-on-scroll">
@@ -263,9 +263,8 @@
             <polyline points="8 6 2 12 8 18"></polyline>
           </svg>
         </div>
-        <h3 class="usecase-title">Coding Agent Context</h3>
-        <p class="usecase-desc">Persist repository conventions, flaky test workarounds, and architectural decisions across CLI sessions without manually re-stuffing system prompts.</p>
-        <span class="usecase-tag">Developer Tooling</span>
+        <h3 class="usecase-title">Coding Agents That Keep Context</h3>
+        <p class="usecase-desc">Persist repository conventions, flaky test workarounds, and architecture decisions across CLI sessions. Your agent starts each session with what it learned last week, not a blank prompt.</p>
       </div>
 
       <div class="usecase-card">
@@ -274,9 +273,8 @@
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
           </svg>
         </div>
-        <h3 class="usecase-title">Hermes Agent Integration</h3>
-        <p class="usecase-desc">First-class memory provider with <code>memory.provider=luminary</code>. Automatically recalls relevant facts every turn and saves context on session exit.</p>
-        <span class="usecase-tag">Zero Token Turn</span>
+        <h3 class="usecase-title">Hermes Agents With Zero-Token Memory</h3>
+        <p class="usecase-desc">A first-class provider: <code>memory.provider=luminary</code>. Every turn recalls relevant facts and saves new context on session exit, without burning a single LLM token on retrieval.</p>
       </div>
 
       <div class="usecase-card">
@@ -288,47 +286,8 @@
             <line x1="6" y1="18" x2="6.01" y2="18"></line>
           </svg>
         </div>
-        <h3 class="usecase-title">Stateful Pipeline Workers</h3>
-        <p class="usecase-desc">Background workers and cron tasks share execution outcomes, partial states, and rate limit budgets across process restarts.</p>
-        <span class="usecase-tag">Process Continuity</span>
-      </div>
-
-      <div class="usecase-card">
-        <div class="usecase-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7">
-            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
-          </svg>
-        </div>
-        <h3 class="usecase-title">Air-Gapped Private Knowledge</h3>
-        <p class="usecase-desc">Run memory retrieval over proprietary internal notes. All data stays inside a local SQLite file with zero outbound telemetry or cloud dependencies.</p>
-        <span class="usecase-tag">100% Local &amp; Private</span>
-      </div>
-
-      <div class="usecase-card">
-        <div class="usecase-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7">
-            <circle cx="5" cy="6" r="3"></circle>
-            <circle cx="19" cy="6" r="3"></circle>
-            <circle cx="12" cy="19" r="3"></circle>
-            <line x1="7" y1="7.5" x2="10" y2="16"></line>
-            <line x1="17" y1="7.5" x2="14" y2="16"></line>
-          </svg>
-        </div>
-        <h3 class="usecase-title">Inspectable Knowledge Graph</h3>
-        <p class="usecase-desc">Surface relational links between facts with <code>luminary-memory graph</code>. Inspect connected entities ranked by degree or export JSON for external visualizations.</p>
-        <span class="usecase-tag">Knowledge Graph</span>
-      </div>
-
-      <div class="usecase-card">
-        <div class="usecase-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7">
-            <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
-          </svg>
-        </div>
-        <h3 class="usecase-title">Autonomous Store Health</h3>
-        <p class="usecase-desc">Monitor memory quality from 0 to 100 with <code>luminary-memory health</code>. Automated lifecycle sweeps clean TTLs, merge duplicates, and prune low-value noise.</p>
-        <span class="usecase-tag">Self-Maintaining</span>
+        <h3 class="usecase-title">Background Workers That Survive Restarts</h3>
+        <p class="usecase-desc">Cron jobs and pipeline workers share outcomes, partial states, and rate-limit budgets across process restarts. Memory lives in a SQLite file, not in a process that dies.</p>
       </div>
     </div>
   </section>
@@ -392,37 +351,38 @@
   <!-- ============ ARCHITECTURE ============ -->
   <section class="arch" id="architecture">
     <div class="arch-head reveal-on-scroll">
-      <h2>Four Phases. One Unified Lifecycle.</h2>
+      <h2>One Loop, Running Every Turn.</h2>
+      <p class="arch-sub">Memory is not a pipeline you run once. It is a loop your agent lives in.</p>
     </div>
 
     <div class="arch-flow reveal-on-scroll">
       <div class="arch-phase">
-        <span class="arch-idx">Phase A</span>
-        <h3>Ingest</h3>
-        <p>Whitelist filter → optional LLM enrichment → local 384-d ONNX embedding → store</p>
+        <span class="arch-idx">Step 1</span>
+        <h3>Recall Before You Answer</h3>
+        <p>At the start of every turn, 4 strategies run in parallel: vector cosine, FTS5 keyword, temporal decay, entity graph. RRF (<code>k=60</code>) fuses them into one ranked list, Jaccard dedup (<code>0.85</code>) drops paraphrases, token budget (<code>4096</code>) caps the context.</p>
       </div>
       <div class="arch-arrow" aria-hidden="true">→</div>
       <div class="arch-phase">
-        <span class="arch-idx">Phase B</span>
-        <h3>Store</h3>
-        <p>SQLite + FTS5 by default · PostgreSQL + pgvector when scaling</p>
+        <span class="arch-idx">Step 2</span>
+        <h3>Act With Context</h3>
+        <p>The agent answers with the recalled facts already in its context window. Zero LLM tokens were spent on retrieval: embeddings run locally on CPU via ONNX.</p>
       </div>
       <div class="arch-arrow" aria-hidden="true">→</div>
       <div class="arch-phase">
-        <span class="arch-idx">Phase C</span>
-        <h3>Recall</h3>
-        <p>4 parallel queries → RRF fusion (<code>k=60</code>) → Jaccard dedup (<code>0.85</code>) → token budget (<code>4096</code>)</p>
+        <span class="arch-idx">Step 3</span>
+        <h3>Ingest What Mattered</h3>
+        <p>After the turn, durable facts are extracted (optional LLM curation filters chit-chat), embedded locally, and stored with metadata tags and co-occurrence relations.</p>
       </div>
       <div class="arch-arrow" aria-hidden="true">→</div>
       <div class="arch-phase">
-        <span class="arch-idx">Phase D</span>
-        <h3>Lifecycle</h3>
-        <p>TTL cleanup sweep · near-duplicate consolidation · low-utility pruning</p>
+        <span class="arch-idx">Step 4</span>
+        <h3>Lifecycle Keeps It Sharp</h3>
+        <p>Periodically: TTL cleanup expires stale facts, semantic consolidation merges near-duplicates, importance-based pruning drops low-value noise. The store stays lean without you touching it.</p>
       </div>
     </div>
 
     <div class="arch-foot reveal-on-scroll">
-      <span>Pluggable Backend: Switch from SQLite to pgvector without changing your application code.</span>
+      <span>Pluggable backend: switch from SQLite to pgvector without changing your application code.</span>
     </div>
   </section>
 
