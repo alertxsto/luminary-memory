@@ -2,7 +2,7 @@
 
 > **Tagline:** A lightweight, self-hosted memory layer for AI agents.
 
-**Current release:** v0.2.9 (polish & hardening) · **Tests:** 200+ passing · **Coverage:** 90% · **License:** Apache-2.0
+**Current release:** v0.2.9 (polish & hardening) · **Tests:** 200+ passing · **Coverage:** 91% · **License:** Apache-2.0
 
 ---
 
@@ -33,7 +33,7 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 | Packaging (PyPI, GitHub release, tags) | ✅ v0.1.1 |
 | Website (landing page) | ✅ v0.1.1 |
 | Hermes integration skill | ✅ v0.1.1 |
-| Test coverage | ✅ 90% total |
+| Test coverage | ✅ 91% total |
 
 ---
 
