@@ -390,3 +390,45 @@ def test_recall_limit_zero_unlimited(tmp_path):
     r = c.recall("fact", limit=0)
     assert len(r.memories) >= 5  # all 5 returned, not capped at 10k path
     c.close()
+
+
+def test_graph_empty_store(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "g.db"), engine=_E())
+    g = c.graph()
+    assert g == {"entities": [], "relations": []}
+    c.close()
+
+
+def test_graph_seeded_store(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "g2.db"), engine=_E())
+    c.ingest("deploy target is production cluster", tags=["deploy", "production"])
+    c.ingest("production database runs on port 5432", tags=["production", "database"])
+    g = c.graph()
+    assert len(g["entities"]) >= 3
+    assert any(e["name"] == "production" and e["memories"] >= 2 for e in g["entities"])
+    assert len(g["relations"]) >= 2
+    c.close()
+
+
+def test_graph_limit_caps_entities(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "g3.db"), engine=_E())
+    for i in range(5):
+        c.ingest(f"deploy target number {i} is production", tags=["deploy", f"n{i}"])
+    g = c.graph(limit=3)
+    assert len(g["entities"]) <= 3
+    c.close()
+
+
+def test_graph_backend_without_conn(tmp_path):
+    """Backend without .conn falls back to empty graph (pgvector-safe)."""
+    from luminary_memory.api import MemoryClient
+    from luminary_memory.backends.sqlite import SQLiteBackend
+
+    c = MemoryClient(db_path=str(tmp_path / "g4.db"), engine=_E())
+    real_backend = c.backend
+    real_conn = real_backend.conn
+    # simulate a backend whose conn is None (query fails → fallback)
+    real_backend.conn = None  # type: ignore[assignment]
+    assert c.graph() == {"entities": [], "relations": []}
+    real_backend.conn = real_conn  # restore for close()
+    c.close()

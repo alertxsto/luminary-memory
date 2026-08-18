@@ -428,6 +428,47 @@ class MemoryClient:
             logger.exception("import_memories failed for %s", path)
             raise
 
+    def graph(self, limit: int = 20) -> dict:
+        """Return the knowledge graph: top entities and their co-occurrence edges.
+
+        Shape: ``{"entities": [{"name", "degree", "memories"}],
+        "relations": [{"source", "target", "weight"}]}``. Backends without a
+        queryable graph table return empty lists (pgvector falls back safely).
+        """
+        entities: list[dict] = []
+        relations: list[dict] = []
+        conn = getattr(self.backend, "conn", None)
+        if conn is None:
+            return {"entities": entities, "relations": relations}
+        try:
+            rows = conn.execute(
+                "SELECT e.name, COUNT(DISTINCT r.source_id) + COUNT(DISTINCT r.target_id) AS degree, "
+                "COUNT(DISTINCT r.memory_id) AS memories "
+                "FROM entities e "
+                "LEFT JOIN relations r ON r.source_id = e.id OR r.target_id = e.id "
+                "GROUP BY e.id ORDER BY degree DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+            for r in rows:
+                entities.append({
+                    "name": r[0], "degree": int(r[1] or 0), "memories": int(r[2] or 0),
+                })
+            rel_rows = conn.execute(
+                "SELECT s.name, t.name, MAX(r.weight) AS weight "
+                "FROM relations r "
+                "JOIN entities s ON s.id = r.source_id "
+                "JOIN entities t ON t.id = r.target_id "
+                "GROUP BY r.source_id, r.target_id "
+                "ORDER BY weight DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+            for r in rel_rows:
+                relations.append({"source": r[0], "target": r[1], "weight": float(r[2] or 0.0)})
+        except Exception:
+            logger.exception("graph query failed (non-fatal)")
+            return {"entities": [], "relations": []}
+        return {"entities": entities, "relations": relations}
+
     def close(self) -> None:
         self.backend.close()
 

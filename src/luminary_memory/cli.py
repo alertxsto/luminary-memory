@@ -296,5 +296,49 @@ def health(
         client.close()
 
 
+@app.command()
+def version() -> None:
+    """Show the installed version and runtime."""
+    import platform
+
+    from luminary_memory import __version__
+
+    console.print(f"luminary-memory {__version__} (Python {platform.python_version()})")
+
+
+@app.command()
+def graph(
+    limit: int = typer.Option(20, "--limit", "-n", help="Max entities/relations"),
+    relations: bool = typer.Option(False, "--relations", help="Also print edges"),
+    json_output: bool = typer.Option(False, "--json", help="Emit raw JSON"),
+    db_path: str | None = typer.Option(None, "--db-path", help="Override SQLite path"),
+    backend: str | None = typer.Option(None, "--backend", help="sqlite | pgvector"),
+) -> None:
+    """Show the knowledge graph (entities + co-occurrence relations)."""
+    client = _client(db_path, backend)
+    try:
+        data = client.graph(limit=limit)
+        if json_output:
+            console.print(json.dumps(data, indent=2))
+            return
+        table = Table(title="Knowledge Graph")
+        table.add_column("Entity", style="cyan")
+        table.add_column("Degree", justify="right")
+        table.add_column("Memories", justify="right")
+        for e in data["entities"]:
+            table.add_row(e["name"], str(e["degree"]), str(e["memories"]))
+        console.print(table)
+        if relations and data["relations"]:
+            rtable = Table(title="Relations")
+            rtable.add_column("Source")
+            rtable.add_column("Target")
+            rtable.add_column("Weight", justify="right")
+            for r in data["relations"]:
+                rtable.add_row(r["source"], r["target"], f"{r['weight']:.1f}")
+            console.print(rtable)
+    finally:
+        client.close()
+
+
 if __name__ == "__main__":
     app()

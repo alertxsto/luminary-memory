@@ -128,3 +128,35 @@ def test_lifecycle_semantic_flag(tmp_path):
     r = _invoke(["lifecycle", "--no-semantic"], db)
     assert r.exit_code == 0
     assert "consolidate" in r.output
+
+
+def test_version_command():
+    r = runner.invoke(app, ["version"])
+    assert r.exit_code == 0
+    assert "luminary-memory" in r.output
+    assert "0.2" in r.output
+
+
+def test_graph_command(tmp_path):
+    db = tmp_path / "t.db"
+    _invoke(["add", "deploy target production cluster", "--tags", "deploy", "--db-path", str(db)], db)
+    r = _invoke(["graph", "--json"], db)
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert "entities" in data and "relations" in data
+
+
+def test_graph_command_table(tmp_path):
+    db = tmp_path / "t.db"
+    _invoke(["add", "deploy production cluster", "--db-path", str(db)], db)
+    r = _invoke(["graph"], db)
+    assert r.exit_code == 0
+    assert "Knowledge Graph" in r.output
+
+
+def test_graph_relations_flag(tmp_path):
+    db = tmp_path / "t.db"
+    _invoke(["add", "deploy production cluster", "--db-path", str(db)], db)
+    r = _invoke(["graph", "--relations"], db)
+    assert r.exit_code == 0
+    assert "Relations" in r.output

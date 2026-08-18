@@ -90,6 +90,26 @@ Prints a 0-100 store health score with a per-dimension breakdown (duplicate
 rate, staleness, importance, graph density, size) and actionable
 recommendations. `--json` emits the raw report.
 
+### graph
+
+```bash
+luminary-memory graph                  # top entities as a table
+luminary-memory graph --relations      # also print co-occurrence edges
+luminary-memory graph --json           # raw JSON (entities + relations)
+luminary-memory graph --limit 50       # more entities
+```
+
+Shows the knowledge graph: entities ranked by degree (connections) and the
+co-occurrence relations between them.
+
+### version
+
+```bash
+luminary-memory version
+```
+
+Prints the installed version and Python runtime.
+
 ## Exit codes
 
 - `0` — success.
