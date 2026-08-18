@@ -34,6 +34,8 @@ _DEFAULTS: dict = {
     "retain_indicator": True,
     "extract_on_session_end": False,
     "auto_maintain": False,  # LLM store review on session end (needs ingest_llm)
+    "consolidate_semantic": True,  # embedding-cosine consolidation in lifecycle
+    "importance_auto": True,  # auto-estimate importance on ingest/lifecycle
 }
 
 

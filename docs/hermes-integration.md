@@ -49,7 +49,11 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `llm_timeout` | `60` | Enricher request timeout (seconds) |
 | `recall_indicator` | `true` | Show `🌙 Luminary — recalled N memories` |
 | `retain_indicator` | `true` | Show `🌙 Luminary — memory saved` |
+| `retain_user_prefix` | `User` | Prefix used when formatting retained user turns |
+| `retain_assistant_prefix` | `Assistant` | Prefix used when formatting retained assistant turns |
 | `auto_maintain` | `false` | **LLM store review at session end** — keeps/updates/deletes stale, contradicted, or duplicate facts (requires `ingest_llm`) |
+| `consolidate_semantic` | `true` | **Embedding-cosine consolidation** in lifecycle — merges paraphrases (falls back to Jaccard when embeddings are degenerate/missing) |
+| `importance_auto` | `true` | **Auto importance estimation** — scores each memory from access, recency, and graph centrality on ingest/lifecycle |
 
 ### LLM memory curation (v0.2.2+)
 
