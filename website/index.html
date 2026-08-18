@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Luminary Memory - What Your Agent Remembers Is What It Becomes</title>
-  <meta name="description" content="A lightweight, self-hosted memory layer for AI agents. Four retrieval strategies fused into one recall with zero cloud dependencies.">
+  <meta name="description" content="Luminary Memory: local 384-d ONNX vector search, SQLite FTS5 keyword, temporal decay, and entity graph retrieval fused via RRF. 0 LLM tokens per recall. Self-hosted, Apache-2.0, Python 3.11+.">
   <meta property="og:title" content="Luminary Memory - What Your Agent Remembers Is What It Becomes">
-  <meta property="og:description" content="Self-hosted memory for AI agents. Four retrieval strategies, one fused recall. No cloud, no GPU, no token bloat.">
+  <meta property="og:description" content="Embedded memory layer for AI agents. Four retrieval strategies fused via RRF. Local CPU ONNX embeddings, zero cloud dependencies, zero telemetry, zero LLM tokens per search. Apache-2.0.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://alertxsto.github.io/luminary-memory/">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Luminary Memory - What Your Agent Remembers Is What It Becomes">
-  <meta name="twitter:description" content="Self-hosted memory for AI agents. Four retrieval strategies, one fused recall.">
+  <meta name="twitter:description" content="Embedded memory for AI agents. Local ONNX, SQLite FTS5, temporal decay, entity graph. 0 LLM tokens per recall. Apache-2.0.">
   <meta name="theme-color" content="#06070a">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23e9f6ff'><path d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -41,10 +41,10 @@
       <span class="brand-name">Luminary Memory</span>
     </a>
     <nav class="nav-links" aria-label="Primary Navigation">
-      <a href="#recall">Recall</a>
+      <a href="#how-it-works">How It Works</a>
+      <a href="#benchmarks">Benchmarks</a>
       <a href="#use-cases">Use Cases</a>
       <a href="#quickstart">Quickstart</a>
-      <a href="#architecture">Architecture</a>
       <a href="#backends">Backends</a>
       <a href="#faq">FAQ</a>
       <a href="https://github.com/alertxsto/luminary-memory" target="_blank" rel="noopener" class="nav-github" aria-label="GitHub Repository">
@@ -69,7 +69,7 @@
     <div class="hero-inner reveal-on-scroll">
       <div class="eyebrow">
         <span class="eyebrow-dot" aria-hidden="true"></span>
-        <span>v0.2.9 - Self-Hosted Memory Layer</span>
+        <span>v0.2.9 · Self-Hosted Memory Layer · 91% Test Coverage</span>
       </div>
 
       <h1 class="hero-title">
@@ -78,7 +78,7 @@
       </h1>
 
       <p class="hero-sub">
-        Durable, cross-session memory with four-strategy fused recall. Runs entirely on your infrastructure. No cloud, zero token bloat.
+        Durable, cross-session memory with four-way fused recall. Runs locally on your CPU with zero cloud dependencies, zero telemetry, and zero LLM tokens burned per search.
       </p>
 
       <div class="hero-actions">
@@ -145,143 +145,169 @@
     </div>
   </section>
 
-  <!-- ============ STATS / METRICS BAR ============ -->
-  <section class="stats-section reveal-on-scroll" aria-label="Core Performance Metrics">
+  <section class="stats-section reveal-on-scroll" aria-label="Performance Metrics">
     <div class="stats-grid">
       <div class="stat-card">
-        <span class="stat-num">4</span>
-        <h3 class="stat-label">Retrieval Strategies</h3>
-        <p class="stat-sub">Semantic, keyword, temporal, and co-occurrence graph running in parallel.</p>
-      </div>
-      <div class="stat-card">
-        <span class="stat-num">1</span>
-        <h3 class="stat-label">Fused Answer</h3>
-        <p class="stat-sub">Reciprocal Rank Fusion (RRF, <code>k=60</code>) with Jaccard deduplication (<code>0.85</code>).</p>
-      </div>
-      <div class="stat-card">
         <span class="stat-num">0</span>
-        <h3 class="stat-label">Cloud Dependencies</h3>
-        <p class="stat-sub">100% self-hosted on your machine with local CPU ONNX embeddings.</p>
+        <h3 class="stat-label">LLM Tokens / Recall</h3>
+        <p class="stat-sub">Retrieval runs locally via CPU ONNX embeddings. You never burn API tokens to search memory.</p>
       </div>
       <div class="stat-card">
-        <span class="stat-num">384</span>
-        <h3 class="stat-label">Embedding Dimensions</h3>
-        <p class="stat-sub">Local ONNX model <code>BAAI/bge-small-en-v1.5</code> running on CPU, no GPU required.</p>
+        <span class="stat-num">~200<em>ms</em></span>
+        <h3 class="stat-label">End-to-End Recall (p50)</h3>
+        <p class="stat-sub">Measured on 1,000-memory stores. 4 parallel strategies fused in under a quarter-second.</p>
+      </div>
+      <div class="stat-card">
+        <span class="stat-num">4</span>
+        <h3 class="stat-label">Fused Strategies</h3>
+        <p class="stat-sub">Vector cosine, SQLite FTS5 keyword, temporal decay, and entity graph blended via RRF (<code>k=60</code>).</p>
+      </div>
+      <div class="stat-card">
+        <span class="stat-num">179<em>MB</em></span>
+        <h3 class="stat-label">Peak Memory (RSS)</h3>
+        <p class="stat-sub">In-process SQLite + ONNX runtime. Zero background daemons or vector database clusters.</p>
       </div>
     </div>
   </section>
 
-  <!-- ============ RECALL (The Problem & Strategies) ============ -->
-  <section class="why" id="recall">
+  <!-- ============ HOW IT WORKS ============ -->
+  <section class="why" id="how-it-works">
     <div class="why-head reveal-on-scroll">
-      <p class="kicker">The Challenge</p>
-      <h2>Every Session, Your Agent<br>Starts Over.</h2>
+      <p class="kicker">How It Works</p>
+      <h2>Stateless Agents Forget Everything.<br>Here Is How Luminary Fixes That.</h2>
     </div>
 
     <div class="why-body reveal-on-scroll">
       <p class="lead">
-        Stateless agents re-learn the same context every session, pay the same tokens repeatedly, and make the same mistakes. Luminary closes that gap with a local memory store that persists between runs, retrieves relevant context on demand, and keeps itself tidy over time.
+        When agents restart from an empty prompt every turn, they repeat past mistakes, re-query known data, and inflate token bills. Luminary provides an embedded, self-pruning memory store that sits directly inside your Python process. Every memory is embedded locally, indexed across four dimensions, and retrieved in parallel without cloud roundtrips.
       </p>
 
       <dl class="recall-grid">
         <div class="recall-item">
           <dt><span class="recall-num">01</span> Semantic Vector Search</dt>
-          <dd>Local 384-dimensional ONNX vector similarity (<code>BAAI/bge-small-en-v1.5</code>). Captures conceptual intent and meaning on CPU without sending text to third-party APIs.</dd>
+          <dd>Local 384-dimensional ONNX vector similarity (<code>BAAI/bge-small-en-v1.5</code>). Captures conceptual meaning directly on your CPU without third-party API calls.</dd>
         </div>
         <div class="recall-item">
           <dt><span class="recall-num">02</span> Keyword Matching (FTS5)</dt>
-          <dd>SQLite FTS5 full-text matching. Guarantees exact matches for symbol names, function signatures, variables, API routes, and error codes.</dd>
+          <dd>SQLite FTS5 full-text matching with BM25 ranking. Guarantees exact matches for symbol names, function signatures, paths, variables, and error codes.</dd>
         </div>
         <div class="recall-item">
-          <dt><span class="recall-num">03</span> Temporal Decay</dt>
-          <dd>Half-life decay curves weighted by access recency and frequency. Surfaces recently updated and high-utility facts first.</dd>
+          <dt><span class="recall-num">03</span> Temporal Half-Life Decay</dt>
+          <dd>Exponential decay curves weighted by access frequency and age. Surfaces fresh and frequently accessed facts over stale historical entries.</dd>
         </div>
         <div class="recall-item">
-          <dt><span class="recall-num">04</span> Co-Occurrence Graph</dt>
-          <dd>Entity co-occurrence relationship graph. Traverses relational links between facts across distinct sessions, tools, and tasks.</dd>
+          <dt><span class="recall-num">04</span> Co-Occurrence Entity Graph</dt>
+          <dd>Relational entity graph tracking co-occurring symbols and concepts. Discovers contextual links even when the query shares no direct keywords.</dd>
         </div>
       </dl>
 
       <div class="fusion-note">
-        <h3 class="fusion-title">Parallel Execution &amp; Context Protection</h3>
-        <p>Four strategies execute concurrently in parallel. Reciprocal Rank Fusion combines the candidates into a single ranked stream, followed by Jaccard deduplication and strict token budget truncation to protect your model's context window.</p>
-        <p class="fusion-meta">RRF <code>k=60</code> · Jaccard Threshold <code>0.85</code> · Token Budget <code>4096</code> · Embedding Dim <code>384</code></p>
+        <h3 class="fusion-title">Parallel Fusion &amp; Context Budget Protection</h3>
+        <p>All four retrieval strategies run concurrently. Reciprocal Rank Fusion merges candidates into a unified rank, Jaccard deduplication eliminates paraphrased clutter, and hard token budget limits protect your model's context window.</p>
+        <p class="fusion-meta">RRF <code>k=60</code> · Jaccard Deduplication <code>0.85</code> · Token Budget <code>4096</code> · Embedding Dim <code>384</code></p>
       </div>
     </div>
   </section>
 
+  <!-- ============ BENCHMARKS ============ -->
+  <section class="backends" id="benchmarks">
+    <div class="backends-head reveal-on-scroll">
+      <p class="kicker">Real Measurements</p>
+      <h2>Tested at Scale. Zero Marketing Numbers.</h2>
+      <p class="backends-sub">Benchmarked with synthetic and real workloads on standard x86_64 CPUs using <code>benchmarks/hermes_provider_bench.py</code>. Transparent and reproducible.</p>
+    </div>
+
+    <div class="backend-cards reveal-on-scroll">
+      <div class="backend-card backend-card-default">
+        <div class="backend-card-header">
+          <h3>SQLite Default (In-Process)</h3>
+          <span class="badge-default">Default</span>
+        </div>
+        <ul class="backend-specs">
+          <li><strong>Recall Latency (1k Store)</strong> ~200 ms p50 (real ONNX fastembed on CPU)</li>
+          <li><strong>Recall Latency (5k Store)</strong> 230 ms p50 (pipeline) / 832 ms (real ONNX)</li>
+          <li><strong>Ingest Throughput</strong> ~720 memories/s (synthetic, no embedding) · ~22/s with real ONNX embedding</li>
+          <li><strong>Memory Footprint</strong> 179 MB peak RSS (5,000 memories + full index)</li>
+          <li><strong>Recommended Scale</strong> Single-agent setups, developer laptops, edge devices (&lt;100k)</li>
+        </ul>
+      </div>
+
+      <div class="backend-card">
+        <div class="backend-card-header">
+          <h3>PostgreSQL + pgvector</h3>
+        </div>
+        <ul class="backend-specs">
+          <li><strong>Recall Latency</strong> Not yet benchmarked on our side. We want real numbers, not estimates</li>
+          <li><strong>Scale Target</strong> Concurrent multi-agent fleets, background worker clusters</li>
+          <li><strong>Integration</strong> Runs in CI against real Postgres (HNSW, JSONB, rollback)</li>
+          <li><strong>Help wanted</strong> <a href="https://github.com/alertxsto/luminary-memory/issues/6">Issue #6</a> for a real SQLite vs pgvector benchmark</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+
   <!-- ============ USE CASES ============ -->
   <section class="usecases" id="use-cases">
     <div class="usecases-head reveal-on-scroll">
+      <p class="kicker">Practical Workflows</p>
       <h2>Built for Agents That Do Real Work.</h2>
-      <p class="usecases-sub">Every turn is a deposit. Persistent memory turns scattered conversations into a compounding knowledge base your agents actually draw from.</p>
+      <p class="usecases-sub">Every interaction compounds into durable context your agents can recall on demand.</p>
     </div>
 
     <div class="usecases-grid reveal-on-scroll">
       <div class="usecase-card">
         <div class="usecase-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7">
             <polyline points="16 18 22 12 16 6"></polyline>
             <polyline points="8 6 2 12 8 18"></polyline>
           </svg>
         </div>
-        <h3 class="usecase-title">Never Re-Debug the Same Bug</h3>
-        <p class="usecase-desc">Your coding agent remembers the flaky test fix from last Tuesday, the repo conventions, and why that migration stalled — so it starts from context, not from zero.</p>
-        <span class="usecase-tag">Context That Compounds</span>
+        <h3 class="usecase-title">Coding Agent Context</h3>
+        <p class="usecase-desc">Persist repository conventions, flaky test workarounds, and architectural decisions across CLI sessions without manually re-stuffing system prompts.</p>
+        <span class="usecase-tag">Developer Tooling</span>
       </div>
 
       <div class="usecase-card">
         <div class="usecase-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
           </svg>
         </div>
-        <h3 class="usecase-title">Chatbots That Actually Remember You</h3>
-        <p class="usecase-desc">Preferences, project context, decisions from three weeks ago — surfaced automatically every turn, without re-prompting or context-stuffing the whole history.</p>
-        <span class="usecase-tag">Cross-Session Continuity</span>
+        <h3 class="usecase-title">Hermes Agent Integration</h3>
+        <p class="usecase-desc">First-class memory provider with <code>memory.provider=luminary</code>. Automatically recalls relevant facts every turn and saves context on session exit.</p>
+        <span class="usecase-tag">Zero Token Turn</span>
       </div>
 
       <div class="usecase-card">
         <div class="usecase-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7">
             <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
             <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
             <line x1="6" y1="6" x2="6.01" y2="6"></line>
             <line x1="6" y1="18" x2="6.01" y2="18"></line>
           </svg>
         </div>
-        <h3 class="usecase-title">Pipelines That Keep Their State</h3>
-        <p class="usecase-desc">Background workers and cron jobs share durable execution state — task outcomes, partial results, and handoffs survive restarts, not just process memory.</p>
-        <span class="usecase-tag">Stateful Workflows</span>
+        <h3 class="usecase-title">Stateful Pipeline Workers</h3>
+        <p class="usecase-desc">Background workers and cron tasks share execution outcomes, partial states, and rate limit budgets across process restarts.</p>
+        <span class="usecase-tag">Process Continuity</span>
       </div>
 
       <div class="usecase-card">
         <div class="usecase-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7">
             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
             <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
           </svg>
         </div>
-        <h3 class="usecase-title">A Second Brain That Never Leaks</h3>
-        <p class="usecase-desc">Natural-language recall over your own notes and knowledge — tagged, temporally decaying, and stored in a SQLite file on your machine. Zero cloud, zero telemetry.</p>
-        <span class="usecase-tag">100% Private &amp; Local</span>
+        <h3 class="usecase-title">Air-Gapped Private Knowledge</h3>
+        <p class="usecase-desc">Run memory retrieval over proprietary internal notes. All data stays inside a local SQLite file with zero outbound telemetry or cloud dependencies.</p>
+        <span class="usecase-tag">100% Local &amp; Private</span>
       </div>
 
       <div class="usecase-card">
         <div class="usecase-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
-            <line x1="7" y1="7" x2="7.01" y2="7"></line>
-          </svg>
-        </div>
-        <h3 class="usecase-title">Hermes That Remembers Everything</h3>
-        <p class="usecase-desc">First-class Hermes memory provider — auto-recall every turn, auto-save every session, and an LLM curator that drops chit-chat and prunes stale facts so the store stays sharp.</p>
-        <span class="usecase-tag">Self-Curating Store</span>
-      </div>
-
-      <div class="usecase-card">
-        <div class="usecase-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7">
             <circle cx="5" cy="6" r="3"></circle>
             <circle cx="19" cy="6" r="3"></circle>
             <circle cx="12" cy="19" r="3"></circle>
@@ -289,12 +315,24 @@
             <line x1="17" y1="7.5" x2="14" y2="16"></line>
           </svg>
         </div>
-        <h3 class="usecase-title">A Graph You Can See</h3>
-        <p class="usecase-desc">Entities and their co-occurrence relations, ranked by degree — inspect how memories connect with <code>luminary-memory graph</code>, or pull the raw JSON for your own visualization.</p>
+        <h3 class="usecase-title">Inspectable Knowledge Graph</h3>
+        <p class="usecase-desc">Surface relational links between facts with <code>luminary-memory graph</code>. Inspect connected entities ranked by degree or export JSON for external visualizations.</p>
         <span class="usecase-tag">Knowledge Graph</span>
+      </div>
+
+      <div class="usecase-card">
+        <div class="usecase-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+          </svg>
+        </div>
+        <h3 class="usecase-title">Autonomous Store Health</h3>
+        <p class="usecase-desc">Monitor memory quality from 0 to 100 with <code>luminary-memory health</code>. Automated lifecycle sweeps clean TTLs, merge duplicates, and prune low-value noise.</p>
+        <span class="usecase-tag">Self-Maintaining</span>
       </div>
     </div>
   </section>
+
 
   <!-- ============ QUICKSTART ============ -->
   <section class="quickstart" id="quickstart">
@@ -428,7 +466,8 @@
   <!-- ============ FAQ ============ -->
   <section class="faq" id="faq">
     <div class="faq-head reveal-on-scroll">
-      <h2>Everything You Need to Know.</h2>
+      <p class="kicker">FAQ</p>
+      <h2>Frequently Asked Questions</h2>
     </div>
 
     <div class="faq-list reveal-on-scroll">
@@ -438,71 +477,72 @@
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>No. Luminary is 100% self-hosted and operates completely on your local infrastructure. Embeddings are generated on your CPU using an optimized local ONNX runtime (<code>BAAI/bge-small-en-v1.5</code>), and memories are persisted directly in your SQLite file or your own PostgreSQL instance. There is zero telemetry, no external API calls, and zero data leakage.</p>
+          <p>No. Luminary is completely self-hosted. Embeddings are generated on your local CPU using an ONNX runtime (<code>BAAI/bge-small-en-v1.5</code>), and memories are persisted directly to your local SQLite file or your own PostgreSQL instance. There is zero telemetry and zero external API calls.</p>
         </div>
       </details>
 
       <details class="faq-item">
         <summary class="faq-question">
-          <span>Do I need a dedicated GPU or external embedding API keys?</span>
+          <span>Do I need a GPU or third-party embedding API keys?</span>
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>No GPU or third-party cloud API keys are required. Luminary bundles an ONNX-optimized 384-dimensional embedding model that runs fast and efficiently on modern CPUs. It runs seamlessly on developer laptops, VPS instances, Raspberry Pis, and containerized agent runners.</p>
+          <p>No. The default embedding engine runs locally on standard CPU hardware via ONNX with zero external API keys. It runs efficiently on laptops, Linux servers, and containerized CI environments.</p>
         </div>
       </details>
 
       <details class="faq-item">
         <summary class="faq-question">
-          <span>How does Luminary differ from a standard vector database?</span>
+          <span>Why four retrieval strategies instead of just a vector database?</span>
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>A standard vector database only computes embedding cosine similarity, which frequently misses exact identifiers, function names, timestamps, and relational context. Luminary runs four parallel retrieval strategies (semantic, SQLite FTS5 keyword, temporal decay, and co-occurrence graph), blends them via Reciprocal Rank Fusion (<code>k=60</code>), eliminates duplicates with Jaccard similarity (<code>0.85</code>), and strictly enforces your agent's token budget (<code>4096</code>).</p>
+          <p>Vector search alone struggles with exact identifiers (function names, file paths, error codes) and ignores temporal recency. Luminary combines vector similarity with SQLite FTS5 exact keyword matching, temporal decay curves, and entity graph co-occurrences. Results are merged via Reciprocal Rank Fusion (<code>k=60</code>) and pruned with Jaccard deduplication (<code>0.85</code>).</p>
         </div>
       </details>
 
       <details class="faq-item">
         <summary class="faq-question">
-          <span>How does Luminary keep its memory store clean and accurate?</span>
+          <span>How does Luminary prevent memory store bloat over time?</span>
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>Two layers. Deterministic lifecycle passes (TTL expiry, near-duplicate consolidation, low-value pruning) run automatically. Optionally, an LLM curation layer (<code>ingest_llm</code>) evaluates every turn before saving — dropping chit-chat and storing concise factual summaries — and <code>auto_maintain</code> reviews the whole store at session end, deleting obsolete or contradicted facts and updating changed ones. Everything is local-first and transparently logged.</p>
+          <p>Two layers keep the store lean: deterministic lifecycle passes (<code>run_lifecycle()</code>) that expire TTLs, consolidate near-duplicates via semantic cosine clustering, and prune low-importance entries (&lt;0.2); and an optional LLM maintenance review (<code>run_maintenance()</code>) that cleans obsolete facts at session end.</p>
         </div>
       </details>
 
       <details class="faq-item">
         <summary class="faq-question">
-          <span>How do I migrate from SQLite to pgvector in production?</span>
+          <span>How do I check memory store quality?</span>
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>Migration requires zero application code changes. Luminary is architected around a pluggable backend interface. To switch to PostgreSQL with pgvector, simply set the environment variable <code>LUMINARY_BACKEND=pgvector</code> and configure your <code>LUMINARY_PG_DSN</code> connection string. All client methods (<code>ingest</code>, <code>recall</code>, <code>run_lifecycle</code>) work identically.</p>
+          <p>Run <code>luminary-memory health</code> in your CLI. It evaluates duplicate rate (25%), staleness (25%), importance distribution (20%), graph relation density (15%), and store size (15%), outputting an overall 0-100 health score with actionable maintenance recommendations.</p>
         </div>
       </details>
 
       <details class="faq-item">
         <summary class="faq-question">
-          <span>How does the autonomous lifecycle keep the memory store tidy?</span>
+          <span>How do I switch from SQLite to pgvector for large-scale fleets?</span>
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>Luminary includes an automated lifecycle engine that executes on demand or via a scheduled cron. It evaluates TTL expiration dates, combines near-duplicate entries using Jaccard text similarity (<code>0.85</code>), and prunes low-utility, rarely-accessed memories to ensure storage stays lean without manual intervention.</p>
+          <p>Set <code>LUMINARY_BACKEND=pgvector</code> and configure your <code>LUMINARY_PG_DSN</code> connection string. All client methods (<code>ingest</code>, <code>recall</code>, <code>run_lifecycle</code>) share the identical Python API, letting you scale without modifying application code.</p>
         </div>
       </details>
 
       <details class="faq-item">
         <summary class="faq-question">
-          <span>Can I see how my memories connect?</span>
+          <span>How does the Hermes agent integration work?</span>
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>Yes — <code>luminary-memory graph</code> surfaces the knowledge graph: entities ranked by degree (how connected they are) and their co-occurrence relations. Use <code>--json</code> to export the raw data for your own visualization, or <code>--relations</code> to list the edges between entities.</p>
+          <p>Configure <code>memory.provider=luminary</code> in your Hermes agent settings. The provider automatically performs local fused recall on every conversational turn (consuming zero LLM tokens) and triggers automatic store maintenance when the session closes.</p>
         </div>
       </details>
     </div>
   </section>
+
 
   <!-- ============ FINAL CTA ============ -->
   <section class="final-cta reveal-on-scroll">
@@ -538,11 +578,11 @@
       <div class="cta-meta">
         <span>Apache-2.0 License</span>
         <span class="dot" aria-hidden="true">·</span>
-        <span>Zero Cloud Dependencies</span>
+        <span>91% Test Coverage</span>
         <span class="dot" aria-hidden="true">·</span>
         <span>Python 3.11+</span>
         <span class="dot" aria-hidden="true">·</span>
-        <span>Pluggable Backends</span>
+        <span>Zero Cloud Dependencies</span>
       </div>
     </div>
   </section>
@@ -560,17 +600,17 @@
         </span>
         <span class="brand-name">Luminary Memory</span>
       </div>
-      <p class="footer-desc">A lightweight, self-hosted memory layer for AI agents. Four retrieval strategies fused into one clear recall.</p>
+      <p class="footer-desc">Embedded memory layer for AI agents. Local ONNX embeddings, SQLite FTS5, temporal decay, and entity graph retrieval fused via RRF. Zero cloud dependencies.</p>
     </div>
 
     <div class="footer-nav-group">
       <div class="footer-nav-col">
         <h4 class="footer-heading">Navigation</h4>
         <div class="footer-links">
-          <a href="#recall">Recall</a>
+          <a href="#how-it-works">How It Works</a>
+          <a href="#benchmarks">Benchmarks</a>
           <a href="#use-cases">Use Cases</a>
           <a href="#quickstart">Quickstart</a>
-          <a href="#architecture">Architecture</a>
           <a href="#backends">Backends</a>
           <a href="#faq">FAQ</a>
         </div>
