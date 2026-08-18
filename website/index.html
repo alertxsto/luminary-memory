@@ -212,45 +212,55 @@
   <!-- ============ BENCHMARKS ============ -->
   <section class="backends" id="benchmarks">
     <div class="backends-head reveal-on-scroll">
-      <p class="kicker">Real Measurements</p>
       <h2>Tested at Scale. Zero Marketing Numbers.</h2>
       <p class="backends-sub">Benchmarked with synthetic and real workloads on standard x86_64 CPUs using <code>benchmarks/hermes_provider_bench.py</code>. Transparent and reproducible.</p>
     </div>
 
-    <div class="backend-cards reveal-on-scroll">
-      <div class="backend-card backend-card-default">
-        <div class="backend-card-header">
-          <h3>SQLite Default (In-Process)</h3>
-          <span class="badge-default">Default</span>
-        </div>
-        <ul class="backend-specs">
-          <li><strong>Recall Latency (1k Store)</strong> ~200 ms p50 (real ONNX fastembed on CPU)</li>
-          <li><strong>Recall Latency (5k Store)</strong> 230 ms p50 (pipeline) / 832 ms (real ONNX)</li>
-          <li><strong>Ingest Throughput</strong> ~720 memories/s (synthetic, no embedding) · ~22/s with real ONNX embedding</li>
-          <li><strong>Memory Footprint</strong> 179 MB peak RSS (5,000 memories + full index)</li>
-          <li><strong>Recommended Scale</strong> Single-agent setups, developer laptops, edge devices (&lt;100k)</li>
-        </ul>
+    <div class="bench-table reveal-on-scroll">
+      <div class="bench-row bench-row-head">
+        <div class="bench-metric">Metric</div>
+        <div class="bench-sqlite">SQLite (default)</div>
+        <div class="bench-pg">PostgreSQL + pgvector</div>
       </div>
-
-      <div class="backend-card">
-        <div class="backend-card-header">
-          <h3>PostgreSQL + pgvector</h3>
-        </div>
-        <ul class="backend-specs">
-          <li><strong>Recall Latency</strong> Not yet benchmarked on our side. We want real numbers, not estimates</li>
-          <li><strong>Scale Target</strong> Concurrent multi-agent fleets, background worker clusters</li>
-          <li><strong>Integration</strong> Runs in CI against real Postgres (HNSW, JSONB, rollback)</li>
-          <li><strong>Help wanted</strong> <a href="https://github.com/alertxsto/luminary-memory/issues/6">Issue #6</a> for a real SQLite vs pgvector benchmark</li>
-        </ul>
+      <div class="bench-row">
+        <div class="bench-metric">Recall latency, 1k store</div>
+        <div class="bench-sqlite">~200 ms p50 (real ONNX on CPU)</div>
+        <div class="bench-pg">not yet benchmarked</div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-metric">Recall latency, 5k store</div>
+        <div class="bench-sqlite">230 ms p50 (pipeline) / 832 ms (real ONNX)</div>
+        <div class="bench-pg">not yet benchmarked</div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-metric">Ingest throughput</div>
+        <div class="bench-sqlite">~720 mem/s (synthetic, no embedding) / ~22/s (real ONNX)</div>
+        <div class="bench-pg">not yet benchmarked</div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-metric">Memory footprint</div>
+        <div class="bench-sqlite">179 MB peak RSS (5k memories + index)</div>
+        <div class="bench-pg">not yet benchmarked</div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-metric">Recommended scale</div>
+        <div class="bench-sqlite">Single agent, laptops, edge (&lt;100k)</div>
+        <div class="bench-pg">Concurrent fleets, worker clusters</div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-metric">Integration status</div>
+        <div class="bench-sqlite">default backend</div>
+        <div class="bench-pg">runs in CI (HNSW, JSONB, rollback)</div>
       </div>
     </div>
+
+    <p class="bench-help reveal-on-scroll">Want to fill in the pgvector numbers? <a href="https://github.com/alertxsto/luminary-memory/issues/6">Issue #6</a> is a real benchmark task.</p>
   </section>
 
 
   <!-- ============ USE CASES ============ -->
   <section class="usecases" id="use-cases">
     <div class="usecases-head reveal-on-scroll">
-      <p class="kicker">Practical Workflows</p>
       <h2>Built for Agents That Do Real Work.</h2>
     </div>
 
@@ -330,39 +340,35 @@
   <section class="arch" id="architecture">
     <div class="arch-head reveal-on-scroll">
       <h2>One Loop, Running Every Turn.</h2>
-      <p class="arch-sub">Memory is not a pipeline you run once. It is a loop your agent lives in.</p>
+      <p class="arch-sub">Memory is not a pipeline you run once. It is a loop your agent lives in: recall, act, ingest, repeat.</p>
     </div>
 
-    <ol class="arch-steps reveal-on-scroll">
-      <li class="arch-step">
-        <span class="arch-num">01</span>
+    <div class="arch-steps reveal-on-scroll">
+      <div class="arch-step">
         <div class="arch-body">
           <h3>Recall before you answer</h3>
           <p>At the start of every turn, four strategies run in parallel: vector cosine, FTS5 keyword, temporal decay, entity graph. RRF (<code>k=60</code>) fuses them into one ranked list, Jaccard dedup (<code>0.85</code>) drops paraphrases, and a token budget (<code>4096</code>) caps what enters the context window.</p>
         </div>
-      </li>
-      <li class="arch-step">
-        <span class="arch-num">02</span>
+      </div>
+      <div class="arch-step">
         <div class="arch-body">
           <h3>Act with context</h3>
           <p>The agent answers with the recalled facts already in context. Zero LLM tokens were spent on retrieval: embeddings run locally on CPU via ONNX.</p>
         </div>
-      </li>
-      <li class="arch-step">
-        <span class="arch-num">03</span>
+      </div>
+      <div class="arch-step">
         <div class="arch-body">
           <h3>Ingest what mattered</h3>
           <p>After the turn, durable facts are extracted (optional LLM curation filters chit-chat), embedded locally, and stored with metadata tags and co-occurrence relations.</p>
         </div>
-      </li>
-      <li class="arch-step">
-        <span class="arch-num">04</span>
+      </div>
+      <div class="arch-step">
         <div class="arch-body">
           <h3>Lifecycle keeps it sharp</h3>
           <p>Periodically, TTL cleanup expires stale facts, semantic consolidation merges near-duplicates, and importance-based pruning drops low-value noise. The store stays lean without you touching it.</p>
         </div>
-      </li>
-    </ol>
+      </div>
+    </div>
 
     <div class="arch-foot reveal-on-scroll">
       <span>Pluggable backend: switch from SQLite to pgvector without changing your application code.</span>

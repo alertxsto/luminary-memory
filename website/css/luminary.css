@@ -781,11 +781,16 @@ summary:focus-visible {
   margin-top: var(--s5);
   display: flex;
   flex-direction: column;
-  gap: var(--s5);
 }
 
 .usecase-row {
   max-width: 52rem;
+  padding: var(--s4) 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.usecase-row:first-child {
+  border-top: 0;
 }
 
 .usecase-row .usecase-title {
@@ -909,43 +914,21 @@ summary:focus-visible {
 
 .arch-steps {
   margin-top: var(--s5);
-  list-style: none;
-  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--s4);
-  position: relative;
-}
-
-.arch-steps::before {
-  content: "";
-  position: absolute;
-  left: 1.05rem;
-  top: 0.4rem;
-  bottom: 0.4rem;
-  width: 1px;
-  background: linear-gradient(to bottom, var(--line-highlight), var(--line-soft), transparent);
 }
 
 .arch-step {
-  display: flex;
-  gap: var(--s4);
-  align-items: flex-start;
+  padding: var(--s4) 0;
+  border-top: 1px solid var(--line-soft);
 }
 
-.arch-num {
-  flex: 0 0 2.1rem;
-  height: 2.1rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  color: var(--moon);
-  border: 1px solid var(--line-highlight);
-  border-radius: 50%;
-  background: var(--surface-1);
-  z-index: 1;
+.arch-step:first-child {
+  border-top: 0;
+}
+
+.arch-step:last-child {
+  padding-bottom: 0;
 }
 
 .arch-body h3 {
@@ -997,11 +980,56 @@ summary:focus-visible {
   max-width: 36rem;
 }
 
-.backend-cards {
+.bench-table {
   margin-top: var(--s5);
+  max-width: 58rem;
+  border-top: 1px solid var(--line);
+}
+
+.bench-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--s4);
+  grid-template-columns: 1.2fr 1.4fr 1.4fr;
+  gap: var(--s3);
+  padding: var(--s3) 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.bench-row-head {
+  border-bottom: 1px solid var(--line);
+}
+
+.bench-row-head div {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.bench-metric {
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.bench-sqlite,
+.bench-pg {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.bench-pg {
+  color: var(--text-faint);
+}
+
+.bench-help {
+  margin-top: var(--s3);
+  font-size: 0.9rem;
+  color: var(--text-dim);
+}
+
+.bench-help a {
+  color: var(--accent);
 }
 
 .backend-card {
@@ -1422,6 +1450,20 @@ summary:focus-visible {
   }
   .backend-cards {
     grid-template-columns: 1fr;
+  }
+  .bench-row {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+  .bench-row-head {
+    display: none;
+  }
+  .bench-metric {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
   }
 }
 
