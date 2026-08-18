@@ -781,16 +781,21 @@ summary:focus-visible {
   margin-top: var(--s5);
   display: flex;
   flex-direction: column;
+  gap: var(--s3);
+  max-width: 58rem;
 }
 
 .usecase-row {
-  max-width: 52rem;
-  padding: var(--s4) 0;
-  border-top: 1px solid var(--line-soft);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: var(--s4) var(--s4);
+  transition: border-color 150ms ease, background 150ms ease;
 }
 
-.usecase-row:first-child {
-  border-top: 0;
+.usecase-row:hover {
+  border-color: var(--line-highlight);
+  background: var(--surface-1);
 }
 
 .usecase-row .usecase-title {
@@ -916,19 +921,21 @@ summary:focus-visible {
   margin-top: var(--s5);
   display: flex;
   flex-direction: column;
+  gap: var(--s3);
+  max-width: 58rem;
 }
 
 .arch-step {
-  padding: var(--s4) 0;
-  border-top: 1px solid var(--line-soft);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: var(--s4) var(--s4);
+  transition: border-color 150ms ease, background 150ms ease;
 }
 
-.arch-step:first-child {
-  border-top: 0;
-}
-
-.arch-step:last-child {
-  padding-bottom: 0;
+.arch-step:hover {
+  border-color: var(--line-highlight);
+  background: var(--surface-1);
 }
 
 .arch-body h3 {
@@ -983,18 +990,31 @@ summary:focus-visible {
 .bench-table {
   margin-top: var(--s5);
   max-width: 58rem;
-  border-top: 1px solid var(--line);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
 }
 
 .bench-row {
   display: grid;
   grid-template-columns: 1.2fr 1.4fr 1.4fr;
   gap: var(--s3);
-  padding: var(--s3) 0;
+  padding: var(--s4) var(--s4);
   border-bottom: 1px solid var(--line-soft);
+  transition: background 150ms ease;
+}
+
+.bench-row:last-child {
+  border-bottom: 0;
+}
+
+.bench-row:not(.bench-row-head):hover {
+  background: var(--surface-1);
 }
 
 .bench-row-head {
+  background: var(--surface-2);
   border-bottom: 1px solid var(--line);
 }
 
@@ -1025,7 +1045,7 @@ summary:focus-visible {
 }
 
 .bench-help {
-  margin-top: var(--s3);
+  margin-top: var(--s4);
   font-size: 0.9rem;
   color: var(--text-dim);
 }
