@@ -50,6 +50,24 @@ luminary-memory lifecycle
 
 Runs cleanup + consolidate + prune, prints counts.
 
+### export
+
+```bash
+luminary-memory export --path backup.json
+luminary-memory export --path backup.json --no-embeddings
+```
+
+Exports all memories to a JSON file (backup/migration). `--no-embeddings`
+skips embedding vectors to keep the file small.
+
+### import
+
+```bash
+luminary-memory import --path backup.json
+```
+
+Imports memories from a JSON export (recomputes embeddings when absent).
+
 ### stats
 
 ```bash
