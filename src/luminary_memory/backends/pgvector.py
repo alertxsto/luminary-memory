@@ -227,33 +227,37 @@ class PGVectorBackend(MemoryBackend):
             return []
         cur = self.conn.cursor()
         ids: list[int] = []
-        for m in memories:
-            cur.execute(
-                """
-                INSERT INTO memories (content, metadata, source, tags, importance,
-                                      ttl_seconds, created_at, updated_at,
-                                      last_accessed_at, access_count, embedding)
-                VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-                """,
-                (
-                    m.content,
-                    json.dumps(m.metadata),
-                    m.source,
-                    json.dumps(m.tags),
-                    float(m.importance),
-                    m.ttl_seconds,
-                    m.created_at,
-                    m.updated_at,
-                    m.last_accessed_at,
-                    int(m.access_count),
-                    m.embedding,
-                ),
-            )
-            row = cur.fetchone()
-            ids.append(int(row[0]) if row and row[0] is not None else 0)
-        self.conn.commit()
-        return ids
+        try:
+            for m in memories:
+                cur.execute(
+                    """
+                    INSERT INTO memories (content, metadata, source, tags, importance,
+                                          ttl_seconds, created_at, updated_at,
+                                          last_accessed_at, access_count, embedding)
+                    VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        m.content,
+                        json.dumps(m.metadata),
+                        m.source,
+                        json.dumps(m.tags),
+                        float(m.importance),
+                        m.ttl_seconds,
+                        m.created_at,
+                        m.updated_at,
+                        m.last_accessed_at,
+                        int(m.access_count),
+                        m.embedding,
+                    ),
+                )
+                row = cur.fetchone()
+                ids.append(int(row[0]) if row and row[0] is not None else 0)
+            self.conn.commit()
+            return ids
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def recent(self, limit: int | None = 100, offset: int = 0) -> list[Memory]:
         """Most-recent-first pagination at the SQL level (None = unlimited)."""
