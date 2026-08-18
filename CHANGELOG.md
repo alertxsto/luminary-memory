@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/), and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.6] - 2026-08-18
+
+### Polish & hardening
+
+- **Lifecycle logging** — `cleanup`, `consolidate` (mode + merged count), `prune`, and `run_lifecycle` (result + duration) now log their activity; `estimate_importance` logs via the runner.
+- **SQLite batch errors logged** — `add_many` failures log the exception before rollback/re-raise (was silent).
+- **CLI recall JSON richer** — each memory now includes `source`, `created_at`, and `importance`.
+- **Env var warnings** — invalid `LUMINARY_*` int/float values warn instead of silently falling back.
+- **Dashboard schema 20 fields** — `consolidate_semantic` (Semantic consolidation) and `importance_auto` (Auto importance estimation) added to the Hermes provider config.
+- **`recall(limit=0)` truly unlimited** — passes `None` to backends instead of a 10k magic cap.
+- **Dedup capped window** — `dedup_jaccard(max_pairs=500)` keeps recall O(n·k) instead of O(n²) on large result sets.
+- **`import_memories` error logging** — failures log the path before re-raise.
+- **pgvector JSON columns safe** — `metadata`/`tags` parse via a `_json_load` helper (corrupt data falls back instead of crashing); HNSW index failure now logged.
+- **Prefetch thread join** — `queue_prefetch` joins any in-flight worker before spawning a new one (no thread leak / stale-cache overwrite).
+- **Degenerate embedding guard** — semantic consolidation falls back to Jaccard when embeddings are all-equal (no false merges of unrelated memories).
+- **`CONTRIBUTING.md`** — new Testing section (Postgres/pgvector setup, coverage ≥ 90%) pointing at [issue #1](https://github.com/alertxsto/luminary-memory/issues/1) (add Postgres to CI).
+
 ## [0.2.5] - 2026-08-18
 
 ### Added

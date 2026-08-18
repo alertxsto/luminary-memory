@@ -2,7 +2,7 @@
 
 > **Tagline:** A lightweight, self-hosted memory layer for AI agents.
 
-**Current release:** v0.2.5 (semantic consolidation) · **Tests:** 200+ passing · **Coverage:** 90% · **License:** Apache-2.0
+**Current release:** v0.2.6 (polish & hardening) · **Tests:** 200+ passing · **Coverage:** 90% · **License:** Apache-2.0
 
 ---
 
