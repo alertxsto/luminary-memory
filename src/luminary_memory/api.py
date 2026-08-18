@@ -558,7 +558,11 @@ class MemoryClient:
                 strategies_hit[label] = strategies_hit.get(label, 0) + 1
                 id_to_mem[m.id] = m
 
-        fused = reciprocal_rank_fusion(ranked_lists, k=rrf_k)
+        fused = reciprocal_rank_fusion(
+            ranked_lists,
+            k=rrf_k,
+            strategy_labels=[name for name, _ in strat_fns],
+        )
         scored: list[tuple[Memory, float]] = [
             (id_to_mem[mid], score) for mid, score in fused if mid in id_to_mem
         ]

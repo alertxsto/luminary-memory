@@ -31,6 +31,7 @@ CONFIG_SCHEMA = ProviderConfigSchema(
         {"key": "db_path", "label": "Database path", "type": "text", "inline": True},
         {"key": "backend", "label": "Backend", "type": "select", "inline": True},
         {"key": "recall_limit", "label": "Recall limit", "type": "number", "inline": True},
+        {"key": "max_memories", "label": "Max memories (store cap)", "type": "number", "inline": True},
         {"key": "token_budget", "label": "Token budget", "type": "number", "inline": True},
         {"key": "auto_recall", "label": "Auto recall", "type": "boolean", "inline": True},
         {"key": "auto_retain", "label": "Auto retain", "type": "boolean", "inline": True},

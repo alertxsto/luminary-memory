@@ -36,6 +36,7 @@ _DEFAULTS: dict = {
     "auto_maintain": False,  # LLM store review on session end (needs ingest_llm)
     "consolidate_semantic": True,  # embedding-cosine consolidation in lifecycle
     "importance_auto": True,  # auto-estimate importance on ingest/lifecycle
+    "max_memories": 1000,  # hard cap on store size; oldest/lowest-importance pruned when exceeded
 }
 
 
