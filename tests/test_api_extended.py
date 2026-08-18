@@ -425,9 +425,7 @@ def test_graph_backend_without_conn(tmp_path):
 
     c = MemoryClient(db_path=str(tmp_path / "g4.db"), engine=_E())
     real_backend = c.backend
-    real_conn = real_backend.conn
     # simulate a backend whose conn is None (query fails → fallback)
-    real_backend.conn = None  # type: ignore[assignment]
+    real_backend._local.conn = None  # type: ignore[attr-defined]
     assert c.graph() == {"entities": [], "relations": []}
-    real_backend.conn = real_conn  # restore for close()
     c.close()

@@ -12,6 +12,7 @@ class EnrichedContent:
     entities: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     worth_saving: bool = True
+    importance: float | None = None  # explicit importance hint (rules get high)
 
 
 class LLMEnricher:
@@ -86,6 +87,8 @@ class OpenAICompatibleEnricher(LLMEnricher):
         model: str | None = None,
         timeout: int | None = None,
         max_tokens: int | None = None,
+        rule_keywords: str | None = None,
+        rule_importance: float | None = None,
     ):
         from luminary_memory.config import Settings
 
@@ -95,6 +98,8 @@ class OpenAICompatibleEnricher(LLMEnricher):
         self.model = model if model is not None else s.llm_model
         self.timeout = int(timeout if timeout is not None else s.llm_timeout)
         self.max_tokens = int(max_tokens if max_tokens is not None else s.llm_max_tokens)
+        self.rule_keywords = rule_keywords if rule_keywords is not None else s.rule_keywords
+        self.rule_importance = float(rule_importance if rule_importance is not None else s.rule_importance)
 
     def _call_llm(self, messages: list[dict]) -> str:
         """Call the OpenAI-compatible endpoint, return the assistant content."""
@@ -176,12 +181,27 @@ class OpenAICompatibleEnricher(LLMEnricher):
                 tags = []
             if not isinstance(summary, str):
                 summary = None
+            # Auto-importance for rules: content that reads like an
+            # instruction ("JANGAN", "WAJIB", "HARUS", "never", "must", etc.)
+            # is a durable rule the agent must not forget. The keyword list is
+            # configurable via LUMINARY_RULE_KEYWORDS (comma-separated).
+            hint_text = f"{summary or ''} {text}".upper()
+            rule_keywords = (
+                s.strip().upper()
+                for s in self.rule_keywords.split(",")
+                if s.strip()
+            )
+            importance: float | None = None
+            if any(kw in hint_text for kw in rule_keywords):
+                importance = self.rule_importance
+
             return EnrichedContent(
                 content=text,
                 summary=summary if summary and summary.strip() else None,
                 entities=[str(x) for x in entities if isinstance(x, str) and x.strip()],
                 tags=[str(x).strip() for x in tags if isinstance(x, str) and x.strip()],
                 worth_saving=bool(worth) if worth is not None else True,
+                importance=importance,
             )
         except Exception:  # noqa: BLE001 -- enrichment is best-effort
             return EnrichedContent(content=text)

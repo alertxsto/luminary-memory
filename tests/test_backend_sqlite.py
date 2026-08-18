@@ -41,3 +41,29 @@ def test_close_from_other_thread_does_not_crash(tmp_path):
     b = holder["backend"]
     # Connection was created in another thread; closing here must not crash.
     b.close()  # should not raise
+def test_thread_local_connections(tmp_path):
+    """Connections are thread-local: recall from a background thread must not
+    raise ProgrammingError (regression: provider prefetch recall crashed)."""
+    import threading
+
+    from luminary_memory.api import MemoryClient
+
+    class _E:
+        def embed(self, t): return [0.1, 0.1, 0.1]
+        def embed_batch(self, ts): return [[0.1, 0.1, 0.1] for _ in ts]
+
+    c = MemoryClient(db_path=str(tmp_path / "tl.db"), engine=_E())
+    c.ingest("deploy target production", tags=["deploy"])
+    c.ingest("banana smoothie recipe", tags=["food"])
+
+    result = {}
+
+    def worker():
+        res = c.recall("deploy", limit=10)
+        result["n"] = len(res.memories)
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+    assert result["n"] == 1  # recall from other thread worked
+    c.close()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 
 import numpy as np
 
@@ -34,10 +35,32 @@ def _sanitize_fts_query(query: str) -> str:
 class SQLiteBackend(MemoryBackend):
     def __init__(self, db_path: str = "luminary_memory.db"):
         self.db_path = db_path
-        self.conn = sqlite3.connect(db_path)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA foreign_keys = ON")
-        init_schema(self.conn)
+        self._local = threading.local()
+        # Prime the main-thread connection so single-threaded callers keep
+        # working exactly as before.
+        self._get_conn()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        """Return a connection owned by the calling thread.
+
+        SQLite connections are bound to the thread that created them. The
+        provider runs prefetch recall on a background thread while the main
+        thread ingests/retains, so a single shared connection raises
+        ``ProgrammingError`` when touched from the other thread. Thread-local
+        connections fix that without any cross-thread locking.
+        """
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            init_schema(conn)
+            self._local.conn = conn
+        return conn
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        return self._get_conn()
 
     def _row_to_memory(self, row: sqlite3.Row) -> Memory:
         m = Memory(
@@ -268,11 +291,14 @@ class SQLiteBackend(MemoryBackend):
         return ids
 
     def close(self) -> None:
-        try:
-            self.conn.close()
-        except sqlite3.ProgrammingError:
-            # Connection was created on a different thread (e.g. provider writer
-            # thread) and cannot be closed from here. Skip silently: the owning
-            # thread's exit will close it, and SQLite cleans up on GC anyway.
-            logger.warning("sqlite close skipped: connection owned by another thread")
-            return
+        # Close every thread-local connection; a connection created on another
+        # thread cannot be closed from here, so each thread's conn is closed
+        # by the thread that owns it (or left to GC).
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.ProgrammingError:
+                logger.warning("sqlite close skipped: connection owned by another thread")
+                return
+            self._local.conn = None

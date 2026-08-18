@@ -28,3 +28,14 @@ def test_call_llm_sends_max_tokens(tmp_path, monkeypatch):
         out = e._call_llm([{"role": "user", "content": "hi"}])
     assert out == "ok"
     assert captured["body"]["max_tokens"] == 512
+def test_rule_keywords_configurable():
+    """Rule keywords/importance come from settings (no hardcode)."""
+    import os
+    from unittest.mock import patch as _patch
+
+    from luminary_memory.config import Settings
+
+    with _patch.dict(os.environ, {"LUMINARY_RULE_KEYWORDS": "JANGAN PERNAH", "LUMINARY_RULE_IMPORTANCE": "0.85"}):
+        s = Settings()
+        assert "JANGAN PERNAH" in s.rule_keywords
+        assert s.rule_importance == 0.85

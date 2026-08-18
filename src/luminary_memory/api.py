@@ -56,11 +56,13 @@ class MemoryClient:
             return None
 
         content, summary, entities, extra_tags = text, None, [], []
+        importance_hint: float | None = None
         if self.enricher is not None:
             enriched = self.enricher.enrich(text)
             content, summary, entities, extra_tags = (
                 enriched.content, enriched.summary, enriched.entities, enriched.tags,
             )
+            importance_hint = getattr(enriched, "importance", None)
 
         meta: dict = dict(metadata or {})
         if summary:
@@ -76,7 +78,12 @@ class MemoryClient:
             ttl_seconds=self.settings.ttl_default_seconds,
             embedding=self.engine.embed(content),
         )
-        if self.settings.importance_auto:
+        if importance_hint is not None:
+            # Enricher flagged this as a durable rule/fact: honor the hint
+            # (overrides auto-estimate, which would otherwise give fresh
+            # memories a low score).
+            m.importance = float(importance_hint)
+        elif self.settings.importance_auto:
             from luminary_memory.lifecycle.importance import estimate_importance
 
             m.importance = estimate_importance(m)
