@@ -1,0 +1,93 @@
+name: Contributor Check
+
+on:
+  pull_request:
+    types: [opened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check-contributor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Analyze contributor account
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const login = pr.user.login;
+
+            let user;
+            try {
+              user = await github.rest.users.getByUsername({ username: login });
+            } catch (e) {
+              console.log("could not fetch user " + login + ": " + e.message);
+              return;
+            }
+            const u = user.data;
+
+            const createdAt = new Date(u.created_at).getTime();
+            const ageDays = Math.max(1, Math.round((Date.now() - createdAt) / 86400000));
+            const repos = u.public_repos ?? 0;
+            const followers = u.followers ?? 0;
+            const following = u.following ?? 0;
+            const hasBio = !!(u.bio && u.bio.trim());
+            const isBot = u.type !== "User";
+
+            const redFlags = [];
+            if (isBot) redFlags.push("account type is not a human User");
+            if (ageDays <= 1) redFlags.push("account created less than a day ago");
+            if (repos === 0 && followers === 0 && !hasBio) redFlags.push("empty account (no repos, no followers, no bio)");
+            if (/bot|automation/i.test(login) && repos === 0) redFlags.push("bot-like username with no repos");
+
+            const greenSignals = [];
+            if (repos >= 1) greenSignals.push(repos + " public repos");
+            if (followers >= 1) greenSignals.push(followers + " followers");
+            if (hasBio) greenSignals.push("has a bio");
+            if (ageDays > 30) greenSignals.push("account " + ageDays + " days old");
+
+            let verdict = "human-like";
+            let confidence = 0.7;
+            confidence += redFlags.length === 0 ? 0.2 : 0;
+            confidence -= redFlags.length * 0.3;
+            confidence += (followers >= 5 ? 0.1 : 0) + (repos >= 5 ? 0.1 : 0);
+            confidence = Math.max(0.1, Math.min(0.98, confidence));
+            if (redFlags.length >= 2) verdict = "suspicious";
+            else if (redFlags.length === 1) verdict = "possible automation";
+
+            const flagLine = redFlags.length
+              ? redFlags.map((f) => "- ⚠️ " + f).join("\n")
+              : "- ✅ no red flags";
+            const greenLine = greenSignals.length
+              ? greenSignals.map((g) => "- ✅ " + g).join("\n")
+              : "- (no green signals)";
+
+            const lines = [];
+            lines.push("## 👤 Contributor Account Check — @" + login);
+            lines.push("");
+            lines.push("**Verdict:** " + verdict + " · **Confidence:** " + Math.round(confidence * 100) + "%");
+            lines.push("");
+            lines.push("| Signal | Value |");
+            lines.push("|---|---|");
+            lines.push("| Account created | " + new Date(u.created_at).toISOString().slice(0, 10) + " (" + ageDays + " days ago) |");
+            lines.push("| Public repos | " + repos + " |");
+            lines.push("| Followers / following | " + followers + " / " + following + " |");
+            lines.push("| Bio | " + (hasBio ? "yes" : "no") + " |");
+            lines.push("| Account type | " + u.type + " |");
+            lines.push("");
+            lines.push("**Red flags:**");
+            lines.push(flagLine);
+            lines.push("");
+            lines.push("**Green signals:**");
+            lines.push(greenLine);
+            lines.push("");
+            lines.push("> This is an automated triage hint based on public account metadata. It is **not** a judgment on the contribution's quality or the contributor's legitimacy — always review the code and the conversation.");
+            const body = lines.join("\n");
+
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: pr.number, body,
+            });
+            console.log("posted contributor check for " + login + ": " + verdict + " (" + Math.round(confidence * 100) + "%)");
