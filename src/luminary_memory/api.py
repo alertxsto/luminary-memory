@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC
 from typing import TYPE_CHECKING
 
@@ -11,18 +12,16 @@ from luminary_memory.ingest.llm import LLMEnricher, NoopEnricher
 from luminary_memory.ingest.whitelist import WhitelistFilter
 from luminary_memory.types import Memory, RecallResult
 
+logger = logging.getLogger(__name__)
+
 
 def _try_index_graph(backend, memory: Memory) -> None:
-    import logging
-
     from luminary_memory.recall.graph import index_memory_entities
 
     try:
         index_memory_entities(backend, memory)
     except Exception:  # noqa: BLE001 -- graph indexing is best-effort; never abort ingest
-        logging.getLogger(__name__).warning(
-            "graph indexing failed for memory %s (non-fatal)", memory.id
-        )
+        logger.warning("graph indexing failed for memory %s (non-fatal)", memory.id)
 
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
@@ -423,7 +422,11 @@ class MemoryClient:
         """Import memories from *path* (recomputes embeddings when absent)."""
         from luminary_memory.export import import_memories
 
-        return import_memories(self.backend, path, engine=self.engine)
+        try:
+            return import_memories(self.backend, path, engine=self.engine)
+        except Exception:
+            logger.exception("import_memories failed for %s", path)
+            raise
 
     def close(self) -> None:
         self.backend.close()
@@ -439,7 +442,7 @@ class MemoryClient:
         if n_limit < 0:
             raise ValueError("limit must be >= 0 (0 means unlimited)")
         if n_limit == 0:
-            n_limit = 10_000  # unlimited — large enough for any realistic store
+            n_limit = None  # unlimited — backends treat None as "no limit"
         from luminary_memory.recall.dedup import dedup_jaccard
         from luminary_memory.recall.fusion import reciprocal_rank_fusion
         from luminary_memory.recall.graph import graph_recall
@@ -454,6 +457,7 @@ class MemoryClient:
         planner_threshold = float(getattr(self.settings, "query_planner_keyword_threshold", 0.9))
 
         eff = n_limit
+        temporal_limit = (eff * 2) if eff is not None else None
         enabled = None
 
         strategies: list[list[tuple]] = []
@@ -461,7 +465,7 @@ class MemoryClient:
         strat_fns = [
             ("semantic", lambda: semantic_recall(self.backend, self.engine, query, limit=eff)),
             ("keyword", lambda: keyword_recall(self.backend, query, limit=eff)),
-            ("temporal", lambda: temporal_recall(self.backend, limit=eff * 2)),
+            ("temporal", lambda: temporal_recall(self.backend, limit=temporal_limit)),
             ("graph", lambda: graph_recall(self.backend, query, limit=eff)),
         ]
 

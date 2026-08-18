@@ -380,3 +380,13 @@ def test_health_importance_dimension_reflects_auto(tmp_path):
     # auto-estimated importance for fresh memories >= 0.3 → above prune_min 0.2
     assert report["dimensions"]["importance"]["health"] > 50
     c.close()
+
+
+def test_recall_limit_zero_unlimited(tmp_path):
+    """limit=0 means unlimited (None) — no 10k magic cap."""
+    c = MemoryClient(db_path=str(tmp_path / "u.db"), engine=_E())
+    for i in range(5):
+        c.ingest(f"fact number {i}")
+    r = c.recall("fact", limit=0)
+    assert len(r.memories) >= 5  # all 5 returned, not capped at 10k path
+    c.close()

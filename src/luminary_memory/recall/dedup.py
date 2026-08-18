@@ -29,9 +29,17 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 def dedup_jaccard(
     scored: list[tuple],
     threshold: float = 0.85,
+    max_pairs: int = 500,
 ) -> list[tuple]:
+    """Dedup near-duplicates by Jaccard token overlap.
+
+    ``max_pairs`` caps the candidate window to the top-N scored items
+    (already ranked by relevance) before pairwise comparison — recall stays
+    O(n · max_pairs) instead of O(n²) on large result sets.
+    """
+    window = scored[:max_pairs] if max_pairs and len(scored) > max_pairs else scored
     kept: list[tuple] = []
-    for mem, score in scored:
+    for mem, score in window:
         duplicate = False
         for k_mem, _ in kept:
             if jaccard_similarity(mem.content, k_mem.content) >= threshold:

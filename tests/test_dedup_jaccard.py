@@ -76,3 +76,18 @@ def test_cosine_clamped():
     from luminary_memory.recall.dedup import cosine_similarity
     # negative direction → clamped to 0.0 (no negative similarity exposed)
     assert cosine_similarity([1.0], [-1.0]) == 0.0
+
+
+def test_dedup_caps_pairwise_window():
+    """max_pairs caps the comparison window — big lists stay O(n·k)."""
+    from luminary_memory.recall.dedup import dedup_jaccard
+    from luminary_memory.types import Memory
+
+    scored = [
+        (Memory(id=i, content=f"fact {i}", embedding=[0.1] * 384, access_count=0, tags=[]), float(i))
+        for i in range(100)
+    ]
+    # window=10 → only first 10 compared; rest returned untouched
+    out = dedup_jaccard(scored, threshold=0.9, max_pairs=10)
+    assert len(out) == 10
+    assert [m.id for m, _ in out] == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
