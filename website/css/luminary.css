@@ -12,14 +12,14 @@
   --surface-1:      #131720;
   --surface-2:      #181e2b;
   --surface-hover:  #1d2433;
-  --line:           rgba(255, 255, 255, 0.08);
-  --line-soft:      rgba(255, 255, 255, 0.045);
-  --line-highlight: rgba(233, 246, 255, 0.16);
+  --line:           rgba(255, 255, 255, 0.12);
+  --line-soft:      rgba(255, 255, 255, 0.08);
+  --line-highlight: rgba(233, 246, 255, 0.22);
 
   /* Text hierarchy */
-  --text:           #e8e6e1;   /* Warm paper white */
-  --text-dim:       #9aa0ab;   /* Secondary body */
-  --text-faint:     #626a7a;   /* Muted captions & kickers */
+  --text:           #ece9e4;   /* Warm paper white */
+  --text-dim:       #a9b1bf;   /* Secondary body */
+  --text-faint:     #8f99ad;   /* Muted captions & kickers */
 
   /* The Moon */
   --moon:           #e9f6ff;   /* Pale lunar white */
@@ -957,8 +957,8 @@ summary:focus-visible {
   margin-top: var(--s5);
   text-align: center;
   font-family: var(--mono);
-  font-size: 0.8rem;
-  color: var(--text-faint);
+  font-size: 0.88rem;
+  color: var(--text-dim);
 }
 
 /* ============================================================
@@ -1000,26 +1000,28 @@ summary:focus-visible {
 
 .bench-row-head div {
   font-family: var(--mono);
-  font-size: 0.72rem;
+  font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 
 .bench-metric {
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   color: var(--text);
+  font-weight: 500;
 }
 
 .bench-sqlite,
 .bench-pg {
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   color: var(--text-dim);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
-.bench-pg {
+.bench-pg-missing {
   color: var(--text-faint);
+  font-style: italic;
 }
 
 .bench-help {
