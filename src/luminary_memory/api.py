@@ -754,10 +754,14 @@ class MemoryClient:
                 scored = [(m, s) for m, s in scored if m.id in allowed]
 
         if not scored:
-            # Fallback: when no strategy matches the query, surface the most
-            # recent memories so recall never returns empty for a store that
-            # has content. This keeps "recent but weakly related" context
-            # available when the query is generic (e.g. mixed-language turns).
+            imp_min = float(getattr(self.settings, "prune_min_importance", 0.2) or 0.2)
+            important = self.backend.top_by_importance(top_n=(eff or 5), min_importance=imp_min)
+            if important:
+                return RecallResult(
+                    memories=important,
+                    scores=[float(getattr(m, "importance", 0.5) or 0.5) * 0.1 for m in important],
+                    strategies_hit={**strategies_hit, "importance_fallback": len(important)},
+                )
             fallback = temporal_recall(self.backend, limit=eff or 5)
             fallback_pairs: list[tuple] = [(m, s * 0.1) for m, s, _label in fallback]
             if fallback_pairs:

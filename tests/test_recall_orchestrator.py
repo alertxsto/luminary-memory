@@ -59,3 +59,45 @@ def test_recall_access_count_bumps(tmp_path):
     c.recall("postgres")
     m = c.get(mid)
     assert m.access_count >= 1
+
+
+def test_recall_fallback_empty_store(tmp_path):
+    """Empty store: recall returns empty result."""
+    c = MemoryClient(db_path=str(tmp_path / "e.db"), engine=_FakeEngine())
+    res = c.recall("anything", limit=5)
+    assert res.memories == []
+    assert res.scores == []
+
+
+def test_recall_surfaces_important_rules_in_mixed_store(tmp_path):
+    """Important rules surface even in a store with recent noise."""
+    c = MemoryClient(db_path=str(tmp_path / "mixed.db"), engine=_FakeEngine())
+    rule = _ingest(c, "always deploy to staging before production", tags=["rule"])
+    noise = _ingest(c, "had coffee this morning")
+    for _ in range(5):
+        _ingest(c, "random conversation filler phrase")
+
+    ms = [c.get(rule), c.get(noise)]
+    ms[0].importance = 0.95
+    ms[1].importance = 0.05
+    c.backend.update(ms[0])
+    c.backend.update(ms[1])
+
+    res = c.recall("deploy to staging", limit=10)
+    assert len(res.memories) >= 1
+    contents = [m.content for m in res.memories]
+    assert any("staging" in c for c in contents), "important rule must surface"
+    assert res.strategies_hit
+
+
+def test_recall_temporal_surfaces_recent_without_matches(tmp_path):
+    """When no semantic/keyword match, temporal still provides recent context."""
+    c = MemoryClient(db_path=str(tmp_path / "temporal.db"), engine=_FakeEngine())
+    rule = _ingest(c, "always use tabs not spaces in this project", tags=["rule"])
+    r = c.get(rule)
+    r.importance = 0.95
+    c.backend.update(r)
+
+    res = c.recall("zzxywq completely unrelated gibberish", limit=5)
+    assert len(res.memories) >= 1
+    assert "temporal" in (res.strategies_hit or {}), "temporal provides fallback context"

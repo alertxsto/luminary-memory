@@ -43,9 +43,9 @@
 - **Catatan:** v0.2.12 sempat dicoba vectorized & di-revert karena mengubah hasil (24 vs 27 merged). Jadi T2.2 HANYA jika blocking bisa dibuktikan lossless (duplicate Jaccard/cosine ≥ threshold pasti share token/embedding). Jika tidak bisa dibuktikan identik, **SKIP** (akurasi > kecepatan).
 
 ### T2.3 Recall fallback: prefer important rules, bukan cuma terbaru
-- **Masalah:** saat query gak match, fallback (api.py:728) surface `temporal_recall` (memory TERBARU) — kadang noise.
-- **Usulan:** fallback prioritaskan importance ≥ `prune_min_importance` dulu (rules), baru temporal. Ini **mengubah hasil recall** → perlu benchmark quality + persetujuan, bukan asal.
-- **Verifikasi:** recall fallback di store kosong-match mengembalikan rule penting (bukan convo terbaru).
+- [x] **Masalah:** saat query gak match, fallback (api.py:756) surface `temporal_recall` (memory TERBARU) — kadang noise.
+- [x] **Usulan:** fallback prioritaskan importance ≥ `prune_min_importance` dulu (rules), baru temporal. Ini **mengubah hasil recall** → perlu benchmark quality + persetujuan, bukan asal.
+- **Status:** Done — fallback now tiers: top_by_importance first (min_importance from settings), then temporal_recall, then empty. 3 new tests in test_recall_orchestrator.py.
 
 ---
 
@@ -108,7 +108,7 @@
 |----------|------|--------|
 | 🔴 P1 | T1.1 Activity hook test | Gap test terbesar; hook sudah live tapi belum ada jaring pengaman — **DONE** |
 | 🔴 P1 | T2.1 health_score O(N²) | Dipanggil berkala, 125k comparisons per call — **DONE** |
-| 🟡 P2 | T2.3 Recall fallback | Perbaikan akurasi nyata, tapi ubah hasil → perlu benchmark + ACC |
+| 🟡 P2 | T2.3 Recall fallback | Perbaikan akurasi nyata, tapi ubah hasil → perlu benchmark + ACC — **DONE** |
 | 🟡 P2 | T5.1 Live Hermes smoke | Wajib sebelum tiap push |
 | 🟢 P3 | T2.2 consolidate (hanya jika lossless) | Akurasi > kecepatan |
 | 🟢 P3 | T4.x Docs audit | Continuity |
