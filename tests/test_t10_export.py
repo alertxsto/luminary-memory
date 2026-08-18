@@ -117,3 +117,32 @@ def test_import_engine_embed_failure_falls_back(tmp_path):
     assert imported["imported"] == 1
     mems = dst.list(limit=0)
     assert mems[0].content == "no embedding memory"
+
+
+def test_import_dedup_skips_existing(tmp_path):
+    """Importing memories that already exist skips them (no duplicates)."""
+    import json as _json
+
+    from luminary_memory.api import MemoryClient
+
+    # Seed store with one memory
+    dst = MemoryClient(db_path=str(tmp_path / "dst.db"), engine=_FakeEngine(), enricher=NoopEnricher())
+    dst.ingest("existing fact about deploy target", tags=["deploy"])
+
+    # Export file contains 1 duplicate + 1 new
+    payload = {
+        "memories": [
+            {"content": "existing fact about deploy target", "tags": ["deploy"]},
+            {"content": "brand new fact about database", "tags": ["db"]},
+        ]
+    }
+    p = tmp_path / "dup.json"
+    p.write_text(_json.dumps(payload))
+
+    result = dst.import_memories(p)
+    assert result["imported"] == 1
+    assert result["skipped_duplicates"] == 1
+    # No duplicate in store
+    contents = [m.content for m in dst.list(limit=0)]
+    assert contents.count("existing fact about deploy target") == 1
+    assert "brand new fact about database" in contents

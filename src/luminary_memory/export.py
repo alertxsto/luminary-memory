@@ -94,11 +94,39 @@ def import_memories(
     if not memories:
         return {"imported": 0}
 
+    # Dedup guard: skip memories whose content already exists in the store.
+    # Prevents bulk imports (e.g. MEMORY.md/USER.md merges) from creating
+    # duplicate entries.
+    existing_contents: set[str] = set()
+    try:
+        for existing in backend.all():
+            c = getattr(existing, "content", None)
+            if c:
+                existing_contents.add(c.strip().lower())
+    except Exception:  # noqa: BLE001 -- dedup is best-effort
+        existing_contents = set()
+
+    deduped: list[Memory] = []
+    skipped_dups = 0
+    for m in memories:
+        key = (m.content or "").strip().lower()
+        if key and key in existing_contents:
+            skipped_dups += 1
+            continue
+        existing_contents.add(key)
+        deduped.append(m)
+
+    if not deduped:
+        return {"imported": 0, "skipped_duplicates": skipped_dups}
+
     # Prefer batch path when available.
     add_many = getattr(backend, "add_many", None)
     if callable(add_many):
-        ids = add_many(memories)
+        ids = add_many(deduped)
     else:
-        ids = [backend.add(m) for m in memories]
+        ids = [backend.add(m) for m in deduped]
     _ = ids
-    return {"imported": len(memories)}
+    result: dict = {"imported": len(deduped)}
+    if skipped_dups:
+        result["skipped_duplicates"] = skipped_dups
+    return result

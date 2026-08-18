@@ -18,3 +18,26 @@ def test_keyword_search_ranks(tmp_path):
     b.add(Memory(content="making a sandwich for lunch"))
     res = b.keyword_search("sqlite fts5", limit=5)
     assert res and res[0][0].content.startswith("database")
+
+
+def test_close_from_other_thread_does_not_crash(tmp_path):
+    """close() called from a different thread than the connection owner must
+    not raise (regression for provider writer-thread shutdown)."""
+    import threading
+
+    from luminary_memory.backends.sqlite import SQLiteBackend
+
+    holder: dict = {}
+
+    def create_in_thread():
+        b = SQLiteBackend(str(tmp_path / "t.db"))
+        # connection created on THIS thread
+        b.conn.execute("SELECT 1").fetchone()
+        holder["backend"] = b
+
+    t = threading.Thread(target=create_in_thread)
+    t.start()
+    t.join()
+    b = holder["backend"]
+    # Connection was created in another thread; closing here must not crash.
+    b.close()  # should not raise
