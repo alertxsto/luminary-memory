@@ -96,6 +96,8 @@ cp hermes/SKILL.md ~/.hermes/skills/luminary-memory/SKILL.md
 1. **Ingest on tool call** — after learning a durable fact (preference, environment detail), call `client.ingest(...)`.
 2. **Recall into the system prompt** — before answering, call `client.recall(query)` and inject the top memories as context.
 3. **Lifecycle via cron** — schedule `luminary-memory lifecycle` to keep the store clean.
+4. **Monitor health** — `luminary-memory health` (or `client.health_score()`) reports store quality; run it in a cron to catch drift.
+5. **LLM curation (optional)** — with `ingest_llm` + `auto_maintain`, turns are curated and stale facts pruned automatically.
 
 ## Example
 

@@ -43,7 +43,43 @@ client.close()
 luminary-memory add "The deploy target is the staging cluster" --tags deploy
 luminary-memory recall "where do we deploy?" --json
 luminary-memory stats
+luminary-memory health
 ```
+
+## Backup & restore
+
+```bash
+luminary-memory export --path backup.json
+luminary-memory import --path backup.json
+```
+
+`export` writes all memories to a JSON file (migration/backup); `import`
+restores them (recomputing embeddings when absent).
+
+## Optional: LLM memory curation
+
+By default every ingest is stored verbatim (zero LLM cost). To have an LLM
+evaluate each turn — dropping chit-chat and storing concise factual summaries
+instead of raw transcripts — enable `ingest_llm` and `auto_maintain`:
+
+```bash
+pip install "luminary-memory[hermes]"
+```
+
+```json
+// ~/.hermes/luminary/config.json (Hermes provider)
+{
+  "ingest_llm": true,
+  "auto_maintain": true,
+  "llm_base_url": "https://api.commandcode.ai/provider/v1",
+  "llm_model": "deepseek/deepseek-v4-flash",
+  "llm_api_key": "your-key"
+}
+```
+
+Any OpenAI-compatible endpoint works. `auto_maintain` reviews the store at
+session end — keeping current facts, updating changed ones, deleting stale or
+duplicate memories.
 
 ## Configuration
 
