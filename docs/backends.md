@@ -13,6 +13,9 @@
 - Keyword search via `ILIKE` with `ESCAPE` handling.
 - Vector search via the `<=>` cosine distance operator (HNSW-ready).
 - Best for scale and concurrent access.
+- Integration tests run against a real Postgres service in CI
+  (`.github/workflows/ci.yml`); run them locally with `LUMINARY_PG_DSN`
+  (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
 
 ## Choosing
 

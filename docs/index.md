@@ -14,10 +14,12 @@ A lightweight, self-hosted memory layer for AI agents.
 - **First-class Hermes Agent memory provider** — auto-recall every turn, auto-save every session, zero LLM tokens per turn (`memory.provider: luminary`).
 - **LLM memory curation** — optional `ingest_llm` drops chit-chat and stores factual summaries; `auto_maintain` prunes stale/duplicate facts at session end.
 - **Health score** — `health_score()` / `luminary-memory health` reports store quality (0-100) with recommendations.
-- SQLite out of the box, optional pgvector for scale.
+- **Knowledge graph** — `graph()` / `luminary-memory graph` surfaces entities and co-occurrence relations, ranked by degree.
+- SQLite out of the box, optional pgvector for scale (integration-tested in CI).
 - Local CPU embeddings via ONNX — no GPU, no cloud.
 - Configurable token budget so memory never overflows the agent's context.
 - Clean Python API + CLI.
+- **Automated contribution tooling** — CI (3.11/3.12 + pgvector), triage auto-labeling, stale bot, contributor account check.
 
 ## Quick links
 
