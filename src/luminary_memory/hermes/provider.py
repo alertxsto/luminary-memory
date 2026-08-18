@@ -71,12 +71,12 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._turn_counter: int = 0
         self._thread_client: MemoryClient | None = None
         self._thread_client_owner: str | None = None
-        self._prefetch_cache: tuple[str, int] | None = None
+        self._prefetch_cache: tuple | None = None
         self._prefetch_lock = threading.Lock()
         self._prefetch_thread: threading.Thread | None = None
         self._last_recall_count: int = 0
         self._last_recall_returned: bool = False
-        self._injected_ids: set[int] = set()  # memory ids already in system prompt (anti-dup)
+        self._injected_ids: set[int] = set()  # memory ids already in context (system prompt + prefetch, anti-dup)
 
     # ------------------------------------------------------------------ #
     # Identity & availability
@@ -541,10 +541,11 @@ class LuminaryMemoryProvider(MemoryProvider):
                 total += est
                 if len(picked) >= top_n:
                     break
+            with self._prefetch_lock:
+                # Always replace — never accumulate stale ids across turns.
+                self._injected_ids = picked_ids
             if not picked:
                 return ""
-            with self._prefetch_lock:
-                self._injected_ids = picked_ids
             return "Key memories:\n" + "\n".join(picked)
         except Exception:
             logging.getLogger(__name__).exception("persistent context build failed")
@@ -595,9 +596,8 @@ class LuminaryMemoryProvider(MemoryProvider):
                     limit=int(self._config.get("recall_limit", 10)),
                     token_budget=int(self._config.get("token_budget", 2048)),
                 )
-                text = self._format_recall_block(result.memories, result.scores)
                 with self._prefetch_lock:
-                    self._prefetch_cache = (text, len(result.memories))
+                    self._prefetch_cache = (result.memories, result.scores)
                 self._log.info(
                     "recall query=%r limit=%s -> %d memories (%.0fms)",
                     query, self._config.get("recall_limit", 10),
@@ -615,7 +615,19 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._prefetch_thread = t
 
     def prefetch(self, query: str, session_id: str) -> str:
-        """Return recall context for the current turn (cached or live)."""
+        """Return context for the current turn: query recall + persistent rules.
+
+        The system prompt is byte-stable for the life of a conversation
+        (Hermes prompt caching is sacred), so memories ingested mid-session
+        never reach the model through ``system_prompt_block()``. Running the
+        persistent-context build here on every turn fixes that: important
+        rules/facts are always injected, independent of whether the query
+        matches them.
+
+        Anti-duplication is preserved: memories already emitted by the
+        persistent-context build are skipped in the query-recall block, so
+        nothing appears twice in one turn's context.
+        """
         if not self._client:
             return ""
         if not self._config.get("auto_recall", True):
@@ -623,6 +635,11 @@ class LuminaryMemoryProvider(MemoryProvider):
         if self._config.get("mode", "hybrid") == "tools":
             return ""
 
+        # Persistent rules first: always-present context. Tracks injected ids
+        # so the recall block below skips duplicates.
+        ctx_block = self._build_persistent_context()
+
+        recall_block = ""
         if self._config.get("recall_sync", False):
             try:
                 result = self._client.recall(
@@ -630,26 +647,27 @@ class LuminaryMemoryProvider(MemoryProvider):
                     limit=int(self._config.get("recall_limit", 10)),
                     token_budget=int(self._config.get("token_budget", 2048)),
                 )
-                text = self._format_recall_block(result.memories, result.scores)
+                recall_block = self._format_recall_block(result.memories, result.scores)
                 self._last_recall_count = len(result.memories)
-                self._last_recall_returned = bool(text)
-                return text
+                self._last_recall_returned = bool(recall_block)
             except Exception:
                 logging.getLogger(__name__).exception("sync recall failed")
-                return ""
+        else:
+            # Cached path: join the worker briefly, then drain the cache.
+            if self._prefetch_thread is not None and self._prefetch_thread.is_alive():
+                self._prefetch_thread.join(timeout=3.0)
+            with self._prefetch_lock:
+                cached = self._prefetch_cache
+                self._prefetch_cache = None
+            if cached is not None:
+                memories, scores = cached
+                self._last_recall_count = len(memories)
+                recall_block = self._format_recall_block(memories, scores)
+                self._last_recall_returned = bool(recall_block)
 
-        # Cached path: join the worker briefly, then drain the cache.
-        if self._prefetch_thread is not None and self._prefetch_thread.is_alive():
-            self._prefetch_thread.join(timeout=3.0)
-        with self._prefetch_lock:
-            cached = self._prefetch_cache
-            self._prefetch_cache = None
-        if cached is None:
-            return ""
-        text, count = cached
-        self._last_recall_count = count
-        self._last_recall_returned = bool(text)
-        return text
+        if ctx_block and recall_block:
+            return f"{ctx_block}\n\n{recall_block}"
+        return ctx_block or recall_block
 
     def recall_status(self):
         """Return the deterministic RecallStatus for the last prefetch."""
