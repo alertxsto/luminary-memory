@@ -28,13 +28,30 @@ Entity co-occurrence traversal. Entities are extracted from tags + content; edge
 
 ## Fusion
 
-**Reciprocal Rank Fusion (RRF)** combines the four ranked lists:
+**Weighted Reciprocal Rank Fusion (RRF)** combines the four ranked lists.
+Each strategy carries a weight so high-signal strategies dominate:
 
 ```
-score(m) = Σ 1 / (k + rank(m) + 1)
+score(m) = Σ weight(strategy) / (k + rank(m) + 1)
 ```
 
-`k` is configurable (`LUMINARY_RRF_K`, default 60).
+| Strategy | Weight | Why |
+|----------|--------|-----|
+| semantic | 0.4 | matches meaning, strongest signal |
+| keyword  | 0.3 | exact match |
+| graph    | 0.2 | entity co-occurrence |
+| temporal | 0.1 | recency/popularity only — kept low so "recent but irrelevant" cannot top the ranking |
+
+`k` is configurable (`LUMINARY_RRF_K`, default 60). The query planner
+additionally gates strategies: temporal is skipped when a strong keyword
+match exists, and graph is skipped when the query has no entity tokens.
+
+## Query expansion
+
+Short queries ("deploy?") produce weak embeddings. Before semantic search,
+the query is expanded with co-occurring entity names from the knowledge
+graph, so relevant memories rank higher (`_expand_query`, best-effort —
+falls back to the raw query on any error).
 
 ## Dedup
 

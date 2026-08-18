@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.10] - 2026-08-18
+
+### Added
+
+- **Smarter recall** — weighted RRF fusion (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1) so high-signal strategies dominate; query expansion appends co-occurring graph entities to short queries before embedding.
+- **`max_memories` store cap** — hard limit on store size (default 1000); oldest/lowest-importance memories pruned when exceeded. Configurable via dashboard (21 settings).
+
+### Fixed
+
+- **Memory store overflow** — the LLM curation prompt is now selective (no duplicates, one fact per entry, skip meta-talk), so work-log turns no longer bloat the store (139 → 46 memories after cleanup).
+- **`import_memories` dedup guard** — bulk imports (e.g. MEMORY.md/USER.md merges) skip content that already exists, reporting `skipped_duplicates`.
+- **SQLite cross-thread close crash** — `close()` no longer raises when the connection is owned by another thread (provider writer-thread shutdown).
+
+### Website
+
+- Redesigned benchmarks (line table in panel), architecture (turn-loop flow), use cases (narrative list) — moonlit editorial preserved, contrast fixed (text-faint 3.9:1 → 7:1), zero em-dashes.
+
 ## [0.2.9] - 2026-08-18
 
 ### Added

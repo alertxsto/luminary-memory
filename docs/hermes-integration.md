@@ -37,6 +37,7 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `db_path` | `""` | Override store path; `""` = `$HERMES_HOME/luminary/memory.db` |
 | `backend` | `sqlite` | `sqlite` or `pgvector` |
 | `recall_limit` | `10` | Top-N memories per recall |
+| `max_memories` | `1000` | Hard cap on store size — oldest/lowest-importance pruned when exceeded |
 | `token_budget` | `2048` | Recall context budget |
 | `auto_recall` | `true` | Enable per-turn background recall |
 | `recall_sync` | `false` | Synchronous (live) recall instead of warm prefetch |

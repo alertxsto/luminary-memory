@@ -69,7 +69,7 @@
     <div class="hero-inner reveal-on-scroll">
       <div class="eyebrow">
         <span class="eyebrow-dot" aria-hidden="true"></span>
-        <span>v0.2.9 · Self-Hosted Memory Layer · 91% Test Coverage</span>
+        <span>v0.2.10 · Self-Hosted Memory Layer · 91% Test Coverage</span>
       </div>
 
       <h1 class="hero-title">
@@ -160,7 +160,7 @@
       <div class="stat-card">
         <span class="stat-num">4</span>
         <h3 class="stat-label">Fused Strategies</h3>
-        <p class="stat-sub">Vector cosine, SQLite FTS5 keyword, temporal decay, and entity graph blended via RRF (<code>k=60</code>).</p>
+        <p class="stat-sub">Vector cosine, SQLite FTS5 keyword, temporal decay, and entity graph blended via weighted RRF (<code>k=60</code>).</p>
       </div>
       <div class="stat-card">
         <span class="stat-num">179<em>MB</em></span>
@@ -203,7 +203,7 @@
 
       <div class="fusion-note">
         <h3 class="fusion-title">Parallel Fusion &amp; Context Budget Protection</h3>
-        <p>All four retrieval strategies run concurrently. Reciprocal Rank Fusion merges candidates into a unified rank, Jaccard deduplication eliminates paraphrased clutter, and hard token budget limits protect your model's context window.</p>
+        <p>All four retrieval strategies run concurrently. Weighted Reciprocal Rank Fusion merges candidates into a unified rank (semantic and keyword carry the most weight), short queries are expanded with related entities from the graph, Jaccard deduplication eliminates paraphrased clutter, and hard token budget limits protect your model's context window.</p>
         <p class="fusion-meta">RRF <code>k=60</code> · Jaccard Deduplication <code>0.85</code> · Token Budget <code>4096</code> · Embedding Dim <code>384</code></p>
       </div>
     </div>
