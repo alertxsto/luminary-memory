@@ -185,3 +185,27 @@ def test_rule_auto_replace_replaces_similar(tmp_path):
     assert len(mems) == 1, "store should still have exactly one entry after replace"
     assert mems[0].content == "WAJIB pakai markdown table di telegram"
     c.close()
+
+
+def test_lifecycle_preserves_pinned_rule_importance(tmp_path):
+    """run_lifecycle() must not downgrade pinned rule importance back to recency/access level."""
+    from luminary_memory.api import MemoryClient
+
+    class _E:
+        def embed(self, t): return [0.1] * 384
+        def embed_batch(self, ts): return [[0.1] * 384 for _ in ts]
+
+    c = MemoryClient(db_path=str(tmp_path / "pinned.db"), engine=_E())
+    mid = c.ingest("rule: always use markdown tables", tags=["rule"])
+    m = c.get(mid)
+    m.importance = 0.95  # pinned rule
+    c.update(m)
+
+    # Run lifecycle re-estimation pass
+    res = c.run_lifecycle()
+    assert res["reestimated"] == 0, "pinned rules must be skipped during re-estimation"
+    m_after = c.get(mid)
+    assert m_after is not None
+    assert m_after.importance == 0.95, "pinned rule importance must not be downgraded by lifecycle"
+    c.close()
+
