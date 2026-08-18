@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.7] - 2026-08-18
+
+### Added
+
+- **`MemoryClient.graph()`** — returns the knowledge graph as `{entities: [{name, degree, memories}], relations: [{source, target, weight}]}`. Empty-store and non-SQLite safe.
+- **`luminary-memory graph` CLI** — top entities as a table (degree + memory count), `--relations` for edges, `--json` for raw output, `--limit`.
+- **`luminary-memory version`** — prints installed version + Python runtime.
+
+### Changed
+
+- Roadmap v0.3.0: graph visualization (CLI phase) ticked.
+
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/), and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [0.2.6] - 2026-08-18

@@ -422,7 +422,6 @@ def test_graph_limit_caps_entities(tmp_path):
 def test_graph_backend_without_conn(tmp_path):
     """Backend without .conn falls back to empty graph (pgvector-safe)."""
     from luminary_memory.api import MemoryClient
-    from luminary_memory.backends.sqlite import SQLiteBackend
 
     c = MemoryClient(db_path=str(tmp_path / "g4.db"), engine=_E())
     real_backend = c.backend

@@ -2,7 +2,7 @@
 
 > **Tagline:** A lightweight, self-hosted memory layer for AI agents.
 
-**Current release:** v0.2.6 (polish & hardening) · **Tests:** 200+ passing · **Coverage:** 90% · **License:** Apache-2.0
+**Current release:** v0.2.7 (polish & hardening) · **Tests:** 200+ passing · **Coverage:** 90% · **License:** Apache-2.0
 
 ---
 
@@ -101,7 +101,7 @@ Post-MVP audit hardening.
 
 **Goal:** Smarter memory — structure, insight, and visualization.
 
-- [ ] Knowledge graph visualization (entity relations browser)
+- [x] Knowledge graph visualization (entity relations browser) — v0.2.7 (CLI: `luminary-memory graph`)
 - [x] Memory health score (duplicate rate, staleness, importance distribution) — v0.2.4
 - [ ] Multi-user scoping (`user_id` per memory, per-user recall)
 - [x] Memory importance auto-estimation (recency + access + semantic centrality) — v0.2.5
