@@ -55,27 +55,33 @@ if [ "$DO_PROVIDER" -eq 1 ]; then
     log "no config.yaml found — creating minimal config with memory.provider"
     mkdir -p "$HERMES_HOME"
     printf 'memory:\n  provider: luminary\n' > "$CONFIG"
-  elif grep -q "provider:" "$CONFIG"; then
-    log "memory.provider already set — skipping config edit"
   else
-    log "enabling memory.provider = luminary ..."
-    # Insert under the memory: section if present, else append a memory block.
-    if [ -f "$CONFIG" ] && grep -q "^memory:" "$CONFIG"; then
-      python3 - "$CONFIG" <<'PY'
+    # Use Python to inspect ONLY the ^memory: block — never match a
+    # `provider:` line elsewhere (e.g. provider: command-code in the
+    # models section), which would wrongly skip the edit.
+    python3 - "$CONFIG" <<'PY'
 import re, sys
 p = sys.argv[1]
 s = open(p).read()
-if re.search(r"(?m)^memory:\s*$", s) and "provider:" not in s.split("memory:")[1].split("\n\n")[0]:
-    s = s.replace("memory:", "memory:\n    provider: luminary", 1)
-    open(p, "w").write(s)
-    print("  inserted memory.provider under existing memory: block")
+
+def memory_block(text):
+    m = re.search(r"(?m)^memory:\s*(.*?)(?=^\S|\Z)", text, re.S)
+    return m.group(1) if m else ""
+
+block = memory_block(s)
+if "provider:" in block:
+    print("memory.provider already set in memory: block — skipping")
+    raise SystemExit(0)
+
+if re.search(r"(?m)^memory:\s*$", s):
+    # memory: block exists but has no provider — insert under it
+    s = re.sub(r"(?m)^memory:\s*$", "memory:\n  provider: luminary", s, count=1)
+    print("inserted memory.provider under existing memory: block")
 else:
-    print("  memory block unchanged (provider may already exist)")
+    s += "\nmemory:\n  provider: luminary\n"
+    print("appended memory: block to config.yaml")
+open(p, "w").write(s)
 PY
-    else
-      printf '\nmemory:\n  provider: luminary\n' >> "$CONFIG"
-      log "appended memory: block to config.yaml"
-    fi
   fi
 fi
 

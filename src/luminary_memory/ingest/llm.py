@@ -102,7 +102,7 @@ class OpenAICompatibleEnricher(LLMEnricher):
         body = json.dumps({"model": self.model, "messages": messages, "temperature": 0}).encode()
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "luminary-memory/0.2.1",
+            "User-Agent": "luminary-memory",
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
