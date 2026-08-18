@@ -35,9 +35,10 @@ def test_rule_keywords_configurable():
 
     from luminary_memory.config import Settings
 
-    with _patch.dict(os.environ, {"LUMINARY_RULE_KEYWORDS": "JANGAN PERNAH", "LUMINARY_RULE_IMPORTANCE": "0.85"}):
+    with _patch.dict(os.environ, {"LUMINARY_RULE_KEYWORDS": "NEVER,ALWAYS,MUST", "LUMINARY_RULE_IMPORTANCE": "0.85"}):
         s = Settings()
-        assert "JANGAN PERNAH" in s.rule_keywords
+        assert "NEVER" in s.rule_keywords
+        assert "ALWAYS" in s.rule_keywords
         assert s.rule_importance == 0.85
 
 
@@ -72,20 +73,20 @@ def test_rule_importance_only_from_curated_summary():
 
     e = OpenAICompatibleEnricher(
         base_url="https://fake.example/v1", api_key="k", model="m",
-        rule_keywords="JANGAN,WAJIB,HARUS",
+        rule_keywords="MUST,ALWAYS,NEVER",
     )
     with _patch("urllib.request.urlopen", _FakeUrlopen()):
-        out = e.enrich("User: bikin PLAN dong kalo gitu\nAssistant: ok gw buatin plan")
-    # Raw text contains "PLAN" but it is not in rule_keywords, and the curated
-    # summary does not read like an instruction -> must NOT be flagged.
+        out = e.enrich("User: we must check before pushing anything\nAssistant: sure, checking now")
+    # Raw text contains "must" (a rule keyword) but the curated summary does
+    # not read like an instruction -> must NOT be flagged.
     assert out.importance is None, "raw mention of a rule keyword must not flag a rule"
     assert out.summary == "User delegated plan progress check to Command Code CLI"
 
 
 def test_raw_rule_keyword_in_transcript_not_flagged():
     """Regression: a raw transcript that happens to contain a rule keyword
-    (e.g. 'WAJIB') must not be pinned as a rule when the curated summary is
-    not an instruction. This is exactly the id 205/206 pollution case."""
+    (e.g. 'must') must not be pinned as a rule when the curated summary is
+    not an instruction."""
     import json as _json
     from unittest.mock import patch as _patch
 
@@ -112,12 +113,12 @@ def test_raw_rule_keyword_in_transcript_not_flagged():
 
     e = OpenAICompatibleEnricher(
         base_url="https://fake.example/v1", api_key="k", model="m",
-        rule_keywords="JANGAN,WAJIB,HARUS",
+        rule_keywords="MUST,ALWAYS,NEVER",
     )
-    # Raw transcript literally contains "WAJIB" but summary is benign.
+    # Raw transcript literally contains "must" but summary is benign.
     with _patch("urllib.request.urlopen", _FakeUrlopen()):
-        out = e.enrich("User: WAJIB cek dulu ya kalo mau push\nAssistant: siap, gw cek")
-    assert out.importance is None, "raw WAJIB in transcript must not pin a rule"
+        out = e.enrich("User: we must check CI before merging\nAssistant: got it")
+    assert out.importance is None, "raw must in transcript must not pin a rule"
 
 
 def test_rule_importance_from_rule_summary():
@@ -136,7 +137,7 @@ def test_rule_importance_from_rule_summary():
             return _json.dumps({
                 "choices": [{"message": {"content": _json.dumps({
                     "worth_saving": True,
-                    "summary": "User WAJIB pakai markdown table di Telegram",
+                    "summary": "User must always use markdown tables in Telegram replies",
                     "entities": ["table"],
                     "tags": ["formatting"],
                 })}}],
@@ -148,9 +149,9 @@ def test_rule_importance_from_rule_summary():
 
     e = OpenAICompatibleEnricher(
         base_url="https://fake.example/v1", api_key="k", model="m",
-        rule_keywords="JANGAN,WAJIB,HARUS",
+        rule_keywords="MUST,ALWAYS,NEVER",
     )
     with _patch("urllib.request.urlopen", _FakeUrlopen()):
-        out = e.enrich("User: WAJIB pakai markdown table di telegram ya")
+        out = e.enrich("User: always use markdown tables in Telegram replies")
     assert out.importance == e.rule_importance
     assert out.importance == 0.9

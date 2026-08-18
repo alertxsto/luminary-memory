@@ -8,11 +8,13 @@
   - Configurable via `LUMINARY_CORE_TAG` (default `core`), `LUMINARY_CORE_TOP_N` (12), `LUMINARY_CORE_BUDGET` (8000 chars).
   - New tools: `luminary_core_add` (pin a rule, importance ≥ 0.9), `luminary_core_remove` (unpin, keeps the memory), `luminary_core_list`.
   - Deduplicated against persistent context and recall (a core memory never appears twice).
+- **English default rule keywords** — `LUMINARY_RULE_KEYWORDS` now defaults to English instruction words (`NEVER,ALWAYS,MUST,REQUIRED,MANDATORY,FORBIDDEN,DO NOT,...`) instead of Indonesian, since this is a global open-source repo. Fully configurable per deployment language.
 
 ### Fixed
 
 - **`prefetch()` now includes the core-memory block** — previously core rules only reached the system prompt; mid-session turns got core rules only via system prompt. Now merged into every prefetch like persistent context.
-- **Keyword recall OR join** — multi-term queries ("laporan pakai tabel") returned 0 hits with FTS5 default AND; terms now join with OR and bm25 ranking lifts the best matches.
+- **Anti-duplication across core / persistent / recall** — persistent context no longer overwrites injected ids and now skips memories already in the core block.
+- **Keyword recall OR join** — multi-term queries ("use tables in reports") returned 0 hits with FTS5 default AND; terms now join with OR and bm25 ranking lifts the best matches.
 
 ## [0.2.12] - 2026-08-18
 

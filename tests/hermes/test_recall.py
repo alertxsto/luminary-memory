@@ -142,7 +142,7 @@ def test_do_retain_stores_curated_summary(tmp_path):
         def enrich(self, text):
             return EnrichedContent(
                 content=text,
-                summary="User WAJIB pakai markdown table di Telegram",
+                summary="User must always use markdown tables in Telegram",
                 worth_saving=True,
             )
 

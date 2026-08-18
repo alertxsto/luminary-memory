@@ -173,17 +173,17 @@ def test_rule_auto_replace_replaces_similar(tmp_path):
         def embed_batch(self, ts): return [[float(len(t)), 0.0, 0.0] for t in ts]
 
     c = MemoryClient(db_path=str(tmp_path / "r.db"), engine=_E())
-    first = c.ingest("JANGAN pakai tabel di telegram", tags=["rule"])
+    first = c.ingest("never use tables in telegram replies", tags=["rule"])
     assert first is not None
     mems_before = c.list(limit=0)
     assert len(mems_before) == 1
-    assert mems_before[0].content == "JANGAN pakai tabel di telegram"
+    assert mems_before[0].content == "never use tables in telegram replies"
     # Second ingest is similar (collinear embedding) -> should replace in place
-    second = c.ingest("WAJIB pakai markdown table di telegram", tags=["rule"])
+    second = c.ingest("always use markdown tables in telegram replies", tags=["rule"])
     mems = c.list(limit=0)
     assert second == first, "auto-replace must return the original id"
     assert len(mems) == 1, "store should still have exactly one entry after replace"
-    assert mems[0].content == "WAJIB pakai markdown table di telegram"
+    assert mems[0].content == "always use markdown tables in telegram replies"
     c.close()
 
 

@@ -182,15 +182,16 @@ class OpenAICompatibleEnricher(LLMEnricher):
             if not isinstance(summary, str):
                 summary = None
             # Auto-importance for rules: only a *curated summary* that reads
-            # like an instruction ("JANGAN", "WAJIB", "HARUS", "never",
-            # "must", etc.) is a durable rule the agent must not forget.
+            # like an instruction ("must", "never", "always", "do not", etc.)
+            # is a durable rule the agent must not forget. Keywords are
+            # configurable via LUMINARY_RULE_KEYWORDS (English defaults).
             #
             # The rule check runs against the summary (the LLM's distilled
             # fact), never the raw transcript. A raw turn that merely mentions
-            # a rule keyword (e.g. "User: bikin PLAN dong") is conversation,
-            # not a rule — flagging it would pin noise as high-importance.
-            # When enrichment failed (no summary), there is no curated fact at
-            # all, so the memory cannot be a rule.
+            # a rule keyword is conversation, not a rule — flagging it would
+            # pin noise as high-importance. When enrichment failed (no
+            # summary), there is no curated fact at all, so the memory cannot
+            # be a rule.
             summary_s = summary if summary and summary.strip() else ""
             rule_keywords = (
                 s.strip().upper()

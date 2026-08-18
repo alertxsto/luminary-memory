@@ -33,7 +33,7 @@ def _seed_core(p, texts):
 
 def test_system_prompt_includes_core_block(tmp_path):
     p = _init_provider(tmp_path)
-    _seed_core(p, ["WAJIB pakai markdown table di Telegram"])
+    _seed_core(p, ["always use markdown tables in Telegram"])
     block = p.system_prompt_block()
     assert "Core memory (auto-loaded every session)" in block
     assert "markdown table" in block
@@ -97,10 +97,10 @@ def test_core_tools_in_schema(tmp_path):
 def test_core_add_tool_stores_and_pins(tmp_path):
     p = _init_provider(tmp_path)
     import json
-    out = p.handle_tool_call("luminary_core_add", {"content": "WAJIB table untuk semua laporan"})
+    out = p.handle_tool_call("luminary_core_add", {"content": "always use markdown tables for all reports"})
     data = json.loads(out)
     assert "Core memory stored" in data["result"]
-    mems = [m for m in p._client.list(limit=0) if "table untuk semua" in m.content]
+    mems = [m for m in p._client.list(limit=0) if "markdown tables" in m.content]
     assert len(mems) == 1
     assert p._core_tag() in (mems[0].tags or [])
     assert float(mems[0].importance or 0) >= 0.9, "core add must pin importance"
@@ -147,9 +147,9 @@ def test_core_list_returns_core_memories(tmp_path):
 
 def test_core_block_included_in_prefetch_context(tmp_path):
     p = _init_provider(tmp_path)
-    _seed_core(p, ["aturan format tabel WAJIB di semua output"])
+    _seed_core(p, ["always use markdown tables in all output"])
     p._config["recall_sync"] = True
     result = p.prefetch("riset teknologi x y z", session_id="s1")
     assert "Core memory (auto-loaded every session)" in result
-    assert "format tabel WAJIB" in result
+    assert "markdown tables" in result
     p.shutdown()

@@ -78,7 +78,7 @@ p._client.engine = _E()
 p._client.settings.rule_auto_replace = False
 
 # core memory
-r = p.handle_tool_call("luminary_core_add", {"content": "WAJIB markdown table semua laporan"})
+r = p.handle_tool_call("luminary_core_add", {"content": "always use markdown tables for all reports"})
 assert "Core memory stored" in json.loads(r)["result"], r
 # prefetch includes core, no dup, query unrelated
 p._config["recall_sync"] = True

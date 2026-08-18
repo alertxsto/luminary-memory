@@ -38,7 +38,7 @@ size cap even if importance-based pruning never fires.
 
 **Rule pinning (v0.2.11+):** memories at importance ≥ 0.9 are pinned and never
 pruned — neither by importance threshold nor by the `max_memories` cap. This
-protects durable rules (e.g. "WAJIB markdown table") from being evicted.
+protects durable rules (e.g. "always use markdown tables") from being evicted.
 
 ### Batched passes (v0.2.12+)
 

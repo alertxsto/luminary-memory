@@ -126,7 +126,7 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `llm_model` | `LUMINARY_LLM_MODEL` | `gpt-4o-mini` |
 | `llm_timeout` | `LUMINARY_LLM_TIMEOUT` | `10` |
 | `llm_max_tokens` | `LUMINARY_LLM_MAX_TOKENS` | `512` |
-| `rule_keywords` | `LUMINARY_RULE_KEYWORDS` | `JANGAN,WAJIB,HARUS,...` |
+| `rule_keywords` | `LUMINARY_RULE_KEYWORDS` | `NEVER,ALWAYS,MUST,...` |
 
 > Provider-specific settings (Hermes dashboard): `max_memories`, `context_*`,
 > `mode`, `recall_limit`, `auto_recall`, `recall_sync`, `auto_retain`,
@@ -177,7 +177,7 @@ after, and a background lifecycle keeps the store lean.
 |-------|-----------|
 | **Lifecycle** | TTL cleanup, semantic consolidation (embedding cosine, fallback Jaccard), importance-based pruning — all batched at the backend level |
 | **Rule pinning** | Memories at importance ≥ 0.9 are pinned: never pruned, never deleted by consolidation |
-| **Rule auto-replace** | Similar rule ingests replace the old one (anti-contradiction), so "JANGAN tabel" never coexists with "WAJIB table" |
+| **Rule auto-replace** | Similar rule ingests replace the old one (anti-contradiction), so "never use tables" never coexists with "always use tables" |
 | **Store hygiene** | Rule keywords are checked only against the LLM-curated summary (raw transcripts are never pinned); turns without a curated summary are dropped when `ingest_llm` is on |
 | **Auto importance** | Every memory is scored by recency + access + graph centrality; prune and health use live values |
 | **Max memories cap** | `max_memories` (default 1000) prunes the oldest/lowest-importance when the store exceeds it |

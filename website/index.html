@@ -153,12 +153,12 @@
         <pre class="term-body"><code><span class="c-com"># Core memory: DB-backed MEMORY.md, auto-loaded every session</span>
 
 <span class="c-com"># Agent-side: pin a durable rule (via the luminary_core_add tool)</span>
-<span class="c-fn">luminary_core_add</span>(<span class="c-str">"WAJIB pakai markdown table untuk semua laporan"</span>)
+<span class="c-fn">luminary_core_add</span>(<span class="c-str">"always use markdown tables for all reports"</span>)
 <span class="c-com"># → {"result": "Core memory stored (id=42)."}</span>
 
 <span class="c-com"># See what is pinned</span>
 <span class="c-fn">luminary_core_list</span>()
-<span class="c-com"># → {"core": [{"id": 42, "content": "WAJIB pakai markdown table...", ...}]}</span>
+<span class="c-com"># → {"core": [{"id": 42, "content": "always use markdown tables...", ...}]}</span>
 
 <span class="c-com"># Unpin a rule (keeps it in the store, drops from system prompt)</span>
 <span class="c-fn">luminary_core_remove</span>(<span class="c-arg">id</span>=<span class="c-str">42</span>)
@@ -214,7 +214,7 @@
         </div>
         <div class="recall-item">
           <dt><span class="recall-num">02</span> Keyword Matching (FTS5 OR)</dt>
-          <dd>SQLite FTS5 with BM25 ranking, terms joined with <strong>OR</strong> — a multi-word query like "laporan pakai tabel" matches any term, and bm25 lifts the best document. No more empty results from AND joins.</dd>
+          <dd>SQLite FTS5 with BM25 ranking, terms joined with <strong>OR</strong> — a multi-word query like "use tables in reports" matches any term, and bm25 lifts the best document. No more empty results from AND joins.</dd>
         </div>
         <div class="recall-item">
           <dt><span class="recall-num">03</span> Temporal Half-Life Decay</dt>
@@ -228,7 +228,7 @@
 
       <div class="fusion-note">
         <h3 class="fusion-title">Parallel Fusion &amp; Anti-Contradiction</h3>
-        <p>All four strategies run concurrently and fuse via <strong>weighted Reciprocal Rank Fusion</strong> (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1). Short queries are expanded with graph entities. Jaccard dedup (0.85) removes paraphrases, adaptive cliff cutoff keeps only the relevant cluster, and a hard token budget protects the context window. Rules at importance ≥ 0.9 are pinned (never pruned or consolidated away), and a similar rule ingest auto-replaces the old one — "JANGAN tabel" never coexists with "WAJIB table".</p>
+        <p>All four strategies run concurrently and fuse via <strong>weighted Reciprocal Rank Fusion</strong> (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1). Short queries are expanded with graph entities. Jaccard dedup (0.85) removes paraphrases, adaptive cliff cutoff keeps only the relevant cluster, and a hard token budget protects the context window. Rules at importance ≥ 0.9 are pinned (never pruned or consolidated away), and a similar rule ingest auto-replaces the old one — "never use tables" never coexists with "always use tables".</p>
         <p class="fusion-meta">RRF <code>k=60</code> · Jaccard Dedup <code>0.85</code> · Token Budget <code>4096</code> · Embedding Dim <code>384</code></p>
       </div>
     </div>
@@ -304,7 +304,7 @@
       <div class="bench-row">
         <div class="bench-metric"><code>luminary_core_add</code></div>
         <div class="bench-sqlite">Pin a rule into the system prompt</div>
-        <div class="bench-pg">User states a durable rule ("WAJIB table")</div>
+        <div class="bench-pg">User states a durable rule ("always use tables")</div>
       </div>
       <div class="bench-row">
         <div class="bench-metric"><code>luminary_core_remove</code></div>
@@ -388,7 +388,7 @@
       </div>
       <div class="usecase-row">
         <h3 class="usecase-title">Format rules that never get forgotten</h3>
-        <p class="usecase-desc">"WAJIB markdown table", "em dash 0", "no @ mentions" — pin them with <code>luminary_core_add</code> and they are in the system prompt of every new session, even when the user never mentions them.</p>
+        <p class="usecase-desc">"always use markdown tables", "em dash 0", "no @ mentions" — pin them with <code>luminary_core_add</code> and they are in the system prompt of every new session, even when the user never mentions them.</p>
       </div>
     </div>
   </section>
@@ -622,7 +622,7 @@
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>Four safeguards: (1) <strong>Core memory</strong> — memories tagged <code>core</code> are auto-loaded into the system prompt every session (the DB-backed equivalent of <code>MEMORY.md</code>), so durable rules are present from the very first prompt. (2) <strong>Persistent context</strong> — the top-N memories by importance are injected every turn, merged with query recall under anti-duplication. (3) <strong>Rule pinning</strong> — memories at importance ≥ 0.9 are never pruned or consolidated away. (4) <strong>Rule auto-replace</strong> — a similar rule ingest replaces the old one (anti-contradiction), so "JANGAN tabel" never coexists with "WAJIB table".</p>
+          <p>Four safeguards: (1) <strong>Core memory</strong> — memories tagged <code>core</code> are auto-loaded into the system prompt every session (the DB-backed equivalent of <code>MEMORY.md</code>), so durable rules are present from the very first prompt. (2) <strong>Persistent context</strong> — the top-N memories by importance are injected every turn, merged with query recall under anti-duplication. (3) <strong>Rule pinning</strong> — memories at importance ≥ 0.9 are never pruned or consolidated away. (4) <strong>Rule auto-replace</strong> — a similar rule ingest replaces the old one (anti-contradiction), so "never use tables" never coexists with "always use tables".</p>
         </div>
       </details>
     </div>

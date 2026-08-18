@@ -100,7 +100,7 @@ class Settings:
     llm_max_tokens: int = field(default_factory=lambda: _env_int("LUMINARY_LLM_MAX_TOKENS", 512))
     rule_keywords: str = field(default_factory=lambda: os.environ.get(
         "LUMINARY_RULE_KEYWORDS",
-        "JANGAN,WAJIB,HARUS,SELALU,DILARANG,NEVER,ALWAYS,MUST,RULE,ATURAN,JANGAN PERNAH",
+        "NEVER,ALWAYS,MUST,ALWAYS MUST,NEVER EVER,RULE,REQUIRED,MANDATORY,FORBIDDEN,DO NOT,DON'T",
     ))
     rule_importance: float = field(default_factory=lambda: _env_float("LUMINARY_RULE_IMPORTANCE", 0.9))
     rule_auto_replace: bool = field(default_factory=lambda: _env_bool("LUMINARY_RULE_AUTO_REPLACE", True))

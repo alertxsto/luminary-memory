@@ -135,7 +135,7 @@ store.
 
 **Core memory (v0.2.13+):** memories tagged `core` are auto-loaded into the
 system prompt every session — the DB-backed equivalent of Hermes' native
-`MEMORY.md`. Rules the user wants always present (e.g. "WAJIB markdown table")
+`MEMORY.md`. Rules the user wants always present (e.g. "always use markdown tables")
 should be stored with the `core` tag (or via `luminary_core_add`). Capped by
 `core_top_n` / `core_budget` (characters). Use `luminary_core_remove` to unpin.
 

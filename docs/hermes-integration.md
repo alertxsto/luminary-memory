@@ -128,7 +128,7 @@ Two safeguards keep rules accurate and non-contradictory:
 - **Rule auto-replace (anti-contradiction)**: ingesting a rule semantically
   similar to an existing one (embedding cosine ≥ `rule_auto_replace_threshold`,
   default 0.85) replaces it in place instead of stacking conflicting rows
-  (e.g. "JANGAN tabel" vs "WAJIB table").
+  (e.g. "never use tables" vs "always use tables").
 - **Rule pinning**: memories at importance ≥ 0.9 are pinned — never pruned by
   importance or the `max_memories` cap, and never deleted by consolidation.
 
