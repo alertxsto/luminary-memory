@@ -351,11 +351,17 @@ class LuminaryMemoryProvider(MemoryProvider):
             },
         ]
 
-    def save_config(self, values: dict) -> None:
-        """Persist config values to the provider config file."""
-        if not self._hermes_home:
+    def save_config(self, values: dict, hermes_home: str | None = None) -> None:
+        """Persist config values to the provider config file.
+
+        ``hermes_home`` is accepted for the Hermes dashboard contract
+        (``provider.save_config(values, hermes_home)``); when omitted, the
+        provider's own home is used.
+        """
+        home = hermes_home or self._hermes_home
+        if not home:
             raise RuntimeError("provider is not initialized; cannot save config")
-        save_config(values, self._hermes_home)
+        save_config(values, home)
         self._config.update({k: v for k, v in values.items() if k in _DEFAULTS})
 
     # ------------------------------------------------------------------ #
