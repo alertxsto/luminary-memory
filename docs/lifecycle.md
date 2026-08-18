@@ -11,7 +11,22 @@ Removes memories whose `ttl_seconds` has elapsed.
 
 ### consolidate — merge near-duplicates
 
-Clusters memories by Jaccard similarity (`LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD`, default 0.9) and merges each cluster into a single memory — keeping the longest content, summing access counts, and unioning tags.
+Clusters memories by Jaccard similarity (`LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD`, default 0.9) **or embedding-cosine similarity** (`LUMINARY_CONSOLIDATE_SEMANTIC`, default `true`) and merges each cluster into a single memory — keeping the longest content, summing access counts, and unioning tags. Semantic mode (default) merges paraphrases that token overlap would miss; it falls back to Jaccard when embeddings are missing. Disable with `LUMINARY_CONSOLIDATE_SEMANTIC=false` or `luminary-memory lifecycle --no-semantic`.
+
+### importance — auto-estimation
+
+On ingest and before each prune, each memory's importance is estimated from behavior:
+
+```
+importance = access_norm × 0.4 + recency_norm × 0.3 + centrality_norm × 0.3
+```
+
+- `access_norm` — `log1p(access_count)` normalized to the store's max.
+- `recency_norm` — `exp(-age_hours / 24h)` (fresh memories score higher).
+- `centrality_norm` — graph relation degree normalized (0 when no graph).
+
+Disable with `LUMINARY_IMPORTANCE_AUTO=false`. Pruning and the health score's
+importance dimension both use these live values.
 
 ### prune — drop low-value memories
 

@@ -46,9 +46,12 @@ Most recent first.
 
 ```bash
 luminary-memory lifecycle
+luminary-memory lifecycle --no-semantic   # Jaccard-only consolidation
 ```
 
-Runs cleanup + consolidate + prune, prints counts.
+Runs cleanup + consolidate + prune (plus importance re-estimation), prints
+counts. `--semantic/--no-semantic` toggles embedding-cosine consolidation
+(default: semantic on).
 
 ### export
 

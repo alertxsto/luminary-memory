@@ -2,7 +2,7 @@
 
 > **Tagline:** A lightweight, self-hosted memory layer for AI agents.
 
-**Current release:** v0.2.4 (health score) · **Tests:** 190+ passing · **Coverage:** 90% · **License:** Apache-2.0
+**Current release:** v0.2.5 (semantic consolidation) · **Tests:** 200+ passing · **Coverage:** 90% · **License:** Apache-2.0
 
 ---
 
@@ -102,10 +102,10 @@ Post-MVP audit hardening.
 **Goal:** Smarter memory — structure, insight, and visualization.
 
 - [ ] Knowledge graph visualization (entity relations browser)
-- [ ] Memory health score (duplicate rate, staleness, importance distribution)
+- [x] Memory health score (duplicate rate, staleness, importance distribution) — v0.2.4
 - [ ] Multi-user scoping (`user_id` per memory, per-user recall)
-- [ ] Memory importance auto-estimation (recency + access + semantic centrality)
-- [ ] Consolidation v2: semantic-aware merging (not just Jaccard token overlap)
+- [x] Memory importance auto-estimation (recency + access + semantic centrality) — v0.2.5
+- [x] Consolidation v2: semantic-aware merging (not just Jaccard token overlap) — v0.2.5
 
 ---
 

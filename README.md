@@ -98,6 +98,8 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `ttl_default_seconds` | `LUMINARY_TTL_DEFAULT_SECONDS` | `null` |
 | `prune_min_importance` | `LUMINARY_PRUNE_MIN_IMPORTANCE` | `0.2` |
 | `consolidate_jaccard_threshold` | `LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD` | `0.9` |
+| `consolidate_semantic` | `LUMINARY_CONSOLIDATE_SEMANTIC` | `true` |
+| `importance_auto` | `LUMINARY_IMPORTANCE_AUTO` | `true` |
 
 See [hermes/SKILL.md](hermes/SKILL.md) for the full provider config table (18 settings).
 
@@ -132,7 +134,7 @@ Built-in lifecycle keeps the store lean. LLM maintenance (optional) keeps it acc
 | [Lifecycle](docs/lifecycle.md) | Cleanup, consolidation, pruning, LLM maintenance |
 | [Backends](docs/backends.md) | SQLite vs pgvector |
 | [Hermes integration](docs/hermes-integration.md) | Provider, config, installer |
-| [Roadmap](ROADMAP.md) | v0.2.4 → v1.0.0 |
+| [Roadmap](ROADMAP.md) | v0.2.5 → v1.0.0 |
 | [Benchmarks](benchmarks/RESULTS.md) | 230 ms recall @ 5k, 0 LLM tokens |
 
 ---

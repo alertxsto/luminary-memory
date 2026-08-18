@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/), and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.5] - 2026-08-18
+
+### Added
+
+- **Semantic consolidation** — `consolidate(semantic=True)` merges memories by embedding-cosine similarity (default `LUMINARY_CONSOLIDATE_SEMANTIC=true`), catching paraphrases that token-overlap misses; falls back to Jaccard when embeddings are missing. CLI: `luminary-memory lifecycle --semantic/--no-semantic`.
+- **Auto importance estimation** — `lifecycle/importance.py:estimate_importance()` scores each memory from access (`log1p`), recency (24h decay), and graph centrality; applied on ingest and re-estimated before every prune (`LUMINARY_IMPORTANCE_AUTO=true`). Pruning and the health score's importance dimension now use live values.
+
+### Changed
+
+- `run_lifecycle()` now also re-estimates importances (returns `reestimated` count).
+
 ## [0.2.4] - 2026-08-18
 
 ### Added

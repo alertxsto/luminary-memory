@@ -42,8 +42,8 @@ See [backends.md](backends.md).
 Three maintenance passes, orchestrated by `run_lifecycle()`:
 
 - **cleanup** — remove TTL-expired memories.
-- **consolidate** — merge near-duplicates (Jaccard ≥ threshold).
-- **prune** — drop low-importance or least-recently-used memories.
+- **consolidate** — merge near-duplicates (Jaccard or embedding-cosine, semantic by default).
+- **prune** — drop low-importance or least-recently-used memories (importance auto-estimated from access, recency, centrality).
 
 Optional **LLM maintenance** (`run_maintenance()`, or provider `auto_maintain`)
 reviews the whole store and keeps/updates/deletes facts semantically.
