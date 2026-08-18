@@ -86,11 +86,15 @@ client.run_lifecycle()
 
 # LLM review: keep current facts, update changed ones, delete stale/duplicates
 client.run_maintenance()   # requires an LLM enricher (ingest_llm)
+
+# health check: 0-100 score with per-dimension breakdown + recommendations
+report = client.health_score()
 ```
 
 In the Hermes provider, `auto_maintain: true` (plus `ingest_llm: true`) runs
 `run_maintenance()` automatically at every session end — no manual trigger
-needed. Results are logged to `~/.hermes/luminary/luminary.log`.
+needed. Results are logged to `~/.hermes/luminary/luminary.log`. CLI:
+`luminary-memory health` (human bar) or `--json`.
 
 ## Configuration — Tweaks
 
