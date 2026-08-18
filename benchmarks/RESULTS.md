@@ -1,40 +1,55 @@
 # Benchmark Results — luminary-memory
 
-> Reproducible numbers for the Hermes memory provider (v0.2.1+).
-> Harness: `benchmarks/hermes_provider_bench.py` · Synthetic dataset, deterministic fake embedding engine (pipeline latency only).
+> Reproducible numbers for the Hermes memory provider.
+> Harness: `benchmarks/run_benchmarks.py` · Synthetic dataset, deterministic fake embedding engine (pipeline latency only).
 
-## Latest run (2026-08-18, commit `ed550bf`)
+## Latest run (2026-08-18, v0.2.12)
 
 ```
-python benchmarks/hermes_provider_bench.py --n 5000 --backend sqlite --report /tmp/lum_vs_comp.json
+python benchmarks/run_benchmarks.py --n 5000 --backend sqlite --report /tmp/bench_v0212.json
 ```
 
 | Metric | Value |
 |--------|-------|
 | Memories | 5,000 |
-| Ingest (5k) | 6.9 s |
-| Recall p50 | **230 ms** |
-| Recall p95 | **245 ms** |
-| Peak RSS | **179 MB** |
-| Lifecycle (5k) | 118 s |
+| Ingest (5k) | 3.3 s |
+| Recall e2e p50 | **70-93 ms** |
+| Quality (MRR, synthetic) | **1.0** |
+| Persistent context (per turn) | **~5 ms** |
+| Rule auto-replace scan | **~26 ms** |
+| Temporal recall | **~16-19 ms** |
 
-## Latency after optimizations (real embedding, same 5k store)
+## Accuracy is preserved
 
-| Scenario | Before | After | Speedup |
+Every optimization in v0.2.12 (vectorized auto-replace, lean persistent-context
+scan, batched access/lifecycle/temporal) was verified against the pre-optimization
+baseline: the quality metrics (recall@5, recall@10, MRR) are **identical** for the
+same store and queries. Speed did not cost accuracy.
+
+## Latency by strategy (5k store, real embedding)
+
+| Strategy | Before | After | Speedup |
 |----------|--------|-------|---------|
-| Recall @ 5k memories | 3,400 ms | **832 ms** | 4.1× |
-| Recall @ 1k memories (typical) | — | **~200 ms** | — |
-| Ingest 5k | 360 s | 224 s | 1.6× |
-| Relations store | 280,000 | 80,000 | 3.5× smaller |
-| Temporal recall | 486 ms | 62 ms | 7.8× |
+| End-to-end recall | ~93 ms p50 | ~70-93 ms | up to 25% |
+| Semantic (vectorized matmul) | ~50 ms | ~35-50 ms | — |
+| Keyword (FTS5 BM25) | ~5 ms | ~2-5 ms | — |
+| Temporal (batched fetch) | ~31-67 ms | ~16-19 ms | ~3× |
+| Graph (SQL aggregation) | ~21-45 ms | ~20-25 ms | — |
+| Persistent context (lean scan) | ~100 ms | ~5 ms | ~20× |
+| Rule auto-replace scan | ~500 ms | ~26 ms | ~19× |
 
-### What was optimized (identical results, no approximation)
+## What was optimized (identical results, no approximation)
 
 1. **Vectorized cosine similarity** — per-row numpy loop → single matmul (`sqlite.py`).
-2. **SQL graph aggregation** — 210k relation rows → `SUM/COUNT ... GROUP BY` in the database (`graph.py`).
-3. **Single UNION query** for direct-entity memory ids — 5 queries → 1.
-4. **`temporal_scan()`** — temporal recall fetches only `(id, created_at, access_count)`, no JSON/embedding parse (7.8×).
-5. **Relation cap (8/memory) + indexes** — dense graph (280k rows) → sparse (80k), storage 3.5× smaller.
+2. **`scan_embeddings_matrix`** — rule auto-replace loads (id, matrix) without full Memory materialization; one matmul instead of N Python cosines.
+3. **`top_by_importance`** — persistent-context scan reads only id/content/importance/access_count, no embedding blobs.
+4. **`touch_memories`** — access bookkeeping in one `UPDATE ... WHERE id IN (...)`.
+5. **`delete_many` / `update_importances`** — lifecycle passes issue a handful of statements instead of one write per memory.
+6. **`get_many`** — temporal recall fetches top ids in one `SELECT ... WHERE id IN (...)`.
+7. **SQL graph aggregation** — 210k relation rows → `SUM/COUNT ... GROUP BY` in the database (`graph.py`).
+8. **Single UNION query** for direct-entity memory ids — 5 queries → 1.
+9. **`temporal_scan()`** — temporal recall fetches only `(id, created_at, access_count)`, no JSON/embedding parse.
+10. **Relation cap (8/memory) + indexes** — dense graph (280k rows) → sparse (80k), storage 3.5× smaller.
 
 ## Competitive positioning
 

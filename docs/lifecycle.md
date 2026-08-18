@@ -36,6 +36,16 @@ When the store exceeds `max_memories` (default 1000), the oldest and
 lowest-importance memories are pruned first, keeping the store under a hard
 size cap even if importance-based pruning never fires.
 
+**Rule pinning (v0.2.11+):** memories at importance ≥ 0.9 are pinned and never
+pruned — neither by importance threshold nor by the `max_memories` cap. This
+protects durable rules (e.g. "WAJIB markdown table") from being evicted.
+
+### Batched passes (v0.2.12+)
+
+Prune and importance re-estimation are batched at the backend level
+(`delete_many`, `update_importances`), so lifecycle runs issue a handful of
+statements instead of one write per memory — important on large stores.
+
 ## `run_maintenance()`, LLM-driven curation (v0.2.2+)
 
 Sends the store to the configured LLM enricher, which reviews every memory and

@@ -119,6 +119,16 @@ Provider config lives in `~/.hermes/luminary/config.json` (auto-created,
 | `recall_indicator` | `true` | Show `🌙 Luminary, recalled N memories` |
 | `retain_indicator` | `true` | Show `🌙 Luminary, memory saved` |
 | `backend` | `sqlite` | `sqlite` (zero config) or `pgvector` (scale) |
+| `context_top_n` | `8` | **Persistent context**, top-N important memories injected every turn (always in context, independent of query) |
+| `context_budget` | `2000` | Max tokens of persistent context per turn |
+| `context_min_importance` | `0.0` | Only inject memories at/above this importance into persistent context |
+
+**Persistent context (v0.2.11+):** the system prompt is byte-stable for prompt
+caching, so the provider rebuilds the top-N-by-importance block **every turn**
+in `prefetch()` and merges it with query recall under anti-duplication. Durable
+rules and critical facts are always in context, even when the current query
+never mentions them — the agent cannot "forget" a rule that exists in the
+store.
 
 **LLM memory curation:** with `ingest_llm: true`, the enricher evaluates each
 turn and keeps only durable facts, greetings, chit-chat, and trivial
@@ -194,7 +204,7 @@ bash ~/.hermes/scripts/restart-bots.sh
 ### Manual
 
 ```bash
-pip install "luminary-memory[hermes]>=0.2.11"
+pip install "luminary-memory[hermes]>=0.2.12"
 # config.yaml → memory: provider: luminary
 mkdir -p ~/.hermes/hooks/luminary-activity
 cp hermes/hooks/luminary-activity/*.py hermes/hooks/luminary-activity/HOOK.yaml ~/.hermes/hooks/luminary-activity/

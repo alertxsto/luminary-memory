@@ -17,15 +17,16 @@
 - [x] Hapus entri [135] "JANGAN tabel" yang kontradiksi [168] "WAJIB table"
 - [x] Naikin importance aturan kritis ke 0.95
 
-### T3. Auto-boost aturan di ingest (BARU)
-- [ ] Enricher prompt: kasih `importance: 0.9+` otomatis untuk memory berisi instruksi/aturan ("JANGAN", "WAJIB", "HARUS", "user meminta")
-- [ ] `_parse_enrichment_payload` deteksi keyword aturan -> set importance tinggi
-- [ ] Test: ingest "JANGAN pake em dash" -> importance >= 0.9
+### T3. Auto-boost aturan di ingest (DONE, v0.2.11)
+- [x] Enricher prompt: kasih `importance: 0.9+` otomatis untuk memory berisi instruksi/aturan ("JANGAN", "WAJIB", "HARUS", "user meminta")
+- [x] Rule keywords di-check hanya di summary terkurasi (raw transcript gak di-flag)
+- [x] Test: ingest rule -> importance >= 0.9 (hanya bila summary memang instruksi)
 
-### T4. Rule pinning (BARU)
-- [ ] Opsi `LUMINARY_PIN_RULES=true`: memory dengan importance >= 0.9 di-pin (gak ke-prune, gak ke-consolidate, gak ke-turunin importance)
-- [ ] Lifecycle prune skip pinned
-- [ ] Consolidate skip pinned (aturan gak boleh di-merge)
+### T4. Rule pinning (DONE, v0.2.11)
+- [x] Memory dengan importance >= 0.9 di-pin (gak ke-prune, gak ke-consolidate)
+- [x] Lifecycle prune skip pinned
+- [x] Consolidate skip pinned (aturan gak boleh di-merge)
+- [x] Test: lifecycle gak hapus pinned rules
 
 ---
 
@@ -44,13 +45,15 @@
 
 ## Fase 3 — Store Hygiene (anti-bloat, anti-stale)
 
-### T7. Auto-archive aturan lama (BARU)
-- [ ] Pas ingest aturan baru yang mirip aturan lama (semantic cosine >= 0.8), REPLACE yang lama (bukan nambah) — anti-kontradiksi otomatis
-- [ ] Test: ingest "WAJIB table" saat ada "JANGAN tabel" -> yang lama ke-replace/hapus
+### T7. Auto-archive aturan lama (DONE, v0.2.11)
+- [x] Pas ingest aturan baru yang mirip aturan lama (semantic cosine >= 0.85), REPLACE yang lama (bukan nambah) — anti-kontradiksi otomatis
+- [x] Vectorized scan (42× lebih cepat di store besar)
+- [x] Test: ingest "WAJIB table" saat ada "JANGAN tabel" -> yang lama ke-replace/hapus
 
-### T8. Curation prompt: aturan vs fakta (BARU)
-- [ ] Enricher bedain: aturan (instruction, "JANGAN/WAJIB") -> importance 0.9, fakta biasa -> importance normal
-- [ ] Work-log tetap tolak (udah ada)
+### T8. Curation prompt: aturan vs fakta (DONE, v0.2.11)
+- [x] Enricher bedain: aturan (instruction, "JANGAN/WAJIB") -> importance 0.9, fakta biasa -> importance normal
+- [x] Rule keywords di-check HANYA di summary (bukan raw text)
+- [x] Work-log tetap tolak (udah ada)
 
 ### T9. Health score: kontradiksi dimension (BARU)
 - [ ] Deteksi entri kontradiktif (semantic mirip tapi isi berlawanan) -> warning di health
@@ -60,15 +63,15 @@
 
 ## Fase 4 — Tooling & Docs
 
-### T10. Fix tool `luminary_recall` cross-thread (BARU)
-- [ ] Bug: tool wrapper recall error "SQLite objects created in a thread" — client dibuat di thread beda
-- [ ] Fix: thread-safe client factory di tool wrapper
+### T10. Fix tool `luminary_recall` cross-thread (DONE, v0.2.11)
+- [x] Bug: tool wrapper recall error "SQLite objects created in a thread" — client dibuat di thread beda
+- [x] Fix: thread-safe client factory + thread-local SQLite connections
 
 ### T11. Docs & skill update
-- [ ] README architecture: importance boost + rule pinning
-- [ ] docs/recall.md: boost, pin, multilingual
-- [ ] SKILL.md: aturan kritis selalu recall
-- [ ] CHANGELOG + ROADMAP v0.2.11+
+- [x] README architecture: importance boost + rule pinning + persistent context
+- [x] docs/recall.md: boost, pin, persistent context, performance
+- [x] docs/hermes-integration.md: persistent context + rule hygiene config
+- [x] SKILL.md, website, CHANGELOG + ROADMAP v0.2.12
 
 ---
 

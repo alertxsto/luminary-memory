@@ -40,14 +40,24 @@ def run_lifecycle(
 
         memories = backend.all()
         max_access = max((int(m.access_count or 0) for m in memories), default=1)
+        changed: list[tuple[float, int]] = []
         for m in memories:
             if float(getattr(m, "importance", 0.0) or 0.0) >= pin_threshold:
                 continue
             new_imp = estimate_importance(m, max_access=max_access)
             if abs(float(m.importance or 0) - new_imp) > 1e-6:
-                m.importance = new_imp
-                backend.update(m)  # type: ignore[arg-type]
-                reestimated += 1
+                changed.append((new_imp, m.id))  # type: ignore[arg-type]
+        if changed:
+            bulk = getattr(backend, "update_importances", None)
+            if bulk is not None:
+                bulk(changed)
+            else:
+                for new_imp, mid in changed:
+                    m = backend.get(mid)
+                    if m is not None:
+                        m.importance = new_imp
+                        backend.update(m)
+            reestimated = len(changed)
     start = time.monotonic()
     result = {
         "cleanup": int(cleanup_expired(backend)),

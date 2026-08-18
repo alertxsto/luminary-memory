@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.12] - 2026-08-18
+
+### Added
+
+- **Vectorized rule auto-replace** — the anti-contradiction scan now uses a single numpy matmul over stored embeddings (`scan_embeddings_matrix`), ~40× faster than the per-memory Python cosine loop on a 5k store, with identical results.
+- **Lean persistent-context scan** — the per-turn top-N-by-importance build (`top_by_importance`) reads only `id/content/importance/access_count` columns, never embedding blobs: ~100 ms → ~5 ms on a 5k store.
+- **Batched access bookkeeping** — recalled memories are marked accessed in one `UPDATE ... WHERE id IN (...)` (`touch_memories`) instead of one write per result row.
+- **Batched lifecycle passes** — prune uses `delete_many`, importance re-estimation uses `update_importances`; one statement per pass instead of one write per memory.
+- **Batched temporal fetch** — temporal recall fetches top ids with one `SELECT ... WHERE id IN (...)` (`get_many`) instead of N per-id queries: ~30-67 ms → ~16-19 ms on 5k.
+
+### Performance (5k store, real ONNX embeddings)
+
+| Stage | Before | After |
+|-------|--------|-------|
+| Persistent context (per turn) | ~100 ms | ~5 ms (20×) |
+| Rule auto-replace scan | ~500 ms | ~26 ms (19×) |
+| Temporal recall | ~30-67 ms | ~16-19 ms |
+| End-to-end recall | ~93 ms p50 | ~70-92 ms p50 |
+
+Accuracy is unchanged: benchmark quality metrics (recall@5 / recall@10 / MRR) are byte-identical before and after optimization.
+
+### Fixed
+
+- No functional changes — all optimizations verified to preserve recall results exactly.
+
 ## [0.2.11] - 2026-08-18
 
 ### Added

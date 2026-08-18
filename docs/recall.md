@@ -1,5 +1,26 @@
 # Recall
 
+## Persistent context (v0.2.11+)
+
+In the Hermes provider, recall is not just a ranked list — the top-N most
+important memories (durable rules, critical facts) are injected into context
+**every turn**, regardless of query match, and merged with the query-recall
+block under anti-duplication. This guarantees the agent never "forgets" a rule
+that exists in the store, even when the current query does not mention it.
+
+```
+Key memories:                          <- persistent block (top-N by importance)
+- <rule/fact 1>
+- <rule/fact 2>
+
+# Luminary Memory (persistent cross-session context)   <- query-recall block
+- <query-relevant memory>              <- skips anything already injected above
+```
+
+Anti-duplication: memory ids injected by the persistent block are tracked per
+turn and skipped by the query-recall block, so no memory appears twice in one
+turn's context.
+
 ## Four strategies
 
 `recall(query)` runs four complementary strategies in parallel and fuses them. No single query style dominates.
@@ -87,3 +108,25 @@ Results are truncated to a token budget (`LUMINARY_TOKEN_BUDGET`, default 4096) 
 | `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | lower = more aggressive dedup |
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | caps total injected tokens |
 | `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | quality/speed tradeoff |
+| `importance_recall_boost` | `LUMINARY_IMPORTANCE_RECALL_BOOST` | ranking bonus for memories at importance ≥ 0.8 (default 1.0) |
+| `context_top_n` | `LUMINARY_CONTEXT_TOP_N` | top-N important memories injected every turn (provider, default 8) |
+| `context_budget` | `LUMINARY_CONTEXT_BUDGET` | max tokens of persistent context (provider, default 2000) |
+| `context_min_importance` | `LUMINARY_CONTEXT_MIN_IMPORTANCE` | minimum importance for persistent-context injection (provider, default 0.0) |
+
+## Performance
+
+Recall runs four strategies in parallel and fuses them. On a 5k-memory store
+(SQLite, local CPU embeddings):
+
+| Stage | Typical latency |
+|-------|-----------------|
+| End-to-end recall | ~70–95 ms (p50), deterministic quality (MRR 1.0 on synthetic) |
+| Semantic (vectorized cosine matmul) | ~35–50 ms |
+| Keyword (FTS5 BM25) | ~2–5 ms |
+| Temporal (batched fetch) | ~16–20 ms |
+| Graph (SQL aggregation) | ~20–25 ms |
+| Persistent context (lean scan, top-8) | ~5 ms |
+
+Per-turn bookkeeping (access-count bump) is batched into one UPDATE statement,
+and the persistent-context scan reads only `id/content/importance/access_count`
+columns — never embedding blobs — so agent turns stay cheap.

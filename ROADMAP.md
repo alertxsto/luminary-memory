@@ -2,7 +2,7 @@
 
 > **Tagline:** A lightweight, self-hosted memory layer for AI agents.
 
-**Current release:** v0.2.11 (smarter recall + memory fixes) · **Tests:** 200+ passing · **Coverage:** 91% · **License:** Apache-2.0
+**Current release:** v0.2.12 (persistent context + rule hygiene + performance) · **Tests:** 200+ passing · **Coverage:** 93% · **License:** Apache-2.0
 
 ---
 
@@ -24,17 +24,20 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 
 | Area | Status |
 |------|--------|
-| Core library (ingest / recall / lifecycle) | ✅ Done (v0.2.10) |
+| Core library (ingest / recall / lifecycle) | ✅ Done (v0.2.12) |
 | Backends (SQLite default, pgvector optional) | ✅ Done (v0.2.9) |
-| Python API (`MemoryClient`) | ✅ Done (v0.2.10) |
+| Python API (`MemoryClient`) | ✅ Done (v0.2.12) |
 | CLI (`luminary-memory`) | ✅ Done (v0.2.7) |
-| Hermes memory provider | ✅ Done (v0.2.1, enhanced v0.2.10) |
+| Hermes memory provider | ✅ Done (v0.2.1, enhanced v0.2.11) |
 | Dashboard settings (22 fields) | ✅ Done (v0.2.10) |
 | Recall quality (weighted fusion + query expansion) | ✅ Done (v0.2.10) |
+| Persistent context (per-turn rule injection) | ✅ Done (v0.2.11) |
+| Rule hygiene (pinning, auto-replace, summary-only) | ✅ Done (v0.2.11) |
+| Performance (vectorized scans, batched writes) | ✅ Done (v0.2.12) |
 | Store hardening (max cap, dedup, selective curation) | ✅ Done (v0.2.10) |
-| Website | ✅ Done (v0.2.10 redesign) |
-| Documentation | ✅ Done (v0.2.10) |
-| Test coverage | ✅ 91% total |
+| Website | ✅ Done (v0.2.12 redesign) |
+| Documentation | ✅ Done (v0.2.12) |
+| Test coverage | ✅ 93% total |
 
 ---
 
@@ -55,6 +58,8 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 | v0.2.8 | 2026-08-18 | Dashboard save fix, docs 20/20, website polish |
 | v0.2.9 | 2026-08-18 | pgvector CI (PR #2), contributor tooling (triage/stale/check) |
 | v0.2.10 | 2026-08-18 | Smarter recall (weighted fusion + query expansion), store cap, memory fixes |
+| v0.2.11 | 2026-08-18 | Persistent context injection, rule pinning + auto-replace, thread-safe recall, store hygiene |
+| v0.2.12 | 2026-08-18 | Performance: vectorized rule auto-replace, lean persistent-context scan, batched access bookkeeping, batched lifecycle passes, batched temporal fetch |
 
 ---
 

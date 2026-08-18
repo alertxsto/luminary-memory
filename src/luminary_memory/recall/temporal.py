@@ -58,7 +58,20 @@ def temporal_recall(
             scored.append((mid, recency * popularity))
         scored.sort(key=lambda x: -x[1])
         top = scored if limit is None else scored[:limit]
-        out: list[tuple] = []
+        if not top:
+            return []
+        # Batch fetch the top ids (one SELECT) instead of N per-id queries.
+        ids = [mid for mid, _ in top]
+        get_many = getattr(backend, "get_many", None)
+        if get_many is not None:
+            by_id = get_many(ids)
+            out: list[tuple] = []
+            for mid, score in top:
+                mem = by_id.get(mid)
+                if mem is not None:
+                    out.append((mem, float(score), "temporal"))
+            return out
+        out = []
         for mid, score in top:
             mem = backend.get(mid)
             if mem is not None:

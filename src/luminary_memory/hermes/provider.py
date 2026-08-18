@@ -511,6 +511,10 @@ class LuminaryMemoryProvider(MemoryProvider):
 
         Returns an empty string when nothing qualifies. Tracks injected ids
         for anti-duplication with prefetch recall.
+
+        Uses a lightweight backend scan (id/content/importance/access_count
+        only — no embedding blobs) so this per-turn build stays fast even on
+        a large store.
         """
         if not self._client:
             return ""
@@ -518,15 +522,19 @@ class LuminaryMemoryProvider(MemoryProvider):
             top_n = int(self._config.get("context_top_n", 8))
             budget = int(self._config.get("context_budget", 2000))
             min_imp = float(self._config.get("context_min_importance", 0.0))
-            mems = self._client.list(limit=0) or []
-            # Sort by importance desc, then access count desc
-            mems.sort(
-                key=lambda m: (
-                    float(getattr(m, "importance", 0.0) or 0.0),
-                    int(getattr(m, "access_count", 0) or 0),
-                ),
-                reverse=True,
-            )
+            top = getattr(self._client.backend, "top_by_importance", None)
+            if top is not None:
+                mems = top(top_n, min_importance=min_imp)
+            else:
+                mems = self._client.list(limit=0) or []
+                # Sort by importance desc, then access count desc
+                mems.sort(
+                    key=lambda m: (
+                        float(getattr(m, "importance", 0.0) or 0.0),
+                        int(getattr(m, "access_count", 0) or 0),
+                    ),
+                    reverse=True,
+                )
             picked: list[str] = []
             picked_ids: set[int] = set()
             total = 0

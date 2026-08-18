@@ -21,6 +21,20 @@ class MemoryBackend(ABC):
         """Batch insert; default falls back to per-item add. Subclasses may override."""
         return [self.add(m) for m in memories]
 
+    def delete_many(self, ids: list[int]) -> None:
+        """Batch delete; default falls back to per-item delete. Subclasses may override."""
+        for _id in ids:
+            self.delete(_id)
+
+    def get_many(self, ids: list[int]) -> dict[int, Memory]:
+        """Batch get; default falls back to per-item get. Subclasses may override."""
+        out: dict[int, Memory] = {}
+        for _id in ids:
+            m = self.get(_id)
+            if m is not None:
+                out[_id] = m
+        return out
+
     @abstractmethod
     def keyword_search(self, query: str, limit: int | None) -> list[tuple[Memory, float]]: ...
     @abstractmethod

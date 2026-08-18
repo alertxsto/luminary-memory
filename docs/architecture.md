@@ -7,10 +7,12 @@ agent answers, ingest after, lifecycle in the background.
 
 ```
 ingest(text) ──► whitelist filter ──► (LLM enrich, optional) ──► embed ──► backend
-                                                                          │
+                                                                           │
 recall(query) ──► query expansion ──► 4 strategies ──► weighted RRF ──► adaptive cutoff ──► dedup ──► budget ──► results
-                                        │
-lifecycle() ──► cleanup (TTL) ──► consolidate (semantic) ──► prune (importance) ──► max_memories cap
+                                         │
+persistent context (provider) ──► top-N by importance every turn ──► merged with recall, anti-duplicated
+                                         │
+lifecycle() ──► cleanup (TTL) ──► consolidate (semantic) ──► prune (importance + pinned-rules exempt) ──► max_memories cap
 ```
 
 ## Ingest
@@ -24,14 +26,24 @@ lifecycle() ──► cleanup (TTL) ──► consolidate (semantic) ──► p
 
 1. **Query expansion**, short queries are enriched with co-occurring graph entities before embedding (best-effort).
 2. **Four strategies run in parallel:**
-   - *semantic*, embedding similarity.
+   - *semantic*, embedding similarity (vectorized cosine matmul).
    - *keyword*, FTS5 / BM25 term match.
-   - *temporal*, recency decay × access popularity.
-   - *graph*, entity co-occurrence traversal.
+   - *temporal*, recency decay × access popularity (batched top-id fetch, no N+1).
+   - *graph*, entity co-occurrence traversal (SQL aggregation).
 3. **Weighted RRF fusion**, reciprocal-rank fusion with per-strategy weights (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1) combines the four ranked lists into one.
-4. **Adaptive cutoff** (cliff detection), cuts at the first steep score drop (default 45%) so a sparse store returns only the relevant cluster instead of padding to the limit.
-5. **Dedup**, Jaccard similarity removes near-duplicates.
-6. **Budget**, results truncated to a token budget so the context window stays safe.
+4. **Importance boost**, memories at importance ≥ 0.8 get a ranking bonus (`importance_recall_boost`), lifting durable rules above weak-but-recent noise.
+5. **Adaptive cutoff** (cliff detection), cuts at the first steep score drop (default 45%) so a sparse store returns only the relevant cluster instead of padding to the limit.
+6. **Dedup**, Jaccard similarity removes near-duplicates.
+7. **Budget**, results truncated to a token budget so the context window stays safe.
+8. **Batched access bookkeeping**, recalled memories are marked accessed with one batched UPDATE (not N writes).
+
+## Persistent context (Hermes provider)
+
+The system prompt is byte-stable for prompt caching, so mid-session memories
+never reach the model through it. The provider therefore builds the top-N
+by-importance block **every turn** in `prefetch()` (lean backend scan, no
+embedding decode), merges it with the query-recall block, and deduplicates so
+nothing appears twice in one turn.
 
 ## Backends
 
@@ -47,8 +59,8 @@ See [backends.md](backends.md).
 Three maintenance passes, orchestrated by `run_lifecycle()`:
 
 - **cleanup**, remove TTL-expired memories.
-- **consolidate**, merge near-duplicates (Jaccard or embedding-cosine, semantic by default).
-- **prune**, drop low-importance or least-recently-used memories (importance auto-estimated from access, recency, centrality).
+- **consolidate**, merge near-duplicates (Jaccard or embedding-cosine, semantic by default). Pinned rules (importance ≥ 0.9) are never deleted as duplicates.
+- **prune**, drop low-importance or least-recently-used memories (importance auto-estimated from access, recency, centrality). Pinned rules are exempt. Prune and importance re-estimation are batched at the backend level.
 
 Optional **LLM maintenance** (`run_maintenance()`, or provider `auto_maintain`)
 reviews the whole store and keeps/updates/deletes facts semantically.

@@ -113,6 +113,16 @@ class SQLiteBackend(MemoryBackend):
         row = self.conn.execute("SELECT * FROM memories WHERE id = ?", (id,)).fetchone()
         return self._row_to_memory(row) if row else None
 
+    def get_many(self, ids: list[int]) -> dict[int, Memory]:
+        """Batch get — one SELECT for many ids instead of N per-id queries."""
+        if not ids:
+            return {}
+        ph = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"SELECT * FROM memories WHERE id IN ({ph})", ids
+        ).fetchall()
+        return {int(r["id"]): self._row_to_memory(r) for r in rows}
+
     def update(self, m: Memory) -> None:
         if m.id is None:
             raise ValueError("cannot update a memory without an id")
@@ -140,6 +150,15 @@ class SQLiteBackend(MemoryBackend):
         # Relations reference memories via FK; delete them first (manual cascade).
         self.conn.execute("DELETE FROM relations WHERE memory_id = ?", (id,))
         self.conn.execute("DELETE FROM memories WHERE id = ?", (id,))
+        self.conn.commit()
+
+    def delete_many(self, ids: list[int]) -> None:
+        """Batch delete (relations + memories) in two statements."""
+        if not ids:
+            return
+        ph = ",".join("?" for _ in ids)
+        self.conn.execute(f"DELETE FROM relations WHERE memory_id IN ({ph})", ids)
+        self.conn.execute(f"DELETE FROM memories WHERE id IN ({ph})", ids)
         self.conn.commit()
 
     def all(self) -> list[Memory]:
@@ -197,6 +216,32 @@ class SQLiteBackend(MemoryBackend):
             ).fetchall()
         return [self._row_to_memory(r) for r in rows]
 
+    def top_by_importance(self, top_n: int, min_importance: float = 0.0) -> list[Memory]:
+        """Top-N memories by importance (desc), then access count (desc).
+
+        Lightweight scan: only reads the columns persistent-context needs
+        (id, content, importance, access_count) — never the embedding blob,
+        which is the bulk of every row. Called on every provider turn, so
+        avoiding a full SELECT * + numpy decode of the whole store matters.
+        """
+        rows = self.conn.execute(
+            "SELECT id, content, importance, access_count FROM memories "
+            "WHERE importance >= ? "
+            "ORDER BY importance DESC, access_count DESC, id DESC "
+            "LIMIT ?",
+            (float(min_importance), int(max(0, top_n) or 0) or 1),
+        ).fetchall()
+        out: list[Memory] = []
+        for r in rows:
+            m = Memory(
+                id=int(r["id"]),
+                content=str(r["content"] or ""),
+                importance=float(r["importance"] or 0.0),
+                access_count=int(r["access_count"] or 0),
+            )
+            out.append(m)
+        return out
+
     def temporal_scan(self, limit: int | None = None) -> list[tuple[int, str, int]]:
         """Lightweight rows (id, created_at, access_count) for temporal scoring.
 
@@ -208,6 +253,67 @@ class SQLiteBackend(MemoryBackend):
             f"SELECT id, created_at, access_count FROM memories{limit_sql}"
         ).fetchall()
         return [(int(r["id"]), str(r["created_at"]), int(r["access_count"] or 0)) for r in rows]
+
+    def scan_embeddings(self) -> tuple[list[int], list[list[float]]]:
+        """Lightweight (id, embedding) pairs for vectorized scans.
+
+        Only reads the embedding blob (no JSON/tags/content decode), so the
+        rule auto-replace scan can stay vectorized on large stores without
+        materializing full Memory objects for every row.
+        """
+        rows = self.conn.execute(
+            "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL"
+        ).fetchall()
+        ids = [int(r["id"]) for r in rows]
+        vecs = [np.frombuffer(r["embedding"], dtype=np.float32).tolist() for r in rows]
+        return ids, vecs
+
+    def scan_embeddings_matrix(self) -> tuple[list[int], np.ndarray]:
+        """(id list, N×D float32 matrix) for batched cosine scans.
+
+        Faster than :meth:`scan_embeddings` for large stores: stacks the raw
+        embedding blobs into one matrix without an intermediate Python list
+        of lists, so the rule auto-replace scan stays a single matmul.
+        """
+        rows = self.conn.execute(
+            "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL"
+        ).fetchall()
+        if not rows:
+            return [], np.empty((0, 0), dtype=np.float32)
+        ids = [int(r["id"]) for r in rows]
+        mat = np.vstack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows])
+        return ids, mat
+
+    def touch_memories(self, ids: list[int]) -> None:
+        """Bump access_count + last_accessed_at for *ids* in one statement.
+
+        Called after a recall to mark which memories were surfaced. Batches
+        the per-memory access bookkeeping that would otherwise be one
+        ``UPDATE`` per result row (N writes per turn).
+        """
+        if not ids:
+            return
+        import time
+
+        now = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+        ph = ",".join("?" for _ in ids)
+        self.conn.execute(
+            f"UPDATE memories SET access_count = access_count + 1, "
+            f"last_accessed_at = ? "
+            f"WHERE id IN ({ph})",
+            (now, *ids),
+        )
+        self.conn.commit()
+
+    def update_importances(self, pairs: list[tuple[float, int]]) -> None:
+        """Bulk-update importance for (importance, id) pairs in one pass."""
+        if not pairs:
+            return
+        self.conn.executemany(
+            "UPDATE memories SET importance = ? WHERE id = ?",
+            [(float(imp), int(_id)) for imp, _id in pairs],
+        )
+        self.conn.commit()
 
     def keyword_search(self, query: str, limit: int | None = 10) -> list[tuple[Memory, float]]:
         safe = _sanitize_fts_query(query)

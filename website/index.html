@@ -69,7 +69,7 @@
     <div class="hero-inner reveal-on-scroll">
       <div class="eyebrow">
         <span class="eyebrow-dot" aria-hidden="true"></span>
-        <span>v0.2.10 · Self-Hosted Memory Layer · 91% Test Coverage</span>
+        <span>v0.2.12 · Self-Hosted Memory Layer · 93% Test Coverage</span>
       </div>
 
       <h1 class="hero-title">
@@ -153,9 +153,9 @@
         <p class="stat-sub">Retrieval runs locally via CPU ONNX embeddings. You never burn API tokens to search memory.</p>
       </div>
       <div class="stat-card">
-        <span class="stat-num">~200<em>ms</em></span>
-        <h3 class="stat-label">End-to-End Recall (p50)</h3>
-        <p class="stat-sub">Measured on 1,000-memory stores. 4 parallel strategies fused in under a quarter-second.</p>
+        <span class="stat-num">~70<em>ms</em></span>
+        <h3 class="stat-label">End-to-End Recall (p50, 5k store)</h3>
+        <p class="stat-sub">Measured on 5,000-memory stores. 4 parallel strategies fused, deterministic quality (MRR 1.0 on synthetic).</p>
       </div>
       <div class="stat-card">
         <span class="stat-num">4</span>
@@ -224,12 +224,12 @@
       </div>
       <div class="bench-row">
         <div class="bench-metric">Recall latency, 1k store</div>
-        <div class="bench-sqlite">~200 ms p50 (real ONNX on CPU)</div>
+        <div class="bench-sqlite">~10 ms p50 (real ONNX on CPU)</div>
         <div class="bench-pg bench-pg-missing">not yet benchmarked</div>
       </div>
       <div class="bench-row">
         <div class="bench-metric">Recall latency, 5k store</div>
-        <div class="bench-sqlite">230 ms p50 (pipeline) / 832 ms (real ONNX)</div>
+        <div class="bench-sqlite">~70 ms p50 (real ONNX, vectorized)</div>
         <div class="bench-pg bench-pg-missing">not yet benchmarked</div>
       </div>
       <div class="bench-row">
@@ -456,7 +456,7 @@
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>Two layers keep the store lean: deterministic lifecycle passes (<code>run_lifecycle()</code>) that expire TTLs, consolidate near-duplicates via semantic cosine clustering, and prune low-importance entries (&lt;0.2); and an optional LLM maintenance review (<code>run_maintenance()</code>) that cleans obsolete facts at session end.</p>
+          <p>Two layers keep the store lean: deterministic lifecycle passes (<code>run_lifecycle()</code>) that expire TTLs, consolidate near-duplicates via semantic cosine clustering, and prune low-importance entries (&lt;0.2); and an optional LLM maintenance review (<code>run_maintenance()</code>) that cleans obsolete facts at session end. Rule pinning ensures durable rules survive every pass.</p>
         </div>
       </details>
 
@@ -486,7 +486,17 @@
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>Configure <code>memory.provider=luminary</code> in your Hermes agent settings. The provider automatically performs local fused recall on every conversational turn (consuming zero LLM tokens) and triggers automatic store maintenance when the session closes.</p>
+          <p>Configure <code>memory.provider=luminary</code> in your Hermes agent settings. The provider performs local fused recall on every conversational turn (zero LLM tokens), injects the top-N important memories into context every turn as persistent context (so durable rules never fall out of context), and triggers automatic store maintenance when the session closes.</p>
+        </div>
+      </details>
+
+      <details class="faq-item">
+        <summary class="faq-question">
+          <span>How does Luminary keep important rules from being forgotten?</span>
+          <span class="faq-toggle" aria-hidden="true">+</span>
+        </summary>
+        <div class="faq-answer">
+          <p>Three safeguards: (1) <strong>Persistent context</strong> — the top-N memories by importance are injected every turn, merged with query recall under anti-duplication, so a rule exists in context even when the query never mentions it. (2) <strong>Rule pinning</strong> — memories at importance ≥ 0.9 are never pruned or consolidated away. (3) <strong>Rule auto-replace</strong> — a similar rule ingest replaces the old one (anti-contradiction), so "JANGAN tabel" never coexists with "WAJIB table".</p>
         </div>
       </details>
     </div>
@@ -527,7 +537,7 @@
       <div class="cta-meta">
         <span>Apache-2.0 License</span>
         <span class="dot" aria-hidden="true">·</span>
-        <span>91% Test Coverage</span>
+        <span>93% Test Coverage</span>
         <span class="dot" aria-hidden="true">·</span>
         <span>Python 3.11+</span>
         <span class="dot" aria-hidden="true">·</span>

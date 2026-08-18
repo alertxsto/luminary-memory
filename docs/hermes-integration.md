@@ -22,6 +22,7 @@ memory:
 On the next session Hermes will:
 
 - **Auto-recall every turn**, the current user message is used to recall relevant memories from the local store, injected as a `# Luminary Memory (persistent cross-session context)` block.
+- **Inject persistent context every turn**, the top-N most important memories (durable rules, critical facts) are always present in context — independent of whether the query matches them. This fixes the "agent forgot the rule" failure mode: the system prompt is byte-stable for prompt caching, so per-turn prefetch carries the rules. Anti-duplication ensures nothing appears twice.
 - **Auto-save every session**, completed turns are persisted under session lineage tags (`session:<id>`, `parent:<id>`, `platform:<p>`, `agent:<identity>`).
 - **Expose explicit tools**, `luminary_recall` / `luminary_ingest` / `luminary_list` are registered for the model in `tools` and `hybrid` modes.
 - **Report a deterministic indicator**, a `🌙 Luminary, recalled N memories` status line appears whenever recall injected context.
@@ -55,6 +56,27 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `auto_maintain` | `false` | **LLM store review at session end**, keeps/updates/deletes stale, contradicted, or duplicate facts (requires `ingest_llm`) |
 | `consolidate_semantic` | `true` | **Embedding-cosine consolidation** in lifecycle, merges paraphrases (falls back to Jaccard when embeddings are degenerate/missing) |
 | `importance_auto` | `true` | **Auto importance estimation**, scores each memory from access, recency, and graph centrality on ingest/lifecycle |
+| `context_top_n` | `8` | Top-N important memories injected into context every turn (persistent context) |
+| `context_budget` | `2000` | Max tokens of persistent context per turn |
+| `context_min_importance` | `0.0` | Only inject memories at/above this importance into persistent context |
+| `importance_recall_boost` | `1.0` | Ranking bonus multiplier for memories at importance ≥ 0.8, so durable rules surface in recall |
+
+### Persistent context (v0.2.11+)
+
+The system prompt is byte-stable for the life of a conversation (Hermes
+prompt caching is sacred), so a memory ingested mid-session would never reach
+the model through `system_prompt_block()` alone. The provider instead builds
+the persistent-context block **every turn** in `prefetch()`:
+
+```
+Key memories:
+- <top-N by importance, capped at context_budget>
+```
+
+Merged with the query-recall block under anti-duplication: memories already
+injected by persistent context are skipped by recall, so nothing appears
+twice in one turn's context. Memory ids injected are tracked per turn
+(`_injected_ids`), never accumulated across turns.
 
 ### LLM memory curation (v0.2.2+)
 
@@ -69,6 +91,24 @@ returns:
 - **`entities` / `tags`**, attached as metadata/tags for richer recall.
 
 Without `ingest_llm` (default), turns are stored verbatim, zero LLM cost.
+
+### Rule hygiene (v0.2.11+)
+
+Two safeguards keep rules accurate and non-contradictory:
+
+- **Rule keywords are checked only against the LLM-curated summary**, never
+  the raw transcript. A turn that merely *mentions* a keyword (e.g. a
+  conversation that says "PLAN") is not pinned as a rule — only a distilled
+  fact that reads like an instruction gets `importance 0.9`+.
+- **Raw transcripts are dropped when curation yields no summary**: with
+  `ingest_llm: true`, a turn whose enrichment fails or returns nothing durable
+  is not stored verbatim (avoids polluting the store with conversation noise).
+- **Rule auto-replace (anti-contradiction)**: ingesting a rule semantically
+  similar to an existing one (embedding cosine ≥ `rule_auto_replace_threshold`,
+  default 0.85) replaces it in place instead of stacking conflicting rows
+  (e.g. "JANGAN tabel" vs "WAJIB table").
+- **Rule pinning**: memories at importance ≥ 0.9 are pinned — never pruned by
+  importance or the `max_memories` cap, and never deleted by consolidation.
 
 ### Store layout
 

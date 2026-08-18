@@ -92,5 +92,9 @@ All settings accept a `LUMINARY_*` env var:
 | `pg_dsn` | `LUMINARY_PG_DSN` | `postgresql://localhost/luminary_memory` |
 | `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` |
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` |
+| `importance_recall_boost` | `LUMINARY_IMPORTANCE_RECALL_BOOST` | `1.0` |
+| `rule_auto_replace` | `LUMINARY_RULE_AUTO_REPLACE` | `true` |
+| `rule_auto_replace_threshold` | `LUMINARY_RULE_AUTO_REPLACE_THRESHOLD` | `0.85` |
+| `rule_importance` | `LUMINARY_RULE_IMPORTANCE` | `0.9` |
 
 See the [README](../README.md) for the full table.

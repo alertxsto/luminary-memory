@@ -117,20 +117,50 @@ class MemoryClient:
         Returns the id of the replaced (updated) memory, or None when nothing
         similar exists. Similarity uses embedding cosine against existing
         memories above ``rule_auto_replace_threshold``.
+
+        The cosine scan is vectorized (single numpy matmul) so rule ingests
+        stay fast on large stores — a Python-loop per-memory scan costs
+        ~500 ms at 5k memories; the matmul is ~10 ms.
         """
         from luminary_memory.recall.dedup import cosine_similarity
 
         try:
             new_vec = new_memory.embedding or self.engine.embed(content)
-            best_id: int | None = None
-            best_score = 0.0
-            for existing in self.backend.all():
-                if existing.embedding is None or existing.id is None:
-                    continue
-                score = cosine_similarity(new_vec, existing.embedding)
-                if score > best_score:
-                    best_score = score
-                    best_id = existing.id
+            # Vectorized scan over stored embeddings (no full Memory objects).
+            # scan_embeddings_matrix returns (ids, N×D float32 matrix); the
+            # fallbacks keep pgvector/other backends working.
+            ids: list[int] = []
+            mat = None
+            matrix = getattr(self.backend, "scan_embeddings_matrix", None)
+            if matrix is not None:
+                ids, mat = matrix()
+            elif getattr(self.backend, "scan_embeddings", None) is not None:
+                ids, vecs = self.backend.scan_embeddings()
+                if vecs:
+                    import numpy as np
+
+                    mat = np.vstack([np.asarray(v, dtype=np.float32) for v in vecs])
+            if ids and mat is not None and mat.size:
+                import numpy as np
+
+                q = np.asarray(new_vec, dtype=np.float32)
+                qn = float(np.linalg.norm(q))
+                if qn == 0.0:
+                    return None
+                sims = (mat @ q) / (np.linalg.norm(mat, axis=1) * qn + 1e-12)
+                best_i = int(np.argmax(sims))
+                best_score = float(sims[best_i])
+                best_id = int(ids[best_i])
+            else:
+                best_id = None
+                best_score = 0.0
+                for existing in self.backend.all():
+                    if existing.embedding is None or existing.id is None:
+                        continue
+                    score = cosine_similarity(new_vec, existing.embedding)
+                    if score > best_score:
+                        best_score = score
+                        best_id = existing.id
             threshold = float(self.settings.rule_auto_replace_threshold)
             if best_id is not None and best_score >= threshold:
                 existing = self.backend.get(best_id)
@@ -746,10 +776,20 @@ class MemoryClient:
 
         from datetime import UTC, datetime
 
-        for m in memories_ordered[:n_limit]:
-            m.access_count += 1
-            m.last_accessed_at = datetime.now(UTC).isoformat()
-            self.backend.update(m)
+        # Mark recalled memories as accessed (batched — one UPDATE statement
+        # instead of N per-row updates per turn).
+        touch = getattr(self.backend, "touch_memories", None)
+        touched_ids = [m.id for m in memories_ordered[:n_limit] if m.id is not None]
+        if touch is not None and touched_ids:
+            try:
+                touch(touched_ids)
+            except Exception:  # noqa: BLE001, S110 -- bookkeeping is best-effort
+                pass
+        else:
+            for m in memories_ordered[:n_limit]:
+                m.access_count += 1
+                m.last_accessed_at = datetime.now(UTC).isoformat()
+                self.backend.update(m)
 
         trimmed = {k: v for k, v in strategies_hit.items() if v}
         return RecallResult(
