@@ -1,4 +1,6 @@
 
+from datetime import UTC
+
 import pytest
 
 from luminary_memory.api import MemoryClient
@@ -304,4 +306,66 @@ def test_recall_keyword_error_falls_back(tmp_path, monkeypatch):
 
     r = c.recall("postgres", limit=5)
     assert r is not None  # degraded, not raised
+    c.close()
+
+
+def test_health_score_empty_store(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "h.db"), engine=_E())
+    report = c.health_score()
+    assert report["score"] == 100.0
+    assert report["dimensions"] == {}
+    c.close()
+
+
+def test_health_score_healthy_store(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "h2.db"), engine=_E())
+    c.ingest("deploy target production cluster")
+    c.ingest("user prefers dark mode")
+    c.ingest("database runs on port 5432")
+    report = c.health_score()
+    assert 0 <= report["score"] <= 100
+    assert "duplicate_rate" in report["dimensions"]
+    assert report["dimensions"]["duplicate_rate"]["health"] == 100.0
+    c.close()
+
+
+def test_health_score_duplicates_detected(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "h3.db"), engine=_E())
+    c.ingest("deploy target is production cluster")
+    c.ingest("deploy target is production cluster")  # exact dup
+    report = c.health_score()
+    assert report["dimensions"]["duplicate_rate"]["health"] < 100
+    c.close()
+
+
+def test_health_score_stale_detected(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "st.db"), engine=_E())
+    mid = c.ingest("old fact never accessed")
+    # fake last_accessed_at 60 days ago
+    from datetime import datetime, timedelta
+    old = (datetime.now(UTC) - timedelta(days=60)).isoformat()
+    c.backend.conn.execute("UPDATE memories SET last_accessed_at=? WHERE id=?", (old, mid))
+    c.backend.conn.commit()
+    report = c.health_score()
+    assert report["dimensions"]["staleness"]["health"] < 100
+    assert any("stale" in r for r in report["recommendations"])
+    c.close()
+
+
+def test_health_score_dup_recommendation(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "dr.db"), engine=_E())
+    c.ingest("deploy target is production cluster")
+    c.ingest("deploy target is production cluster")  # exact dup
+    report = c.health_score()
+    assert any("duplicate" in r for r in report["recommendations"])
+    c.close()
+
+
+def test_health_score_density_fallback(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "df.db"), engine=_E())
+    c.ingest("fact one")
+    c.backend.conn.execute("DROP TABLE relations")
+    c.backend.conn.commit()
+    report = c.health_score()  # must not crash without relations table
+    assert "density" in report["dimensions"]
     c.close()

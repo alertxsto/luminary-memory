@@ -92,3 +92,29 @@ def test_cli_command_error_clean(tmp_path):
     # search with a malformed FTS query should degrade, not crash
     r = _invoke(["search", "-"], db)
     assert r.exit_code in (0, 1)
+
+
+def test_health_command(tmp_path):
+    db = tmp_path / "t.db"
+    _invoke(["add", "deploy target is production", "--db-path", str(db)], db)
+    r = _invoke(["health", "--json"], db)
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert "score" in data
+    assert "dimensions" in data
+
+
+def test_recall_table_human_mode(tmp_path):
+    db = tmp_path / "t.db"
+    _invoke(["add", "postgres index tuning is critical", "--db-path", str(db)], db)
+    r = _invoke(["recall", "postgres"], db)  # no --json → table
+    assert r.exit_code == 0
+    assert "postgres" in r.output or "Recall" in r.output
+
+
+def test_health_human_mode(tmp_path):
+    db = tmp_path / "t.db"
+    _invoke(["add", "deploy target production", "--db-path", str(db)], db)
+    r = _invoke(["health"], db)  # no --json → bar
+    assert r.exit_code == 0
+    assert "Health" in r.output

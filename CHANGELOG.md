@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/), and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.4] - 2026-08-18
+
+### Added
+
+- **`MemoryClient.health_score()`** — store health report (0-100) across five dimensions: duplicate rate, staleness, importance, graph density, and size — plus actionable recommendations. Empty store scores 100.
+- **`luminary-memory health` CLI** — human-readable bar + `--json` output.
+- **Test coverage raised 82% → 90%** (roadmap DoD): config_schema standalone shim, enricher `_call_llm`/`review_memories` paths, maintenance CRUD edges, provider lifecycle/maintenance/shutdown, CLI whitelist/limit errors, recall strategy failure fallbacks.
+
+### Fixed
+
+- **`run_maintenance` bad-response detection** — `data.get("actions") or []` masked non-list responses as "no actions"; now correctly reports `{"error": "bad LLM response"}`.
+
 ## [0.2.3] - 2026-08-18
 
 ### Added

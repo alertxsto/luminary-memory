@@ -116,7 +116,7 @@ lifecycle() ──► cleanup (TTL) ──► consolidate (near-dupes) ──►
 maintenance() ──► LLM reviews store ──► keep │ update │ delete stale facts
 ```
 
-Built-in lifecycle keeps the store lean. LLM maintenance (optional) keeps it accurate.
+Built-in lifecycle keeps the store lean. LLM maintenance (optional) keeps it accurate. `health_score()` gives you a 0-100 checkup with actionable recommendations.
 
 ---
 

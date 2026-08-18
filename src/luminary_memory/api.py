@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC
 from typing import TYPE_CHECKING
 
 from luminary_memory.backends import get_backend
@@ -253,6 +254,107 @@ class MemoryClient:
         from luminary_memory.lifecycle.runner import run_lifecycle
 
         return run_lifecycle(self.backend, self.settings)
+
+    def health_score(self) -> dict:
+        """Store health report: overall 0-100 plus per-dimension breakdown.
+
+        Dimensions (all computed from existing store data — no new schema):
+
+        - ``duplicate_rate`` — share of memories with a near-duplicate
+          (Jaccard token overlap > dedup threshold).
+        - ``staleness`` — share of memories not accessed in 30 days.
+        - ``importance`` — share of memories above ``prune_min_importance``.
+        - ``density`` — share of memories with graph relations.
+        - ``size`` — store volume vs a healthy scale (0 = empty, 100 = full).
+
+        Returns ``{"score": float, "dimensions": {...}, "recommendations": [...]}``.
+        """
+        memories = self.list(limit=500)
+        total = len(memories)
+        if total == 0:
+            return {
+                "score": 100.0,
+                "dimensions": {},
+                "recommendations": ["store is empty — nothing to worry about"],
+            }
+
+        # --- duplicate_rate -------------------------------------------------
+        dup_count = 0
+        for i, a in enumerate(memories):
+            a_tokens = set(str(a.content).lower().split())
+            if not a_tokens:
+                continue
+            for b in memories[i + 1 :]:
+                b_tokens = set(str(b.content).lower().split())
+                if not b_tokens:
+                    continue
+                jac = len(a_tokens & b_tokens) / len(a_tokens | b_tokens)
+                if jac > self.settings.dedup_jaccard_threshold:
+                    dup_count += 1
+                    break
+        dup_rate = dup_count / total
+        dup_health = max(0.0, 100.0 * (1.0 - dup_rate * 5))  # 20% dupes → 0
+
+        # --- staleness ------------------------------------------------------
+        from datetime import datetime, timedelta
+
+        cutoff = datetime.now(UTC) - timedelta(days=30)
+        stale_count = 0
+        for m in memories:
+            try:
+                if m.last_accessed_at:
+                    ts = datetime.fromisoformat(m.last_accessed_at)
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=UTC)
+                    if ts < cutoff:
+                        stale_count += 1
+            except Exception:  # noqa: BLE001, S112 -- malformed timestamps skipped
+                continue
+        stale_rate = stale_count / total
+        stale_health = max(0.0, 100.0 * (1.0 - stale_rate * 3))  # 33% stale → 0
+
+        # --- importance -------------------------------------------------------
+        imp_min = float(getattr(self.settings, "prune_min_importance", 0.2) or 0.2)
+        imp_above = sum(1 for m in memories if (m.importance or 0) >= imp_min)
+        imp_rate = imp_above / total
+        imp_health = 100.0 * imp_rate
+
+        # --- density ----------------------------------------------------------
+        try:
+            conn = getattr(self.backend, "conn", None)
+            rel_count = 0
+            if conn is not None:
+                rel_count = conn.execute(
+                    "SELECT COUNT(DISTINCT source_memory_id) FROM relations"
+                ).fetchone()[0]
+            density_rate = rel_count / total
+        except Exception:  # noqa: BLE001 -- backends without graph tables
+            density_rate = 0.0
+        density_health = 100.0 * min(1.0, density_rate * 3)  # 33% density → 100
+
+        # --- size --------------------------------------------------------------
+        # 0 memories = 0; scale toward 100 at ~1k memories
+        size_health = min(100.0, 100.0 * (total / 1000))
+
+        dims = {
+            "duplicate_rate": {"value": round(dup_rate, 4), "weight": 0.25, "health": round(dup_health, 1)},
+            "staleness": {"value": round(stale_rate, 4), "weight": 0.25, "health": round(stale_health, 1)},
+            "importance": {"value": round(imp_rate, 4), "weight": 0.20, "health": round(imp_health, 1)},
+            "density": {"value": round(density_rate, 4), "weight": 0.15, "health": round(density_health, 1)},
+            "size": {"value": total, "weight": 0.15, "health": round(size_health, 1)},
+        }
+        score = sum(d["health"] * d["weight"] for d in dims.values())
+
+        recs = []
+        if dup_health <= 70:
+            recs.append(f"duplicates detected ({dup_rate:.0%}) — run `luminary-memory lifecycle` to consolidate")
+        if stale_health <= 70:
+            recs.append(f"{stale_count} stale memories (>30d) — run lifecycle prune or LLM maintenance")
+        if imp_health <= 70:
+            recs.append("low-value memories present — review store or raise prune_min_importance")
+        if density_health <= 50 and total >= 20:
+            recs.append("low graph density — entities may not be indexed for richer recall")
+        return {"score": round(score, 1), "dimensions": dims, "recommendations": recs}
 
     def run_maintenance(self, review_all: bool = True) -> dict:
         """LLM-driven store maintenance: review memories and prune/update stale facts.

@@ -260,5 +260,31 @@ def stats(
         client.close()
 
 
+@app.command()
+def health(
+    json_output: bool = typer.Option(False, "--json", help="Emit raw JSON"),
+    db_path: str | None = typer.Option(None, "--db-path", help="Override SQLite path"),
+    backend: str | None = typer.Option(None, "--backend", help="sqlite | pgvector"),
+) -> None:
+    """Show store health score (0-100) with per-dimension breakdown."""
+    client = _client(db_path, backend)
+    try:
+        report = client.health_score()
+        if json_output:
+            console.print(json.dumps(report, indent=2))
+            return
+        score = report["score"]
+        bar = "█" * int(score / 10) + "░" * (10 - int(score / 10))
+        console.print(f"[bold]📊 Memory Health: {score}/100[/bold] {bar}")
+        for name, dim in report.get("dimensions", {}).items():
+            health = dim["health"]
+            mark = "✅" if health >= 80 else ("⚠️" if health >= 60 else "❌")
+            console.print(f"  {mark} {name}: {health:.0f}%")
+        for rec in report.get("recommendations", []):
+            console.print(f"  [yellow]→ {rec}[/yellow]")
+    finally:
+        client.close()
+
+
 if __name__ == "__main__":
     app()

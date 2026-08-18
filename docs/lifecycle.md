@@ -55,6 +55,42 @@ every session end:
 Results are recorded in the transparency log
 (`~/.hermes/luminary/luminary.log`): `maintenance {'reviewed': N, 'deleted': N, 'updated': N}`.
 
+## `health_score()` — store health report (v0.2.4+)
+
+Returns a 0-100 health score with a per-dimension breakdown, computed from
+existing store data (no new schema):
+
+| Dimension | Weight | What it measures |
+|-----------|--------|------------------|
+| `duplicate_rate` | 25% | Share of memories with a near-duplicate (Jaccard > threshold) |
+| `staleness` | 25% | Share of memories not accessed in 30 days |
+| `importance` | 20% | Share of memories above `prune_min_importance` |
+| `density` | 15% | Share of memories with graph relations |
+| `size` | 15% | Store volume (scales toward 100 at ~1k memories) |
+
+```python
+report = client.health_score()
+print(report["score"])            # 87.5
+print(report["recommendations"])  # actionable hints
+```
+
+CLI:
+
+```bash
+luminary-memory health           # human-readable bar
+luminary-memory health --json    # raw JSON
+```
+
+```
+📊 Memory Health: 87.5/100 █████████░
+  ✅ duplicate_rate: 98%
+  ⚠️ density: 33%
+  → 2 stale memories (>30d) — run lifecycle prune or LLM maintenance
+```
+
+Empty store scores 100 (nothing wrong); low-scoring dimensions produce
+recommendations.
+
 ## Scheduling
 
 Run via cron for a self-maintaining store:
