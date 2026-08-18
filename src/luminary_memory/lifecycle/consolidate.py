@@ -47,10 +47,23 @@ def consolidate(
     threshold: float = 0.9,
     semantic: bool = True,
     semantic_threshold: float = 0.85,
+    pin_threshold: float = 0.9,
 ) -> int:
+    """Merge near-duplicate memories.
+
+    Pinned memories (importance >= ``pin_threshold``, e.g. durable rules)
+    are never deleted by consolidation: they are excluded from clusters that
+    would merge them away. A pinned member can still become the cluster
+    master (its content is kept), but it is never a duplicate that gets
+    dropped.
+    """
     memories = backend.all()
     merged = 0
     visited: set[int] = set()
+
+    def _pinned(m) -> bool:
+        return float(getattr(m, "importance", 0.0) or 0.0) >= pin_threshold
+
     for i, m in enumerate(memories):
         if m.id in visited:
             continue
@@ -62,6 +75,15 @@ def consolidate(
                 cluster.append(n)
         if len(cluster) < 2:
             continue
+        # Pinned members are never dropped; if any cluster member is pinned,
+        # only the unpinned ones may be removed as duplicates.
+        pinned_members = [c for c in cluster if _pinned(c)]
+        if pinned_members:
+            cluster = [c for c in cluster if not _pinned(c)]
+            if len(cluster) < 2:
+                for c in pinned_members:
+                    visited.add(c.id)  # type: ignore[arg-type]
+                continue
         master = max(cluster, key=lambda x: len(x.content))
         total_access = sum(c.access_count for c in cluster)
         merged_tags: list[str] = []

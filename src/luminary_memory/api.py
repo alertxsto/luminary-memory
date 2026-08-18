@@ -87,10 +87,62 @@ class MemoryClient:
             from luminary_memory.lifecycle.importance import estimate_importance
 
             m.importance = estimate_importance(m)
+
+        # Anti-contradiction auto-replace: if a similar memory already exists
+        # (embedding cosine >= replace_threshold), replace it instead of
+        # adding a duplicate/contradicting entry. Rules are the main case,
+        # but we also catch near-duplicate facts so the telegram table rule
+        # (and friends) never stack as conflicting rows.
+        is_rule = any(
+            kw.strip().upper() in content.upper()
+            for kw in (self.settings.rule_keywords or "").split(",")
+            if kw.strip()
+        )
+        should_try_replace = self.settings.rule_auto_replace and (
+            float(m.importance) >= 0.8 or is_rule
+        )
+        if should_try_replace:
+            replaced = self._maybe_replace_rule(content, m)
+            if replaced is not None:
+                return replaced
+
         mid = self.backend.add(m)
         m.id = mid
         _try_index_graph(self.backend, m)
         return mid
+
+    def _maybe_replace_rule(self, content: str, new_memory: Memory) -> int | None:
+        """Replace a similar existing memory with the new one (anti-contradiction).
+
+        Returns the id of the replaced (updated) memory, or None when nothing
+        similar exists. Similarity uses embedding cosine against existing
+        memories above ``rule_auto_replace_threshold``.
+        """
+        from luminary_memory.recall.dedup import cosine_similarity
+
+        try:
+            new_vec = new_memory.embedding or self.engine.embed(content)
+            best_id: int | None = None
+            best_score = 0.0
+            for existing in self.backend.all():
+                if existing.embedding is None or existing.id is None:
+                    continue
+                score = cosine_similarity(new_vec, existing.embedding)
+                if score > best_score:
+                    best_score = score
+                    best_id = existing.id
+            threshold = float(self.settings.rule_auto_replace_threshold)
+            if best_id is not None and best_score >= threshold:
+                existing = self.backend.get(best_id)
+                if existing is not None:
+                    existing.content = content
+                    existing.importance = max(existing.importance, new_memory.importance)
+                    existing.embedding = new_vec
+                    self.backend.update(existing)
+                    return best_id
+            return None
+        except Exception:  # noqa: BLE001 -- best-effort replace
+            return None
 
     def ingest_batch(
         self,
@@ -151,10 +203,28 @@ class MemoryClient:
         except Exception:  # noqa: BLE001 -- embedding failure falls back per-item
             embeddings = [self.engine.embed(t) for t in enriched_contents]
 
-        # Build memories for surviving items.
+        # Build memories for surviving items — reuse ingest() semantics per
+        # item: importance hint + auto-estimate + rule auto-replace. Each item
+        # is still covered by the single embed_batch above (emb already holds
+        # the final content's embedding), so this stays batch-efficient while
+        # honouring the anti-contradiction + pin contract.
+        result: list[int | None]
         memories: list[Memory] = []
         mem_orig_idx: list[int] = []
+        importance_by_idx: dict[int, float] = {}
         for (orig_idx, content, merged_tags, metadata), emb in zip(prepared, embeddings):
+            importance_hint: float | None = None
+            # Re-run enricher importance hint for this item's content (rule
+            # keywords check is cheap and we already have the enriched text).
+            if self.enricher is not None and hasattr(self.enricher, "rule_keywords"):
+                hint_text = f"{metadata.get('summary') or ''} {content}".upper()
+                rule_keywords = (
+                    s.strip().upper()
+                    for s in str(self.enricher.rule_keywords).split(",")
+                    if s.strip()
+                )
+                if any(kw in hint_text for kw in rule_keywords):
+                    importance_hint = float(self.enricher.rule_importance)  # type: ignore[attr-defined]
             m = Memory(
                 content=content,
                 metadata=metadata,
@@ -163,15 +233,43 @@ class MemoryClient:
                 ttl_seconds=self.settings.ttl_default_seconds,
                 embedding=emb,
             )
+            if importance_hint is not None:
+                m.importance = float(importance_hint)
+            elif self.settings.importance_auto:
+                from luminary_memory.lifecycle.importance import estimate_importance
+
+                m.importance = estimate_importance(m)
+            importance_by_idx[orig_idx] = float(m.importance)
             memories.append(m)
             mem_orig_idx.append(orig_idx)
 
-        ids = self.backend.add_many(memories)  # type: ignore[attr-defined]
-        # Wire ids back, index graph per memory.
-        for mem, mid, orig_idx in zip(memories, ids, mem_orig_idx):
-            mem.id = mid
-            _try_index_graph(self.backend, mem)
-            result[orig_idx] = mid
+        # Filter through auto-replace (rule-aware) — matching ingest() guard.
+        to_insert: list[Memory] = []
+        to_insert_idx: list[int] = []
+        for mem, orig_idx in zip(memories, mem_orig_idx):
+            content = mem.content
+            is_rule = any(
+                kw.strip().upper() in content.upper()
+                for kw in (self.settings.rule_keywords or "").split(",")
+                if kw.strip()
+            )
+            should_try = self.settings.rule_auto_replace and (
+                float(mem.importance) >= 0.8 or is_rule
+            )
+            if should_try:
+                replaced = self._maybe_replace_rule(content, mem)
+                if replaced is not None:
+                    result[orig_idx] = replaced
+                    continue
+            to_insert.append(mem)
+            to_insert_idx.append(orig_idx)
+
+        if to_insert:
+            ids = self.backend.add_many(to_insert)  # type: ignore[attr-defined]
+            for mem, mid, orig_idx in zip(to_insert, ids, to_insert_idx):
+                mem.id = mid
+                _try_index_graph(self.backend, mem)
+                result[orig_idx] = mid
         return result
 
     def get(self, id: int) -> Memory | None:

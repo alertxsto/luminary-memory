@@ -143,3 +143,45 @@ def test_prune_uses_reestimated_importance(tmp_path):
     assert c.get(stale_mid) is None, "stale memory should be pruned after re-estimation"
     assert result["prune"] >= 1
     c.close()
+def test_prune_skips_pinned_rules(tmp_path):
+    """Pinned rules (importance >= 0.9) survive prune even below threshold."""
+    from luminary_memory.api import MemoryClient
+    from luminary_memory.lifecycle.prune import prune
+
+    class _E:
+        def embed(self, t): return [0.1, 0.1, 0.1]
+        def embed_batch(self, ts): return [[0.1, 0.1, 0.1] for _ in ts]
+
+    c = MemoryClient(db_path=str(tmp_path / "p.db"), engine=_E())
+    c.ingest("rule: jangan pakai em dash", tags=["rule"])  # importance 0.3 auto
+    m = c.get(c.recall("em dash", limit=1).memories[0].id)
+    m.importance = 0.95  # pin it
+    c.update(m)
+    c.ingest("trash worklog", tags=["trash"])  # low importance
+
+    _removed = prune(c.backend, min_importance=0.5)
+    mems = c.list(limit=0)
+    contents = [x.content for x in mems]
+    assert any("em dash" in c for c in contents), "pinned rule must survive"
+    assert not any("trash" in c for c in contents), "low-value must be pruned"
+def test_rule_auto_replace_replaces_similar(tmp_path):
+    """Ingesting a similar rule replaces the old one (no contradiction)."""
+    from luminary_memory.api import MemoryClient
+
+    class _E:
+        def embed(self, t): return [float(len(t)), 0.0, 0.0]
+        def embed_batch(self, ts): return [[float(len(t)), 0.0, 0.0] for t in ts]
+
+    c = MemoryClient(db_path=str(tmp_path / "r.db"), engine=_E())
+    first = c.ingest("JANGAN pakai tabel di telegram", tags=["rule"])
+    assert first is not None
+    mems_before = c.list(limit=0)
+    assert len(mems_before) == 1
+    assert mems_before[0].content == "JANGAN pakai tabel di telegram"
+    # Second ingest is similar (collinear embedding) -> should replace in place
+    second = c.ingest("WAJIB pakai markdown table di telegram", tags=["rule"])
+    mems = c.list(limit=0)
+    assert second == first, "auto-replace must return the original id"
+    assert len(mems) == 1, "store should still have exactly one entry after replace"
+    assert mems[0].content == "WAJIB pakai markdown table di telegram"
+    c.close()

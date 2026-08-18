@@ -94,6 +94,8 @@ class Settings:
         "JANGAN,WAJIB,HARUS,SELALU,DILARANG,NEVER,ALWAYS,MUST,RULE,ATURAN,JANGAN PERNAH",
     ))
     rule_importance: float = field(default_factory=lambda: _env_float("LUMINARY_RULE_IMPORTANCE", 0.9))
+    rule_auto_replace: bool = field(default_factory=lambda: _env_bool("LUMINARY_RULE_AUTO_REPLACE", True))
+    rule_auto_replace_threshold: float = field(default_factory=lambda: _env_float("LUMINARY_RULE_AUTO_REPLACE_THRESHOLD", 0.85))
     # query planner
     query_planner: bool = field(default_factory=lambda: _env_bool("LUMINARY_QUERY_PLANNER", True))
     query_planner_keyword_threshold: float = field(
@@ -129,6 +131,8 @@ class Settings:
             "llm_max_tokens": self.llm_max_tokens,
             "rule_keywords": self.rule_keywords,
             "rule_importance": self.rule_importance,
+            "rule_auto_replace": self.rule_auto_replace,
+            "rule_auto_replace_threshold": self.rule_auto_replace_threshold,
             "query_planner": self.query_planner,
             "query_planner_keyword_threshold": self.query_planner_keyword_threshold,
             "pg_hnsw_index": self.pg_hnsw_index,

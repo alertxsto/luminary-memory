@@ -41,11 +41,14 @@ def run_lifecycle(
                 backend.update(m)  # type: ignore[arg-type]
                 reestimated += 1
 
+    pin_threshold = float(
+        getattr(settings, "rule_importance", 0.9) if settings else 0.9
+    )
     start = time.monotonic()
     result = {
         "cleanup": int(cleanup_expired(backend)),
-        "consolidate": int(consolidate(backend, threshold=consolidate_threshold, semantic=semantic)),
-        "prune": int(prune(backend, min_importance=min_importance)),
+        "consolidate": int(consolidate(backend, threshold=consolidate_threshold, semantic=semantic, pin_threshold=pin_threshold)),
+        "prune": int(prune(backend, min_importance=min_importance, pin_threshold=pin_threshold)),
         "reestimated": reestimated,
     }
     logger.info("run_lifecycle %s (%.1fs)", result, time.monotonic() - start)
