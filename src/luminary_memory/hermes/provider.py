@@ -360,7 +360,7 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._enqueue_retain(f"delegated: {task}", tags, metadata)
 
     def on_pre_compress(self, messages) -> str:
-        """Return an extraction block for pre-compression (v0.2.1 no-op)."""
+        """Return an extraction block for pre-compression (no-op)."""
         return ""
 
     # ------------------------------------------------------------------ #
