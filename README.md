@@ -164,7 +164,7 @@ after, and a background lifecycle keeps the store lean.
 | [Lifecycle](docs/lifecycle.md) | Cleanup, consolidation, pruning, LLM maintenance |
 | [Backends](docs/backends.md) | SQLite vs pgvector |
 | [Hermes integration](docs/hermes-integration.md) | Provider, config, installer |
-| [Roadmap](ROADMAP.md) | v0.2.10 → v1.0.0 |
+| [Roadmap](ROADMAP.md) | v0.2.11 → v1.0.0 |
 | [Benchmarks](benchmarks/RESULTS.md) | 230 ms recall @ 5k, 0 LLM tokens |
 
 ---

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.11] - 2026-08-18
+
+### Added
+
+- **Persistent context injection** — the system prompt injects top-N memories by importance (configurable `context_top_n` / `context_budget` / `context_min_importance`), so durable rules are always visible regardless of query.
+- **Rule pinning** — memories at importance ≥ 0.9 are pinned: they survive lifecycle prune and consolidation (never deleted as duplicates or pruned by the max-count cap).
+- **Rule auto-replace (anti-contradiction)** — ingesting a rule semantically similar to an existing one (cosine ≥ `rule_auto_replace_threshold`, default 0.85) replaces it in place instead of stacking conflicting rows.
+- **Per-turn persistent context** — the persistent-context build runs on every prefetch (not just session-start system prompt), so memories ingested mid-session reach the model; merged with query recall under anti-duplication.
+- **Recall hook notification** — Telegram hook (`luminary-activity`) surfaces stored/recalled memories to the chat.
+
+### Fixed
+
+- **Prefetch recall cross-thread crash** — SQLite thread-local connections; background recall no longer crashes with `ProgrammingError`, so recall actually triggers.
+- **`max_tokens` sent in enricher LLM call** — Command Code returned empty content without it (issue #8); configurable via `LUMINARY_LLM_MAX_TOKENS`.
+- **Raw transcripts pinned as rules** — rule keywords are now checked only against the LLM-curated summary, never the raw turn text; a transcript that merely mentions a keyword is no longer flagged importance 0.9.
+- **Raw-transcript store pollution** — with `ingest_llm` on, turns whose curation yields no summary are dropped instead of stored verbatim.
+- **Dashboard config save** — `save_config` accepts the `hermes_home` argument (dashboard contract).
+
 ## [0.2.10] - 2026-08-18
 
 ### Added

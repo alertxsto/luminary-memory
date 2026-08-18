@@ -194,7 +194,7 @@ bash ~/.hermes/scripts/restart-bots.sh
 ### Manual
 
 ```bash
-pip install "luminary-memory[hermes]>=0.2.10"
+pip install "luminary-memory[hermes]>=0.2.11"
 # config.yaml → memory: provider: luminary
 mkdir -p ~/.hermes/hooks/luminary-activity
 cp hermes/hooks/luminary-activity/*.py hermes/hooks/luminary-activity/HOOK.yaml ~/.hermes/hooks/luminary-activity/
