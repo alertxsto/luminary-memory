@@ -40,6 +40,9 @@ _DEFAULTS: dict = {
     "consolidate_semantic": True,  # embedding-cosine consolidation in lifecycle
     "importance_auto": True,  # auto-estimate importance on ingest/lifecycle
     "max_memories": 1000,  # hard cap on store size; oldest/lowest-importance pruned when exceeded
+    "context_top_n": 8,  # top-N memories injected into the system prompt (persistent context)
+    "context_budget": 2000,  # max tokens of persistent context in the system prompt
+    "context_min_importance": 0.0,  # only inject memories at/above this importance
 }
 
 

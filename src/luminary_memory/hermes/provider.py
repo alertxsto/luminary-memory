@@ -76,6 +76,7 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._prefetch_thread: threading.Thread | None = None
         self._last_recall_count: int = 0
         self._last_recall_returned: bool = False
+        self._injected_ids: set[int] = set()  # memory ids already in system prompt (anti-dup)
 
     # ------------------------------------------------------------------ #
     # Identity & availability
@@ -474,7 +475,14 @@ class LuminaryMemoryProvider(MemoryProvider):
     # ------------------------------------------------------------------ #
 
     def system_prompt_block(self) -> str:
-        """Emit a compact, mode-aware block for the system prompt."""
+        """Emit a compact, mode-aware block for the system prompt.
+
+        In ``context``/``hybrid`` mode this injects the top-N most important
+        memories directly into the system prompt (persistent context), so
+        durable rules and critical facts are always visible regardless of the
+        current query. Injected memory ids are tracked in ``_injected_ids``
+        so prefetch recall can skip them (no duplicates in context).
+        """
         if not self._hermes_home:
             return ""
         mode = self._config.get("mode", "hybrid")
@@ -484,19 +492,83 @@ class LuminaryMemoryProvider(MemoryProvider):
             f"Active ({mode} mode). Store: {db_path}.",
         ]
         if mode in ("context", "hybrid"):
-            lines.append("Relevant memories are automatically injected into context.")
+            lines.append("Persistent context: important memories are always available.")
+            ctx = self._build_persistent_context()
+            if ctx:
+                lines.append(ctx)
         if mode in ("tools", "hybrid"):
             lines.append("Use the `luminary_recall` / `luminary_ingest` tools to query or store memories on demand.")
         return "\n".join(lines)
+
+    def _build_persistent_context(self) -> str:
+        """Top-N memories by importance, capped at the context budget.
+
+        Returns an empty string when nothing qualifies. Tracks injected ids
+        for anti-duplication with prefetch recall.
+        """
+        if not self._client:
+            return ""
+        try:
+            top_n = int(self._config.get("context_top_n", 8))
+            budget = int(self._config.get("context_budget", 2000))
+            min_imp = float(self._config.get("context_min_importance", 0.0))
+            mems = self._client.list(limit=0) or []
+            # Sort by importance desc, then access count desc
+            mems.sort(
+                key=lambda m: (
+                    float(getattr(m, "importance", 0.0) or 0.0),
+                    int(getattr(m, "access_count", 0) or 0),
+                ),
+                reverse=True,
+            )
+            picked: list[str] = []
+            picked_ids: set[int] = set()
+            total = 0
+            for m in mems:
+                imp = float(getattr(m, "importance", 0.0) or 0.0)
+                if imp < min_imp:
+                    continue
+                content = str(getattr(m, "content", "") or "").strip()
+                if not content:
+                    continue
+                # rough token estimate: ~4 chars/token
+                est = max(1, len(content) // 4)
+                if total + est > budget:
+                    break
+                picked.append(f"- {content}")
+                if m.id is not None:
+                    picked_ids.add(m.id)
+                total += est
+                if len(picked) >= top_n:
+                    break
+            if not picked:
+                return ""
+            with self._prefetch_lock:
+                self._injected_ids = picked_ids
+            return "Key memories:\n" + "\n".join(picked)
+        except Exception:
+            logging.getLogger(__name__).exception("persistent context build failed")
+            return ""
 
     # ------------------------------------------------------------------ #
     # Auto-recall
     # ------------------------------------------------------------------ #
 
     def _format_recall_block(self, memories, scores) -> str:
+        # Anti-duplication: memories already injected via the persistent
+        # system-prompt context are skipped here.
+        with self._prefetch_lock:
+            injected = set(self._injected_ids)
         lines = [_RECALL_HEADER, "Recalled relevant memories to ground the reply."]
+        n = 0
         for m, s in zip(memories, scores):
+            mid = getattr(m, "id", None)
+            if mid is not None and mid in injected:
+                continue
             lines.append(f"- {m.content}")
+            n += 1
+        if n == 0:
+            return ""
         return "\n".join(lines)
 
     def queue_prefetch(self, query: str, session_id: str) -> None:
