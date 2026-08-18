@@ -48,7 +48,7 @@ fail() { printf '\033[1;31m[luminary]\033[0m ERROR: %s\n' "$*" >&2; exit 1; }
 # ------------------------------------------------------------------ #
 if [ "$DO_PROVIDER" -eq 1 ]; then
   log "installing luminary-memory[hermes] ..."
-  pip install -q "luminary-memory[hermes]>=0.2.8" || fail "pip install failed"
+  pip install -q "luminary-memory[hermes]>=0.2.9" || fail "pip install failed"
 
   CONFIG="$HERMES_HOME/config.yaml"
   if [ ! -f "$CONFIG" ]; then

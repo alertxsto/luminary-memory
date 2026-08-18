@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.9] - 2026-08-18
+
+### Added
+
+- **pgvector integration tests in CI** — real Postgres service (HNSW index, JSONB round-trips, update, by_tags, delete) — contribution from @qtjg (PR #2).
+- **`add_many` rollback fix** — pgvector batch insert now rolls back and re-raises on failure (mirrors the SQLite backend). Contribution from @qtjg (PR #2).
+- **Three new CI workflows:**
+  - **Triage** — auto-labels issues/PRs, welcomes first-time contributors.
+  - **Stale** — auto-closes inactive issues/PRs (exempts `help wanted` / `good first issue`).
+  - **Contributor check** — soft account + language triage hint for maintainers on every PR.
+- **Branch protection on `main`** — required status checks + PR review; `develop` is the integration branch.
+- **`CONTRIBUTING.md`** — AI assistance notice, branch model, automated checks section, updated pgvector instructions.
+
 ## [0.2.8] - 2026-08-18
 
 ### Fixed
