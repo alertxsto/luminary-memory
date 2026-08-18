@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.2.15] - 2026-08-18
+
+### Added
+
+- **Adaptive importance on recall** — memories that keep getting recalled are
+  re-estimated immediately after the access bump (same `estimate_importance`
+  as the lifecycle), so frequently-used memories climb toward the top of the
+  next turn's persistent-context block. Pinned rules (≥ 0.9) are never
+  downgraded. Enabled via the existing `LUMINARY_IMPORTANCE_AUTO`.
+- **Rule-aware query expansion** — when the knowledge graph yields no entity
+  to expand a short query, up to two keywords from a durable rule whose topic
+  overlaps the query are appended before embedding. The original query tokens
+  stay, so recall quality can never regress.
+
+### Fixed
+
+- **Content-level anti-duplication** — a memory whose text is already in the
+  core block was still re-injected by persistent context or recall when it had
+  a different id (e.g. the same rule stored both as `core` and as a plain
+  high-importance memory). Dedup now tracks content hashes alongside ids, so
+  identical text appears **exactly once** per turn across core/persistent/
+  recall.
+
+### Tests
+
+- Core memory integrity: core sourced only from the DB `core` tag (never from
+  recall/injected ids), high-importance non-core memory never leaks into the
+  core block, content independent of `_injected_ids`.
+- Anti-dup 3-way (core/persistent/recall) appears-once invariant.
+- Adaptive importance: recalled memory outranks idle memory; pinned rule never
+  drops below 0.9.
+- Query expansion: rule keyword appended on topic overlap; unrelated query
+  unchanged.
+
+### Docs
+
+- `docs/hermes-integration.md` — core memory sourcing + content-level dedup.
+- `docs/recall.md` — rule-aware query expansion.
+- `docs/lifecycle.md` — adaptive importance on recall.
+
 ## [0.2.14] - 2026-08-18
 
 ### Fixed

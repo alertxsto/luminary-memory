@@ -3,7 +3,7 @@
 > Reproducible numbers for the Hermes memory provider.
 > Harness: `benchmarks/run_benchmarks.py` · Synthetic dataset, deterministic fake embedding engine (pipeline latency only, 0 LLM tokens).
 
-## Latest run (2026-08-18, v0.2.12)
+## Latest run (2026-08-18, v0.2.15)
 
 ```
 python benchmarks/run_benchmarks.py --n 5000 --backend sqlite --report /tmp/bench_final_run.json
@@ -19,6 +19,10 @@ python benchmarks/run_benchmarks.py --n 5000 --backend sqlite --report /tmp/benc
 | Persistent context build (per turn) | **4 ms** (measured, warm) |
 | Rule auto-replace scan (vectorized) | **31 ms** (measured, warm) |
 | Temporal recall (limit 20) | **28 ms** (measured, warm) |
+
+> v0.2.15 re-verified on a 2k store (deterministic seed): MRR **1.0** on all
+> queries, e2e recall ~32 ms p50. Adaptive-importance re-estimation and
+> rule-aware query expansion did **not** change the quality metrics.
 
 ## Latency by strategy (5k store, deterministic embedding)
 

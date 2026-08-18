@@ -2,7 +2,7 @@
 
 > **Tagline:** A lightweight, self-hosted memory layer for AI agents.
 
-**Current release:** v0.2.14 (SQLite backend hardening) · **Tests:** 350+ passing · **Coverage:** 93% · **License:** Apache-2.0
+**Current release:** v0.2.15 (adaptive memory + core integrity) · **Tests:** 370+ passing · **Coverage:** 93% · **License:** Apache-2.0
 
 ---
 
@@ -24,20 +24,21 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 
 | Area | Status |
 |------|--------|
-| Core library (ingest / recall / lifecycle) | ✅ Done (v0.2.13) |
-| Backends (SQLite default, pgvector optional) | ✅ Done (v0.2.9) |
-| Python API (`MemoryClient`) | ✅ Done (v0.2.13) |
+| Core library (ingest / recall / lifecycle) | ✅ Done (v0.2.15) |
+| Backends (SQLite default, pgvector optional) | ✅ Done (v0.2.14) |
+| Python API (`MemoryClient`) | ✅ Done (v0.2.15) |
 | CLI (`luminary-memory`) | ✅ Done (v0.2.7) |
-| Hermes memory provider | ✅ Done (v0.2.1, enhanced v0.2.13) |
+| Hermes memory provider | ✅ Done (v0.2.1, enhanced v0.2.15) |
 | Dashboard settings | ✅ Done (v0.2.10) |
-| Recall quality (weighted fusion + query expansion) | ✅ Done (v0.2.10) |
-| Persistent context (per-turn rule injection) | ✅ Done (v0.2.11) |
-| Core memory (DB-backed, auto-loaded every session) | ✅ Done (v0.2.13) |
+| Recall quality (weighted fusion + query expansion) | ✅ Done (v0.2.15, rule-aware expansion) |
+| Persistent context (per-turn rule injection) | ✅ Done (v0.2.11, adaptive importance v0.2.15) |
+| Core memory (DB-backed, auto-loaded every session) | ✅ Done (v0.2.13, integrity v0.2.15) |
+| Adaptive memory (importance on recall, content-level anti-dup) | ✅ Done (v0.2.15) |
 | Rule hygiene (pinning, auto-replace, summary-only) | ✅ Done (v0.2.11) |
 | Performance (vectorized scans, batched writes) | ✅ Done (v0.2.12) |
 | Store hardening (max cap, dedup, selective curation) | ✅ Done (v0.2.12) |
-| Website | ✅ Done (v0.2.13) |
-| Documentation | ✅ Done (v0.2.13) |
+| Website | ✅ Done (v0.2.15) |
+| Documentation | ✅ Done (v0.2.15) |
 | Test coverage | ✅ 93% total |
 
 ---
@@ -63,10 +64,18 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 | v0.2.12 | 2026-08-18 | Performance: vectorized rule auto-replace, lean persistent-context scan, batched access bookkeeping, batched lifecycle passes, batched temporal fetch |
 | v0.2.13 | 2026-08-18 | Core memory (DB-backed MEMORY.md, auto-loaded every session), keyword recall OR join, prefetch core block |
 | v0.2.14 | 2026-08-18 | SQLite backend hardening: FTS5 rebuild migration, dead-code cleanup, 12 new backend tests, backends.md rewrite |
+| v0.2.15 | 2026-08-18 | Adaptive memory: importance on recall, rule-aware query expansion, content-level anti-dup, core integrity tests |
 
 ---
 
 ## Roadmap
+
+### v0.2.15 — Adaptive Memory & Core Integrity (✅ released)
+
+- [x] Adaptive importance on recall — frequently-used memories climb into persistent context; pinned rules never downgrade.
+- [x] Rule-aware query expansion — rule keywords appended when the graph yields nothing (lossless).
+- [x] Content-level anti-duplication — core / persistent / recall dedup by id + content hash.
+- [x] Core memory integrity — core sourced only from the DB `core` tag, tested.
 
 ### v0.3.0, Multi-User (next)
 

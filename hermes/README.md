@@ -83,7 +83,7 @@ Results land in the transparency log:
 ## Manual install (no script)
 
 ```bash
-pip install "luminary-memory[hermes]>=0.2.13"
+pip install "luminary-memory[hermes]>=0.2.15"
 
 # config.yaml, add under memory:
 #   provider: luminary

@@ -74,6 +74,12 @@ the query is expanded with co-occurring entity names from the knowledge
 graph, so relevant memories rank higher (`_expand_query`, best-effort , 
 falls back to the raw query on any error).
 
+When the graph yields nothing, **rule-aware expansion (v0.2.15)** kicks in:
+if the query touches the topic of a durable rule (high-importance memory), up
+to two of its keywords are appended so the rule surfaces in semantic recall
+even when the query uses different words. Both expansions keep the original
+query tokens, so recall quality can never get worse than baseline.
+
 ## Adaptive cutoff
 
 After fusion, the ranked list is cut at the first **steep score drop**

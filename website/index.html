@@ -70,7 +70,7 @@
     <div class="hero-inner reveal-on-scroll">
       <div class="eyebrow">
         <span class="eyebrow-dot" aria-hidden="true"></span>
-        <span>v0.2.13 · Self-Hosted Memory Layer · 93% Test Coverage</span>
+        <span>v0.2.15 · Self-Hosted Memory Layer · 93% Test Coverage</span>
       </div>
 
       <h1 class="hero-title">
@@ -228,7 +228,7 @@
 
       <div class="fusion-note">
         <h3 class="fusion-title">Parallel Fusion &amp; Anti-Contradiction</h3>
-        <p>All four strategies run concurrently and fuse via <strong>weighted Reciprocal Rank Fusion</strong> (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1). Short queries are expanded with graph entities. Jaccard dedup (0.85) removes paraphrases, adaptive cliff cutoff keeps only the relevant cluster, and a hard token budget protects the context window. Rules at importance ≥ 0.9 are pinned (never pruned or consolidated away), and a similar rule ingest auto-replaces the old one — "never use tables" never coexists with "always use tables".</p>
+        <p>All four strategies run concurrently and fuse via <strong>weighted Reciprocal Rank Fusion</strong> (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1). Short queries are expanded with graph entities — and when the graph is empty, with keywords from a durable rule on the same topic (v0.2.15). Jaccard dedup (0.85) removes paraphrases, adaptive cliff cutoff keeps only the relevant cluster, and a hard token budget protects the context window. Rules at importance ≥ 0.9 are pinned (never pruned or consolidated away), and a similar rule ingest auto-replaces the old one — "never use tables" never coexists with "always use tables".</p>
         <p class="fusion-meta">RRF <code>k=60</code> · Jaccard Dedup <code>0.85</code> · Token Budget <code>4096</code> · Embedding Dim <code>384</code></p>
       </div>
     </div>
@@ -622,7 +622,7 @@
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>Four safeguards: (1) <strong>Core memory</strong> — memories tagged <code>core</code> are auto-loaded into the system prompt every session (the DB-backed equivalent of <code>MEMORY.md</code>), so durable rules are present from the very first prompt. (2) <strong>Persistent context</strong> — the top-N memories by importance are injected every turn, merged with query recall under anti-duplication. (3) <strong>Rule pinning</strong> — memories at importance ≥ 0.9 are never pruned or consolidated away. (4) <strong>Rule auto-replace</strong> — a similar rule ingest replaces the old one (anti-contradiction), so "never use tables" never coexists with "always use tables".</p>
+          <p>Four safeguards: (1) <strong>Core memory</strong> — memories tagged <code>core</code> are auto-loaded into the system prompt every session (the DB-backed equivalent of <code>MEMORY.md</code>), so durable rules are present from the very first prompt. (2) <strong>Persistent context</strong> — the top-N memories by importance are injected every turn, merged with query recall under anti-duplication (by id and content hash, so identical text never appears twice). (3) <strong>Rule pinning</strong> — memories at importance ≥ 0.9 are never pruned or consolidated away. (4) <strong>Rule auto-replace</strong> — a similar rule ingest replaces the old one (anti-contradiction), so "never use tables" never coexists with "always use tables". Since v0.2.15 the store also <strong>learns from use</strong>: memories that keep getting recalled are re-estimated immediately and climb into the next turn's context.</p>
         </div>
       </details>
     </div>

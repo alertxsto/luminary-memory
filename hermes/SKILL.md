@@ -138,6 +138,17 @@ system prompt every session — the DB-backed equivalent of Hermes' native
 `MEMORY.md`. Rules the user wants always present (e.g. "always use markdown tables")
 should be stored with the `core` tag (or via `luminary_core_add`). Capped by
 `core_top_n` / `core_budget` (characters). Use `luminary_core_remove` to unpin.
+Core content comes **only** from the DB (`by_tag_top`), never from recall.
+
+**Adaptive memory (v0.2.15):** three behaviors keep the store "smart":
+- **Importance on recall** — a memory that keeps getting recalled is
+  re-estimated immediately, so it climbs into the next turn's persistent
+  context; pinned rules (≥ 0.9) never downgrade.
+- **Content-level anti-duplication** — core / persistent / recall share one
+  dedup set (ids + content hashes), so a rule stored both as `core` and as a
+  plain memory appears exactly once per turn.
+- **Rule-aware query expansion** — when the graph has no entity to expand a
+  short query, keywords from a durable rule on the same topic are appended.
 
 **LLM memory curation:** with `ingest_llm: true`, the enricher evaluates each
 turn and keeps only durable facts, greetings, chit-chat, and trivial
@@ -226,7 +237,7 @@ bash ~/.hermes/scripts/restart-bots.sh
 ### Manual
 
 ```bash
-pip install "luminary-memory[hermes]>=0.2.13"
+pip install "luminary-memory[hermes]>=0.2.15"
 # config.yaml → memory: provider: luminary
 mkdir -p ~/.hermes/hooks/luminary-activity
 cp hermes/hooks/luminary-activity/*.py hermes/hooks/luminary-activity/HOOK.yaml ~/.hermes/hooks/luminary-activity/

@@ -80,8 +80,19 @@ Core memory (auto-loaded every session):
 Managed via tools (`luminary_core_add` / `luminary_core_remove` /
 `luminary_core_list`) or by ingesting with the `core` tag. The block is capped
 by `core_top_n` memories and `core_budget` characters. Core memories are
-pinned (importance ≥ 0.9, exempt from prune/consolidate) and deduplicated
-against persistent context and recall — nothing appears twice.
+pinned (importance ≥ 0.9, exempt from prune/consolidate).
+
+**Sourcing (v0.2.15):** core content comes **only** from the database —
+`by_tag_top(tag)` reads memories carrying the `core` tag. It is **never**
+derived from recall results or from `_injected_ids`.
+
+**Anti-duplication (v0.2.15):** `_injected_ids` is an anti-dup **tracker**, not
+a content source. Core and persistent context both add to it, and the recall
+block skips anything already injected. Dedup is now **content-level** as well
+as id-level: a memory whose text is already in the core block is skipped by
+persistent context and recall even when it has a different id — so a rule
+stored both as `core` and as a plain high-importance memory appears in context
+**exactly once** per turn.
 
 ### Persistent context (v0.2.11+)
 

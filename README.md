@@ -166,7 +166,7 @@ after, and a background lifecycle keeps the store lean.
 | **4 strategies** | Semantic (ONNX cosine, vectorized matmul) + keyword (FTS5 BM25) + temporal (recency × access, batched fetch) + graph (entity co-occurrence, SQL aggregation), all in parallel |
 | **Persistent context** | Top-N important memories injected every turn (not just at session start), so rules never fall out of context |
 | **Weighted fusion** | Each strategy carries a tunable weight (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1), so high-signal strategies dominate the ranking |
-| **Query expansion** | Short queries are expanded with co-occurring graph entities before embedding, so a bare "deploy?" still finds "production cluster" |
+| **Query expansion** | Short queries are expanded with co-occurring graph entities before embedding; when the graph is empty, keywords from a durable rule on the same topic are appended (v0.2.15). A bare "deploy?" still finds "production cluster" |
 | **Importance boost** | Memories at importance ≥ 0.8 get a ranking bonus, lifting durable rules above weak-but-recent noise |
 | **Adaptive cutoff** | Cliff detection keeps only the relevant cluster: a sparse store returns 3 strong matches instead of padding to 20, while a dense relevant store keeps everything (no over-filtering) |
 | **Token budget** | Hard cap so memory injection never blows up the context window |
@@ -179,10 +179,11 @@ after, and a background lifecycle keeps the store lean.
 | **Rule pinning** | Memories at importance ≥ 0.9 are pinned: never pruned, never deleted by consolidation |
 | **Rule auto-replace** | Similar rule ingests replace the old one (anti-contradiction), so "never use tables" never coexists with "always use tables" |
 | **Store hygiene** | Rule keywords are checked only against the LLM-curated summary (raw transcripts are never pinned); turns without a curated summary are dropped when `ingest_llm` is on |
-| **Auto importance** | Every memory is scored by recency + access + graph centrality; prune and health use live values |
+| **Auto importance** | Every memory is scored by recency + access + graph centrality; prune and health use live values. On recall, frequently-used memories are re-estimated immediately so they climb into the next turn's persistent context (v0.2.15, `LUMINARY_IMPORTANCE_AUTO`) |
 | **Max memories cap** | `max_memories` (default 1000) prunes the oldest/lowest-importance when the store exceeds it |
 | **LLM maintenance** | Optional `auto_maintain` reviews the store at session end: keep, update, or delete stale facts |
 | **Health score** | `health_score()` gives a 0-100 checkup with actionable recommendations |
+| **Content-level anti-dup** | Core, persistent context, and recall share one dedup set (ids + content hashes), so a rule stored both as `core` and as a plain memory appears exactly once per turn (v0.2.15) |
 
 `health_score()` gives you a 0-100 checkup with actionable recommendations.
 
@@ -200,7 +201,7 @@ after, and a background lifecycle keeps the store lean.
 | [Lifecycle](docs/lifecycle.md) | Cleanup, consolidation, pruning, LLM maintenance |
 | [Backends](docs/backends.md) | SQLite vs pgvector |
 | [Hermes integration](docs/hermes-integration.md) | Provider, config, installer |
-| [Roadmap](ROADMAP.md) | v0.2.13 → v1.0.0 |
+| [Roadmap](ROADMAP.md) | v0.2.15 → v1.0.0 |
 | [Benchmarks](benchmarks/RESULTS.md) | ~77 ms recall @ 5k (p50), 0 LLM tokens |
 
 ---

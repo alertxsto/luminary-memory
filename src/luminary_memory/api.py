@@ -393,6 +393,49 @@ class MemoryClient:
 
         return run_lifecycle(self.backend, self.settings, semantic=semantic)
 
+    def _reestimate_accessed_importance(self, ids: list[int]) -> int:
+        """Re-estimate importance for *ids* right after a recall access bump.
+
+        Uses the same ``estimate_importance`` as the lifecycle so behavior is
+        consistent: access_count and last_accessed_at (both just bumped by
+        ``touch_memories``) raise a frequently-recalled memory's importance, so
+        ``top_by_importance`` surfaces it in the next turn's persistent-context
+        block. Pinned rules (>= pin threshold) are never downgraded. Batched —
+        one read (get_many) + one write (update_importances).
+        """
+        from luminary_memory.lifecycle.importance import estimate_importance
+
+        pin_threshold = float(getattr(self.settings, "rule_importance", 0.9) or 0.9)
+        get_many = getattr(self.backend, "get_many", None)
+        if get_many is None:
+            return 0
+        by_id = get_many(ids)
+        if not by_id:
+            return 0
+        max_access = max(
+            (int(getattr(m, "access_count", 0) or 0) for m in by_id.values()),
+            default=1,
+        )
+        changed: list[tuple[float, int]] = []
+        for mid, m in by_id.items():
+            if float(getattr(m, "importance", 0.0) or 0.0) >= pin_threshold:
+                continue
+            new_imp = estimate_importance(m, max_access=max_access)
+            if abs(float(m.importance or 0) - new_imp) > 1e-6:
+                changed.append((float(new_imp), int(mid)))
+        if not changed:
+            return 0
+        bulk = getattr(self.backend, "update_importances", None)
+        if bulk is not None:
+            bulk(changed)
+            return len(changed)
+        for new_imp, mid in changed:
+            m = by_id.get(mid)
+            if m is not None:
+                m.importance = new_imp
+                self.backend.update(m)
+        return len(changed)
+
     def health_score(self) -> dict:
         """Store health report: overall 0-100 plus per-dimension breakdown.
 
@@ -818,6 +861,16 @@ class MemoryClient:
                 touch(touched_ids)
             except Exception:  # noqa: BLE001, S110 -- bookkeeping is best-effort
                 pass
+            # Adaptive importance: a memory that keeps getting recalled should
+            # climb toward the top of the persistent-context block, so
+            # top_by_importance (ordered by importance desc) surfaces it next
+            # turn. Re-estimate from the freshly-touched access_count +
+            # last_accessed_at. Pinned rules are never downgraded.
+            if self.settings.importance_auto:
+                try:
+                    self._reestimate_accessed_importance(touched_ids)
+                except Exception:  # noqa: BLE001, S110 -- best-effort, never break recall
+                    pass
         else:
             for m in memories_ordered[:n_limit]:
                 m.access_count += 1

@@ -77,6 +77,7 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._last_recall_count: int = 0
         self._last_recall_returned: bool = False
         self._injected_ids: set[int] = set()  # memory ids already in context (system prompt + prefetch, anti-dup)
+        self._injected_contents: set[int] = set()  # content hashes already in context (content-level anti-dup)
 
     # ------------------------------------------------------------------ #
     # Identity & availability
@@ -558,15 +559,20 @@ class LuminaryMemoryProvider(MemoryProvider):
             total = 0
             with self._prefetch_lock:
                 already = set(self._injected_ids)
+                already_contents = set(self._injected_contents)
             for m in mems:
                 if m.id is not None and m.id in already:
                     # Already injected via core memory — skip (no duplicate).
                     continue
-                imp = float(getattr(m, "importance", 0.0) or 0.0)
-                if imp < min_imp:
-                    continue
                 content = str(getattr(m, "content", "") or "").strip()
                 if not content:
+                    continue
+                if hash(content) in already_contents:
+                    # Same content already injected (core block) — skip to keep
+                    # the context lean (content-level anti-dup).
+                    continue
+                imp = float(getattr(m, "importance", 0.0) or 0.0)
+                if imp < min_imp:
                     continue
                 # rough token estimate: ~4 chars/token
                 est = max(1, len(content) // 4)
@@ -582,6 +588,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                 # Union with any previously injected ids (e.g. core memory) —
                 # never replace, so recall skips everything already in context.
                 self._injected_ids = picked_ids | self._injected_ids
+                self._injected_contents = {hash(str(c)) for c in picked} | self._injected_contents
             if not picked:
                 return ""
             return "Key memories:\n" + "\n".join(picked)
@@ -621,6 +628,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                 mems = mems[:top_n]
             picked: list[str] = []
             picked_ids: set[int] = set()
+            picked_hashes: set[int] = set()
             total = 0
             for m in mems:
                 content = str(getattr(m, "content", "") or "").strip()
@@ -629,6 +637,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                 if total + len(content) > budget:
                     break
                 picked.append(f"- {content}")
+                picked_hashes.add(hash(content))
                 if m.id is not None:
                     picked_ids.add(m.id)
                 total += len(content)
@@ -636,6 +645,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                 # Core memories are also injected ids, so recall skips them
                 # (no duplicate between the core block and query recall).
                 self._injected_ids = picked_ids | self._injected_ids
+                self._injected_contents = picked_hashes | self._injected_contents
             if not picked:
                 return ""
             return "Core memory (auto-loaded every session):\n" + "\n".join(picked)
@@ -649,14 +659,20 @@ class LuminaryMemoryProvider(MemoryProvider):
 
     def _format_recall_block(self, memories, scores) -> str:
         # Anti-duplication: memories already injected via the persistent
-        # system-prompt context are skipped here.
+        # system-prompt context are skipped here (by id AND by content hash,
+        # so a memory that only differs by id but carries the same text is
+        # never shown twice in one turn).
         with self._prefetch_lock:
             injected = set(self._injected_ids)
+            injected_contents = set(self._injected_contents)
         lines = [_RECALL_HEADER, "Recalled relevant memories to ground the reply."]
         n = 0
         for m, s in zip(memories, scores):
             mid = getattr(m, "id", None)
             if mid is not None and mid in injected:
+                continue
+            content = str(getattr(m, "content", "") or "")
+            if hash(content) in injected_contents:
                 continue
             lines.append(f"- {m.content}")
             n += 1
@@ -732,6 +748,7 @@ class LuminaryMemoryProvider(MemoryProvider):
         # so the recall block below skips duplicates.
         with self._prefetch_lock:
             self._injected_ids = set()  # fresh per turn — never accumulate
+            self._injected_contents = set()
         core_block = self._build_core_memory()
         ctx_block = self._build_persistent_context()
 
