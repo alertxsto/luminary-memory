@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import sqlite3
+import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -176,6 +177,30 @@ def test_post_skips_when_chat_missing(tmp_path):
     h._post("should be skipped")
 
 
+def test_post_falls_back_to_plain_text_on_http_400(tmp_path):
+    h = _load_handler(tmp_path)
+
+    calls = []
+
+    def mock_urlopen(req, timeout=10):
+        body = json.loads(req.data.decode())
+        calls.append(body)
+        if "parse_mode" in body:
+            raise urllib.error.HTTPError("url", 400, "Bad Request: can't parse entities", {}, None)
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"ok":true}'
+        return mock_resp
+
+    with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+        h._post("content with strange _ formatting")
+
+    assert len(calls) == 2
+    assert calls[0]["parse_mode"] == "Markdown"
+    assert "parse_mode" not in calls[1]
+    assert calls[1]["text"] == "content with strange _ formatting"
+
+
+
 # ============================================================================
 # handle — only on agent:end, skip agent:start (the hook YAML fires both)
 # ============================================================================
@@ -204,3 +229,39 @@ def test_handle_skips_when_store_idle(tmp_path):
          patch.object(h, "_post") as mock_post:
         h.handle("agent:end", {})
         mock_post.assert_not_called()
+
+
+def test_recent_activity_escapes_markdown_underscores(tmp_path):
+    h = _load_handler(tmp_path)
+    h._set_last_shown_id(0)
+    _seed(h.DB_PATH, ["Configured llm_base_url in src/test_module.py"])
+    res = h._recent_activity()
+    assert res is not None
+    assert r"llm\_base\_url" in res or r"test\_module.py" in res
+
+
+def test_recent_activity_shows_pin_icon_for_rules(tmp_path):
+    h = _load_handler(tmp_path)
+    h._set_last_shown_id(0)
+    conn = sqlite3.connect(h.DB_PATH)
+    conn.execute(
+        "INSERT INTO memories (id, content, importance, tags) VALUES (?, ?, ?, ?)",
+        (1, "ALWAYS use PostgreSQL for database migration.", 0.9, "rule"),
+    )
+    conn.commit()
+    conn.close()
+    res = h._recent_activity()
+    assert res is not None
+    assert "📌" in res
+
+
+def test_recent_activity_handles_batch_overflow(tmp_path):
+    h = _load_handler(tmp_path)
+    h._set_last_shown_id(1)
+    _seed(h.DB_PATH, ["f1", "f2", "f3", "f4", "f5"])
+    res = h._recent_activity()
+    assert res is not None
+    assert "4 memories stored" in res
+    assert "(+1 more)" in res
+    assert h._last_shown_id() == 5
+

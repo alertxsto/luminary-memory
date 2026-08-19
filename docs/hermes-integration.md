@@ -22,7 +22,7 @@ memory:
 On the next session Hermes will:
 
 - **Auto-recall every turn**, the current user message is used to recall relevant memories from the local store, injected as a `# Luminary Memory (persistent cross-session context)` block.
-- **Inject persistent context every turn**, the top-N most important memories (durable rules, critical facts) are always present in context — independent of whether the query matches them. This fixes the "agent forgot the rule" failure mode: the system prompt is byte-stable for prompt caching, so per-turn prefetch carries the rules. Anti-duplication ensures nothing appears twice.
+- **Core rules auto-load every session**, durable rules tagged `core` (the DB-backed `MEMORY.md`) are always in the system prompt, independent of query match. All other memories come from query recall, merged under anti-duplication so nothing appears twice.
 - **Auto-save every session**, completed turns are persisted under session lineage tags (`session:<id>`, `parent:<id>`, `platform:<p>`, `agent:<identity>`).
 - **Expose explicit tools**, `luminary_recall` / `luminary_ingest` / `luminary_list` are registered for the model in `tools` and `hybrid` modes.
 - **Report a deterministic indicator**, a `🌙 Luminary, recalled N memories` status line appears whenever recall injected context.
@@ -47,7 +47,7 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `auto_retain` | `true` | Enable per-turn auto-save |
 | `retain_every_n_turns` | `1` | Batch N turns into one store write |
 | `ingest_llm` | `false` | **LLM memory curation on retain**, the enricher decides whether a turn is worth saving (drops chit-chat) and stores a factual summary instead of the raw transcript |
-| `llm_base_url` | `""` | OpenAI-compatible endpoint for the enricher (e.g. `https://api.commandcode.ai/provider/v1`) |
+| `llm_base_url` | `""` | OpenAI-compatible endpoint for the enricher (e.g. `https://api.cline.bot/v1`, `https://api.commandcode.ai/provider/v1`, Groq, Ollama) |
 | `llm_model` | `""` | Enricher model (e.g. `deepseek/deepseek-v4-flash`) |
 | `llm_api_key` | `""` | Enricher API key (settable as a secret field in the dashboard) |
 | `llm_timeout` | `60` | Enricher request timeout (seconds) |
@@ -59,9 +59,6 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `auto_maintain` | `false` | **LLM store review at session end**, keeps/updates/deletes stale, contradicted, or duplicate facts (requires `ingest_llm`) |
 | `consolidate_semantic` | `true` | **Embedding-cosine consolidation** in lifecycle, merges paraphrases (falls back to Jaccard when embeddings are degenerate/missing) |
 | `importance_auto` | `true` | **Auto importance estimation**, scores each memory from access, recency, and graph centrality on ingest/lifecycle |
-| `context_top_n` | `8` | Top-N important memories injected into context every turn (persistent context) |
-| `context_budget` | `2000` | Max tokens of persistent context per turn |
-| `context_min_importance` | `0.0` | Only inject memories at/above this importance into persistent context |
 | `importance_recall_boost` | `1.0` | Ranking bonus multiplier for memories at importance ≥ 0.8, so durable rules surface in recall (configurable via config.json / dashboard OR via LUMINARY_IMPORTANCE_RECALL_BOOST env var) |
 | `core_tag` | `core` | Tag marking DB-backed core memories — always auto-loaded into the system prompt every session (like MEMORY.md) |
 | `core_top_n` | `12` | Max core memories injected into the system prompt |
@@ -71,7 +68,7 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 
 Luminary equivalent of Hermes' native `MEMORY.md`, but stored in the
 database. Memories tagged `core` are **auto-loaded into the system prompt
-every session**, before persistent context and recall — so a new session that
+every session (the DB-backed `MEMORY.md`) — so a new session that
 never mentions "tabel" still gets the table rule from the very first prompt.
 
 ```
@@ -90,29 +87,21 @@ pinned (importance ≥ 0.9, exempt from prune/consolidate).
 derived from recall results or from `_injected_ids`.
 
 **Anti-duplication (v0.2.15):** `_injected_ids` is an anti-dup **tracker**, not
-a content source. Core and persistent context both add to it, and the recall
+a content source. Core and recall both add to it, and the recall
 block skips anything already injected. Dedup is now **content-level** as well
 as id-level: a memory whose text is already in the core block is skipped by
-persistent context and recall even when it has a different id — so a rule
+recall even when it has a different id — so a rule
 stored both as `core` and as a plain high-importance memory appears in context
 **exactly once** per turn.
 
-### Persistent context (v0.2.11+)
+### Persistent context (removed in v0.2.18)
 
-The system prompt is byte-stable for the life of a conversation (Hermes
-prompt caching is sacred), so a memory ingested mid-session would never reach
-the model through `system_prompt_block()` alone. The provider instead builds
-the persistent-context block **every turn** in `prefetch()`:
-
-```
-Key memories:
-- <top-N by importance, capped at context_budget>
-```
-
-Merged with the query-recall block under anti-duplication: memories already
-injected by persistent context are skipped by recall, so nothing appears
-twice in one turn's context. Memory ids injected are tracked per turn
-(`_injected_ids`), never accumulated across turns.
+The importance-based persistent-context family (`context_top_n`,
+`context_budget`, `context_min_importance`) was **removed**. Importance is now
+used only for query retrieval/recall and pruning; it no longer pins memory
+into the system prompt as rules that could override a live user instruction.
+Durable rules that must always be present across sessions belong in **core
+memory** (auto-loaded via the `core` tag).
 
 ### LLM memory curation (v0.2.2+)
 

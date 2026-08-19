@@ -5,8 +5,8 @@
 [![PyPI version](https://img.shields.io/pypi/v/luminary-memory?color=8ab4e8&label=PyPI)](https://pypi.org/project/luminary-memory)
 [![Python](https://img.shields.io/pypi/pyversions/luminary-memory?color=8ab4e8)](https://pypi.org/project/luminary-memory)
 [![License](https://img.shields.io/github/license/alertxsto/luminary-memory?color=8ab4e8)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/alertxsto/luminary-memory/ci.yml?color=8ab4e8&label=CI)](https://github.com/alertxsto/luminary-memory/actions)
-[![Tests](https://img.shields.io/badge/tests-200%2B%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
+[![CI](https://github.com/alertxsto/luminary-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/alertxsto/luminary-memory/actions)
+[![Tests](https://img.shields.io/badge/tests-375%2B%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
 [![Coverage](https://img.shields.io/badge/coverage-93%25-8ab4e8)](https://github.com/alertxsto/luminary-memory)
 [![Stars](https://img.shields.io/github/stars/alertxsto/luminary-memory?color=8ab4e8)](https://github.com/alertxsto/luminary-memory)
 
@@ -27,7 +27,7 @@ Agents are only as good as what they remember. A stateless agent re-learns the s
 
 Strategies run in parallel and fuse via **weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1)** → **adaptive cutoff (cliff detection)** → **Jaccard deduplication (0.85)** → **token budget (4096)**. Short queries are expanded with graph entities before embedding, so "deploy?" still finds "production cluster".
 
-**Important rules always in context.** In the Hermes provider, the top-N most important memories are injected every turn (persistent context) and merged with query recall under anti-duplication — so the agent never forgets a rule that exists in the store. Rules are pinned (never pruned), and similar rule ingests auto-replace the old one instead of stacking contradictions. **Core memory** (tagged `core`) is auto-loaded into the system prompt every session — the DB-backed equivalent of `MEMORY.md` — so durable rules are present from the very first prompt, no query needed.
+**Important rules always in context.** Durable rules tagged `core` are auto-loaded into the system prompt every session (the DB-backed `MEMORY.md`). All other memories are surfaced through query retrieval: relevant facts are recalled on demand (ranked by query relevance) and merged with the core block under anti-duplication, so the agent never forgets a durable rule.
 
 ---
 
@@ -113,9 +113,6 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `rule_auto_replace` | `LUMINARY_RULE_AUTO_REPLACE` | `true` |
 | `rule_auto_replace_threshold` | `LUMINARY_RULE_AUTO_REPLACE_THRESHOLD` | `0.85` |
 | `rule_importance` | `LUMINARY_RULE_IMPORTANCE` | `0.9` |
-| `context_top_n` | `LUMINARY_CONTEXT_TOP_N` | `8` |
-| `context_budget` | `LUMINARY_CONTEXT_BUDGET` | `2000` |
-| `context_min_importance` | `LUMINARY_CONTEXT_MIN_IMPORTANCE` | `0.0` |
 | `core_tag` | `LUMINARY_CORE_TAG` | `core` |
 | `core_top_n` | `LUMINARY_CORE_TOP_N` | `12` |
 | `core_budget` | `LUMINARY_CORE_BUDGET` | `8000` |
@@ -129,11 +126,11 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `llm_max_tokens` | `LUMINARY_LLM_MAX_TOKENS` | `512` |
 | `rule_keywords` | `LUMINARY_RULE_KEYWORDS` | `NEVER,ALWAYS,MUST,...` |
 
-> Provider-specific settings (Hermes dashboard): `max_memories`, `context_*`,
+> Provider-specific settings (Hermes dashboard): `max_memories`,
 > `mode`, `recall_limit`, `auto_recall`, `recall_sync`, `auto_retain`,
 > `retain_every_n_turns`, `retain_user_prefix` / `retain_assistant_prefix`,
 > `ingest_llm`, `auto_maintain`, `consolidate_semantic`, `importance_auto`,
-> `recall_indicator`, `retain_indicator` — live in `~/.hermes/luminary/config.json`.
+> `recall_indicator`, `retain_indicator` (live in `~/.hermes/luminary/config.json`).
 > See [hermes/SKILL.md](hermes/SKILL.md) for the full provider config table.
 
 ---
@@ -152,7 +149,7 @@ after, and a background lifecycle keeps the store lean.
         │                                                               │
         └── inject into agent context ◄── token budget (4096) ◄── dedup (Jaccard 0.85)
                                                             │            │
-   persistent context ──► top-N by importance every turn ──┘ (merged, anti-duplicated)
+   core memory ──► auto-loaded every session (tag 'core') ─┘ (merged, anti-duplicated)
                                                             │
    ingest(text) ──► whitelist ──► (LLM curation) ──► embed (ONNX 384-d) ─┘
                                                             │
@@ -165,7 +162,7 @@ after, and a background lifecycle keeps the store lean.
 | Stage | Mechanism |
 |-------|-----------|
 | **4 strategies** | Semantic (ONNX cosine, vectorized matmul) + keyword (FTS5 BM25) + temporal (recency × access, batched fetch) + graph (entity co-occurrence, SQL aggregation), all in parallel |
-| **Persistent context** | Top-N important memories injected every turn (not just at session start), so rules never fall out of context |
+| **Core memory** | Rules tagged `core` are auto-loaded into the system prompt every session (the DB-backed MEMORY.md), independent of query match |
 | **Weighted fusion** | Each strategy carries a tunable weight (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1), so high-signal strategies dominate the ranking |
 | **Query expansion** | Short queries are expanded with co-occurring graph entities before embedding; when the graph is empty, keywords from a durable rule on the same topic are appended (v0.2.15). A bare "deploy?" still finds "production cluster" |
 | **Importance boost** | Memories at importance ≥ 0.8 get a ranking bonus, lifting durable rules above weak-but-recent noise |
@@ -176,15 +173,15 @@ after, and a background lifecycle keeps the store lean.
 
 | Stage | Mechanism |
 |-------|-----------|
-| **Lifecycle** | TTL cleanup, semantic consolidation (embedding cosine, fallback Jaccard), importance-based pruning — all batched at the backend level |
+| **Lifecycle** | TTL cleanup, semantic consolidation (embedding cosine, fallback Jaccard), importance-based pruning (all batched at the backend level) |
 | **Rule pinning** | Memories at importance ≥ 0.9 are pinned: never pruned, never deleted by consolidation |
 | **Rule auto-replace** | Similar rule ingests replace the old one (anti-contradiction), so "never use tables" never coexists with "always use tables" |
 | **Store hygiene** | Rule keywords are checked only against the LLM-curated summary (raw transcripts are never pinned); turns without a curated summary are dropped when `ingest_llm` is on |
-| **Auto importance** | Every memory is scored by recency + access + graph centrality; prune and health use live values. On recall, frequently-used memories are re-estimated immediately so they climb into the next turn's persistent context (v0.2.15, `LUMINARY_IMPORTANCE_AUTO`) |
+| **Auto importance** | Every memory is scored by recency + access + graph centrality; prune and health use live values. On recall, frequently-used memories are re-estimated immediately so they rank higher in the next turn's query recall (v0.2.15, `LUMINARY_IMPORTANCE_AUTO`) |
 | **Max memories cap** | `max_memories` (default 1000) prunes the oldest/lowest-importance when the store exceeds it |
 | **LLM maintenance** | Optional `auto_maintain` reviews the store at session end: keep, update, or delete stale facts |
 | **Health score** | `health_score()` gives a 0-100 checkup with actionable recommendations |
-| **Content-level anti-dup** | Core, persistent context, and recall share one dedup set (ids + content hashes), so a rule stored both as `core` and as a plain memory appears exactly once per turn (v0.2.15) |
+| **Content-level anti-dup** | Core and recall share one dedup set (ids + content hashes), so a rule stored both as `core` and as a plain memory appears exactly once per turn (v0.2.15) |
 
 `health_score()` gives you a 0-100 checkup with actionable recommendations.
 
@@ -204,7 +201,8 @@ after, and a background lifecycle keeps the store lean.
 | [Backends](docs/backends.md) | SQLite vs pgvector |
 | [Configuration reference](docs/config-reference.md) | All 37 env vars + provider config |
 | [Hermes integration](docs/hermes-integration.md) | Provider, config, installer |
-| [Roadmap](ROADMAP.md) | v0.2.16 → v1.0.0 |
+| [Debugging Guide](docs/debugging-v0.2.17.md) | Gateway envelopes, hook internals, verification |
+| [Roadmap](ROADMAP.md) | v0.2.17 → v1.0.0 |
 | [Benchmarks](benchmarks/RESULTS.md) | ~77 ms recall @ 5k (p50), 0 LLM tokens |
 
 ---

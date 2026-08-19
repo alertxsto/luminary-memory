@@ -228,7 +228,7 @@ class SQLiteBackend(MemoryBackend):
     def top_by_importance(self, top_n: int, min_importance: float = 0.0) -> list[Memory]:
         """Top-N memories by importance (desc), then access count (desc).
 
-        Lightweight scan: only reads the columns persistent-context needs
+        Lightweight scan: only reads the columns recall/core scans need
         (id, content, importance, access_count) — never the embedding blob,
         which is the bulk of every row. Called on every provider turn, so
         avoiding a full SELECT * + numpy decode of the whole store matters.

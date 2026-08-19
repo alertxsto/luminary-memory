@@ -50,19 +50,27 @@ class MemoryClient:
         # Without a custom enricher, fall back to NoopEnricher (safe passthrough).
         self.enricher = enricher or NoopEnricher()
 
-    def ingest(self, text: str, tags: list[str] | None = None,
-               source: str | None = None, metadata: dict | None = None) -> int | None:
+    def ingest(
+        self,
+        text: str,
+        tags: list[str] | None = None,
+        source: str | None = None,
+        metadata: dict | None = None,
+        enrich: bool = True,
+        importance: float | None = None,
+    ) -> int | None:
         if not self.whitelist.accepts(text):
             return None
 
         content, summary, entities, extra_tags = text, None, [], []
-        importance_hint: float | None = None
-        if self.enricher is not None:
+        importance_hint: float | None = importance
+        if enrich and self.enricher is not None:
             enriched = self.enricher.enrich(text)
             content, summary, entities, extra_tags = (
                 enriched.content, enriched.summary, enriched.entities, enriched.tags,
             )
-            importance_hint = getattr(enriched, "importance", None)
+            if importance_hint is None:
+                importance_hint = getattr(enriched, "importance", None)
 
         meta: dict = dict(metadata or {})
         if summary:
@@ -399,7 +407,7 @@ class MemoryClient:
         Uses the same ``estimate_importance`` as the lifecycle so behavior is
         consistent: access_count and last_accessed_at (both just bumped by
         ``touch_memories``) raise a frequently-recalled memory's importance, so
-        ``top_by_importance`` surfaces it in the next turn's persistent-context
+        ``top_by_importance`` surfaces it in the next turn's query recall
         block. Pinned rules (>= pin threshold) are never downgraded. Batched —
         one read (get_many) + one write (update_importances).
         """
@@ -862,7 +870,7 @@ class MemoryClient:
             except Exception:  # noqa: BLE001, S110 -- bookkeeping is best-effort
                 pass
             # Adaptive importance: a memory that keeps getting recalled should
-            # climb toward the top of the persistent-context block, so
+            # climb toward the top of recall ranking, so
             # top_by_importance (ordered by importance desc) surfaces it next
             # turn. Re-estimate from the freshly-touched access_count +
             # last_accessed_at. Pinned rules are never downgraded.

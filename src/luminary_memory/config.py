@@ -67,6 +67,7 @@ class Settings:
     rrf_k: int = field(default_factory=lambda: _env_int("LUMINARY_RRF_K", 60))
     dedup_jaccard_threshold: float = field(default_factory=lambda: _env_float("LUMINARY_DEDUP_JACCARD_THRESHOLD", 0.85))
     recall_cliff_threshold: float = field(default_factory=lambda: _env_float("LUMINARY_RECALL_CLIFF_THRESHOLD", 0.45))
+    recall_min_score: float = field(default_factory=lambda: _env_float("LUMINARY_RECALL_MIN_SCORE", 0.0))
     importance_recall_boost: float = field(default_factory=lambda: _env_float("LUMINARY_IMPORTANCE_RECALL_BOOST", 1.0))
     strategy_weights: dict[str, float] = field(
         default_factory=lambda: {
@@ -78,10 +79,6 @@ class Settings:
     )
     token_budget: int = field(default_factory=lambda: _env_int("LUMINARY_TOKEN_BUDGET", 4096))
     max_memories: int | None = field(default_factory=lambda: _env_int("LUMINARY_MAX_MEMORIES", 1000))
-    # persistent context (Hermes provider)
-    context_top_n: int = field(default_factory=lambda: _env_int("LUMINARY_CONTEXT_TOP_N", 8))
-    context_budget: int = field(default_factory=lambda: _env_int("LUMINARY_CONTEXT_BUDGET", 2000))
-    context_min_importance: float = field(default_factory=lambda: _env_float("LUMINARY_CONTEXT_MIN_IMPORTANCE", 0.0))
     # core memory (DB-backed, auto-loaded into the system prompt every session)
     core_tag: str = field(default_factory=lambda: os.environ.get("LUMINARY_CORE_TAG", "core"))
     core_top_n: int = field(default_factory=lambda: _env_int("LUMINARY_CORE_TOP_N", 12))
@@ -127,11 +124,9 @@ class Settings:
             "ingest_llm": self.ingest_llm,
             "rrf_k": self.rrf_k,
             "dedup_jaccard_threshold": self.dedup_jaccard_threshold,
+            "recall_min_score": self.recall_min_score,
             "token_budget": self.token_budget,
             "max_memories": self.max_memories,
-            "context_top_n": self.context_top_n,
-            "context_budget": self.context_budget,
-            "context_min_importance": self.context_min_importance,
             "core_tag": self.core_tag,
             "core_top_n": self.core_top_n,
             "core_budget": self.core_budget,

@@ -1,5 +1,72 @@
 # Changelog
 
+## [0.2.18] - 2026-08-20
+
+### Changed
+
+- **Importance is now retrieval-only.** The importance-based persistent-context
+  family (`context_top_n`, `context_budget`, `context_min_importance`) was
+  **removed**. Importance now scores query relevance and drives pruning only; it
+  no longer pins memory into the system prompt as rules that could override a
+  live user instruction.
+- **Core = DB-backed `MEMORY.md`.** Rules tagged `core` remain auto-loaded every
+  session (the durable-rules channel the user chooses), injected with an
+  explicit subordinate label so a live instruction always wins.
+- **Docs & skill** synced to the new importance model; skill version bumped to
+  `2.1.0`.
+
+### Added
+
+- **Recall noise filter** — shell/terminal artifacts (`&&`, `===`, `echo `,
+  etc.) and near-empty content are dropped before they can pollute context.
+- **Destructive-imperative suppression** — a query that is a destructive
+  instruction (`hapus`, `delete`, `remove`, `stop`, `disable`, ...) suppresses
+  the recall block so the agent follows the instruction instead of re-anchoring
+  on the stored topic.
+
+### Removed
+
+- `context_top_n`, `context_budget`, `context_min_importance` from provider
+  `_DEFAULTS`, dashboard schema, and `Settings`. Recalled context is capped by
+  `token_budget` (`2048`) / `recall_limit` (`10`); core by `core_top_n` (`12`) /
+  `core_budget` (`8000`).
+
+## [0.2.17] - 2026-08-19
+
+### Fixed
+
+- **OpenAI-compatible gateway envelope unwrapping** — gateways and reverse
+  proxies (such as the Cline Pass Gateway `api.cline.bot` or certain API
+  aggregators) wrap standard ChatCompletion response bodies inside a top-level
+  `{"data": {"choices": [...]}}` envelope. `_call_llm()` now automatically
+  unwraps the `data` dictionary if present, preventing empty strings from
+  causing silent memory curation drops (`retain skipped (LLM: no curated summary)`).
+  Fully backward-compatible with standard OpenAI endpoints.
+
+### Enhanced
+
+- **Telegram activity hook robustness (`luminary-activity`)**:
+  - **Special character escaping** — memory content with unescaped Markdown
+    special characters (`_`, `*`, `` ` ``, `[`, `]`) is now automatically escaped,
+    preventing HTTP 400 Bad Request parsing rejections from Telegram Bot API.
+  - **Visual pin indicator** — durable rules (`importance >= 0.85` or tagged
+    `core`/`rule`) are now rendered with a `📌` icon for immediate visual clarity,
+    distinguishing rules from regular factual notes (`•`).
+  - **Batch overflow counter** — turns with $> 3$ memories display the top 3 items
+    and a summary counter `... (+N more)`, tracking all processed IDs cleanly.
+  - **Self-recovery `.env` fallback & topic thread routing** — parses `~/.hermes/.env`
+    automatically if subprocess environment variables are missing, and routes to
+    `TELEGRAM_HOME_CHANNEL_THREAD_ID` forum topics.
+- **LLM enricher transient error retry** — 1x defensive retry on transient network
+  glitches with exponential backoff before falling back to raw turn text.
+
+### Tests
+
+- Added regression tests `test_unwrap_data_envelope` and `test_unwrap_data_envelope_plain_shape`.
+- Added retry resilience test `test_call_llm_retries_on_transient_error`.
+- Added hook test cases for Markdown character escaping, visual pin icons, and batch overflow.
+
+
 ## [0.2.16] - 2026-08-19
 
 ### Added

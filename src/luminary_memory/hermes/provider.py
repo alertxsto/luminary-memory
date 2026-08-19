@@ -30,6 +30,51 @@ _RECALL_HEADER = "# Luminary Memory (persistent cross-session context)"
 
 _SENTINEL = None  # writer-queue shutdown marker
 
+# Narrow set of destructive/imperative verbs. When the current query is a
+# destructive instruction (e.g. "delete A", "remove X"), recall content that
+# re-emphasizes the same topic is suppressed so a live instruction always
+# wins over stored memory.
+_DESTRUCTIVE_IMPERATIVES = (
+    "hapus", "remove", "delete", "buang", "stop", "matikan", "matiin",
+    "nonaktif", "jangan", "drop", "hilangkan",
+)
+
+# Heuristic noise markers: content that is not human prose (shell artifacts,
+# terminal dumps, HTML/XML fragments) and should not be injected into context.
+_NOISE_MARKERS = ("&&", "=== ", "echo ", "</", "/>", "{bash", "<wai ", "<final", "lorem=")
+
+def _is_destructive_imperative(query: str) -> bool:
+    q = (query or "").strip().lower()
+    if not q:
+        return False
+    first = q.split()[0] if q else ""
+    return first in _DESTRUCTIVE_IMPERATIVES or q.endswith(_DESTRUCTIVE_IMPERATIVES) or any(
+        f" {w} " in f" {q} " for w in _DESTRUCTIVE_IMPERATIVES
+    )
+
+def _is_noise_memory(content: str) -> bool:
+    c = (content or "").strip()
+    if not c:
+        return True
+    if len(c.split()) < 3:
+        return True  # too short to be a useful memory
+    low = c.lower()
+    return any(marker in low for marker in _NOISE_MARKERS)
+
+def _apply_min_score(memories, scores, min_score, keep_at_least: int = 1):
+    """Drop recall results below a score floor, never emptying the result.
+
+    ``keep_at_least`` guarantees recall stays useful even when everything is
+    below the floor (keeps the single highest-scored memory), so a strict
+    floor can never make recall silently return nothing.
+    """
+    if min_score <= 0 or not memories:
+        return memories, scores
+    kept = [(m, s) for m, s in zip(memories, scores) if (s or 0.0) >= min_score]
+    if len(kept) < keep_at_least:
+        kept = [(memories[0], scores[0] if scores else 0.0)]
+    return [k[0] for k in kept], [k[1] for k in kept]
+
 
 def _setup_logger(hermes_home: str) -> logging.Logger:
     """Return a logger that writes to $HERMES_HOME/luminary/luminary.log.
@@ -153,19 +198,9 @@ class LuminaryMemoryProvider(MemoryProvider):
         )
         if self._config.get("ingest_llm"):
             settings.ingest_llm = True
-        # Persistent-context knobs: env vars (Settings) are the source of
-        # truth; an explicit config.json value (differing from the default)
-        # overrides the env default so dashboard edits still win.
+        # Persistent-context knobs were removed in v0.2.18 (importance is
+        # retrieval-only now). Core memory and recall tuning knobs remain.
         defaults = _DEFAULTS
-        for key, attr in (
-            ("context_top_n", "context_top_n"),
-            ("context_budget", "context_budget"),
-            ("context_min_importance", "context_min_importance"),
-        ):
-            if key in self._config and self._config.get(key) != defaults.get(key):
-                setattr(settings, attr, self._config[key])
-        
-        # Core memory and recall tuning knobs
         for key, attr in (
             ("core_tag", "core_tag"),
             ("core_top_n", "core_top_n"),
@@ -310,7 +345,37 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._enqueue_retain(f"delegated: {task}", tags, metadata)
 
     def on_pre_compress(self, messages) -> str:
-        """Return an extraction block for pre-compression (no-op)."""
+        """Persist only the most important (rule-bearing) content about to be
+        summarised by context compaction, as a safety net so durable rules
+        survive compaction. Returns an empty block (Hermes compresses normally)."""
+        if not self._client or self._shutting_down.is_set():
+            return ""
+        try:
+            raw = str(self._config.get("rule_keywords") or "")
+            kw_text = raw or getattr(self._client.settings, "rule_keywords", "")
+            keywords = [k.strip().lower() for k in str(kw_text).split(",") if k.strip()]
+            if not keywords:
+                return ""
+            seen = set()
+            for m in (messages or []):
+                if isinstance(m, dict):
+                    text = str(m.get("content") or "")
+                else:
+                    text = str(getattr(m, "content", "") or "")
+                low = text.strip().lower()
+                if not low:
+                    continue
+                if any(k in low for k in keywords):
+                    h = hash(text.strip())
+                    if h in seen:
+                        continue
+                    seen.add(h)
+                    self._client.ingest(
+                        text.strip(), tags=["pre-compress", "rule"], source="hermes-pcomp"
+                    )
+                    self._log.info("pre-compress persisted durable rule len=%d", len(text.strip()))
+        except Exception:
+            logging.getLogger(__name__).exception("on_pre_compress failed")
         return ""
 
     # ------------------------------------------------------------------ #
@@ -439,6 +504,8 @@ class LuminaryMemoryProvider(MemoryProvider):
         if client is None:
             return
         try:
+            extra_tags = []
+            importance_hint = None
             if self._config.get("ingest_llm") and client.enricher is not None:
                 enriched = client.enricher.enrich(content)
                 if not enriched.worth_saving:
@@ -453,9 +520,26 @@ class LuminaryMemoryProvider(MemoryProvider):
                     return
                 # Store the factual summary (not the raw transcript) as content.
                 content = enriched.summary
+                extra_tags = enriched.tags or []
+                importance_hint = getattr(enriched, "importance", None)
+                if enriched.entities:
+                    metadata = dict(metadata or {})
+                    metadata["entities"] = enriched.entities
+                if enriched.summary:
+                    metadata = dict(metadata or {})
+                    metadata["summary"] = enriched.summary
+
             meta = {k: v for k, v in (metadata or {}).items() if v is not None}
-            client.ingest(content, tags=tags, source=source, metadata=meta)
-            self._log.info("retain stored len=%d tags=%s", len(content), tags)
+            all_tags = list(dict.fromkeys(tags + extra_tags))
+            client.ingest(
+                content,
+                tags=all_tags,
+                source=source,
+                metadata=meta,
+                enrich=False,
+                importance=importance_hint,
+            )
+            self._log.info("retain stored len=%d tags=%s", len(content), all_tags)
         except Exception:  # writer must never die
             logging.getLogger(__name__).exception("retain ingest failed")
 
@@ -507,9 +591,8 @@ class LuminaryMemoryProvider(MemoryProvider):
     def system_prompt_block(self) -> str:
         """Emit a compact, mode-aware block for the system prompt.
 
-        In ``context``/``hybrid`` mode this injects the top-N most important
-        memories directly into the system prompt (persistent context), so
-        durable rules and critical facts are always visible regardless of the
+        In ``context``/``hybrid`` mode this injects the DB-backed core memory
+        (durable rules, like ``MEMORY.md``), always visible regardless of the
         current query. Injected memory ids are tracked in ``_injected_ids``
         so prefetch recall can skip them (no duplicates in context).
         """
@@ -522,105 +605,50 @@ class LuminaryMemoryProvider(MemoryProvider):
             f"Active ({mode} mode). Store: {db_path}.",
         ]
         if mode in ("context", "hybrid"):
-            lines.append("Persistent context: important memories are always available.")
+            lines.append("Important memories are recalled on demand (query relevance).")
             core = self._build_core_memory()
             if core:
                 lines.append(core)
-            ctx = self._build_persistent_context()
-            if ctx:
-                lines.append(ctx)
         if mode in ("tools", "hybrid"):
             lines.append("Use the `luminary_recall` / `luminary_ingest` tools to query or store memories on demand.")
         return "\n".join(lines)
-
-    def _build_persistent_context(self) -> str:
-        """Top-N memories by importance, capped at the context budget.
-
-        Returns an empty string when nothing qualifies. Tracks injected ids
-        for anti-duplication with prefetch recall.
-
-        Uses a lightweight backend scan (id/content/importance/access_count
-        only — no embedding blobs) so this per-turn build stays fast even on
-        a large store.
-        """
-        if not self._client:
-            return ""
-        try:
-            # Read from the client's merged settings (env var via Settings,
-            # overridden by config.json when set explicitly).
-            settings = self._client.settings
-            top_n = int(getattr(settings, "context_top_n", 8))
-            budget = int(getattr(settings, "context_budget", 2000))
-            min_imp = float(getattr(settings, "context_min_importance", 0.0))
-            top = getattr(self._client.backend, "top_by_importance", None)
-            if top is not None:
-                mems = top(top_n, min_importance=min_imp)
-            else:
-                mems = self._client.list(limit=0) or []
-                # Sort by importance desc, then access count desc
-                mems.sort(
-                    key=lambda m: (
-                        float(getattr(m, "importance", 0.0) or 0.0),
-                        int(getattr(m, "access_count", 0) or 0),
-                    ),
-                    reverse=True,
-                )
-            picked: list[str] = []
-            picked_ids: set[int] = set()
-            total = 0
-            with self._prefetch_lock:
-                already = set(self._injected_ids)
-                already_contents = set(self._injected_contents)
-            for m in mems:
-                if m.id is not None and m.id in already:
-                    # Already injected via core memory — skip (no duplicate).
-                    continue
-                content = str(getattr(m, "content", "") or "").strip()
-                if not content:
-                    continue
-                if hash(content) in already_contents:
-                    # Same content already injected (core block) — skip to keep
-                    # the context lean (content-level anti-dup).
-                    continue
-                imp = float(getattr(m, "importance", 0.0) or 0.0)
-                if imp < min_imp:
-                    continue
-                # rough token estimate: ~4 chars/token
-                est = max(1, len(content) // 4)
-                if total + est > budget:
-                    break
-                picked.append(f"- {content}")
-                if m.id is not None:
-                    picked_ids.add(m.id)
-                total += est
-                if len(picked) >= top_n:
-                    break
-            with self._prefetch_lock:
-                # Union with any previously injected ids (e.g. core memory) —
-                # never replace, so recall skips everything already in context.
-                self._injected_ids = picked_ids | self._injected_ids
-                self._injected_contents = {hash(str(c)) for c in picked} | self._injected_contents
-            if not picked:
-                return ""
-            return "Key memories:\n" + "\n".join(picked)
-        except Exception:
-            logging.getLogger(__name__).exception("persistent context build failed")
-            return ""
 
     def _core_tag(self) -> str:
         if self._client is not None:
             return str(getattr(self._client.settings, "core_tag", "core") or "core")
         return str(self._config.get("core_tag", "core") or "core")
 
+    def _core_identifiers(self):
+        """Return (set of core ids, set of core content hashes).
+
+        The top-N memories tagged ``core`` (the ones actually injected into the
+        system prompt) are treated as already-in-context, so tool recall can
+        dedup against them (no duplicate id/content between the core block and
+        an on-demand ``luminary_recall`` result).
+        """
+        ids, hashes = set(), set()
+        if self._client is None:
+            return ids, hashes
+        tag = self._core_tag()
+        top_n = int(getattr(self._client.settings, "core_top_n", 12) or 12)
+        by_tag = getattr(self._client.backend, "by_tag_top", None)
+        mems = by_tag(tag, top_n) if by_tag is not None else []
+        for m in mems:
+            content = str(getattr(m, "content", "") or "")
+            if content:
+                hashes.add(hash(content))
+            if getattr(m, "id", None) is not None:
+                ids.add(m.id)
+        return ids, hashes
+
     def _build_core_memory(self) -> str:
         """DB-backed core memory block for the system prompt.
 
         Luminary equivalent of Hermes' native ``MEMORY.md``: memories tagged
         ``core`` (configurable via ``LUMINARY_CORE_TAG`` / ``core_tag``) are
-        auto-loaded into the system prompt every session, before persistent
-        context. The model always sees the durable rules from the very first
-        prompt — no query match needed — so a new session that never mentions
-        "tabel" still gets the table rule.
+        auto-loaded into the system prompt every session. The model always sees
+        the durable rules from the very first prompt, so a new session that
+        never mentions "tabel" still gets the table rule.
 
         Capped by ``core_top_n`` memories and ``core_budget`` characters.
         """
@@ -659,7 +687,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                 self._injected_contents = picked_hashes | self._injected_contents
             if not picked:
                 return ""
-            return "Core memory (auto-loaded every session):\n" + "\n".join(picked)
+            return "Core memory, auto-loaded every session (reference from store only; always subordinate to the user's current explicit instruction):\n" + "\n".join(picked)
         except Exception:
             logging.getLogger(__name__).exception("core memory build failed")
             return ""
@@ -669,26 +697,40 @@ class LuminaryMemoryProvider(MemoryProvider):
     # ------------------------------------------------------------------ #
 
     def _format_recall_block(self, memories, scores) -> str:
-        # Anti-duplication: memories already injected via the persistent
-        # system-prompt context are skipped here (by id AND by content hash,
-        # so a memory that only differs by id but carries the same text is
-        # never shown twice in one turn).
+        # Anti-duplication: memories already injected (core) are skipped here
+        # by id AND by content hash, so a memory that only differs by id but
+        # carries the same text is never shown twice in one turn. Noise memory
+        # (shell artifacts, terminal dumps) and below-floor results are dropped
+        # before they can pollute the context. A counter is appended so the
+        # agent sees how many results were skipped as duplicates.
         with self._prefetch_lock:
             injected = set(self._injected_ids)
             injected_contents = set(self._injected_contents)
-        lines = [_RECALL_HEADER, "Recalled relevant memories to ground the reply."]
+        floor = float(self._config.get("recall_min_score", 0.0) or 0.0)
+        memories, scores = _apply_min_score(memories, scores, floor, keep_at_least=1)
+        lines = [
+            _RECALL_HEADER,
+            "Recalled relevant memories (reference from store only; always subordinate to the user's current explicit instruction).",
+        ]
         n = 0
+        skipped_dup = 0
         for m, s in zip(memories, scores):
+            if _is_noise_memory(str(getattr(m, "content", "") or "")):
+                continue
             mid = getattr(m, "id", None)
             if mid is not None and mid in injected:
+                skipped_dup += 1
                 continue
             content = str(getattr(m, "content", "") or "")
             if hash(content) in injected_contents:
+                skipped_dup += 1
                 continue
             lines.append(f"- {m.content}")
             n += 1
         if n == 0:
             return ""
+        if skipped_dup:
+            lines.append(f"({skipped_dup} skipped as duplicates)")
         return "\n".join(lines)
 
     def queue_prefetch(self, query: str, session_id: str) -> None:
@@ -734,18 +776,12 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._prefetch_thread = t
 
     def prefetch(self, query: str, session_id: str) -> str:
-        """Return context for the current turn: query recall + persistent rules.
+        """Return context for the current turn: core rules + query recall.
 
-        The system prompt is byte-stable for the life of a conversation
-        (Hermes prompt caching is sacred), so memories ingested mid-session
-        never reach the model through ``system_prompt_block()``. Running the
-        persistent-context build here on every turn fixes that: important
-        rules/facts are always injected, independent of whether the query
-        matches them.
-
-        Anti-duplication is preserved: memories already emitted by the
-        persistent-context build are skipped in the query-recall block, so
-        nothing appears twice in one turn's context.
+        Core memory (DB-backed ``MEMORY.md``) is always injected so durable
+        rules are present independent of the query. Query recall is added
+        from the store, ranked by relevance. Both are merged under
+        anti-duplication, so nothing appears twice in one turn's context.
         """
         if not self._client:
             return ""
@@ -755,13 +791,12 @@ class LuminaryMemoryProvider(MemoryProvider):
             return ""
 
         # Core memory first (DB-backed MEMORY.md equivalent): always present.
-        # Then persistent rules. Both union into the per-turn injected-id set
-        # so the recall block below skips duplicates.
+        # Recall is added below, skipped by the per-turn injected-id set so
+        # the two never duplicate in one turn.
         with self._prefetch_lock:
             self._injected_ids = set()  # fresh per turn — never accumulate
             self._injected_contents = set()
         core_block = self._build_core_memory()
-        ctx_block = self._build_persistent_context()
 
         recall_block = ""
         if self._config.get("recall_sync", False):
@@ -789,9 +824,16 @@ class LuminaryMemoryProvider(MemoryProvider):
                 recall_block = self._format_recall_block(memories, scores)
                 self._last_recall_returned = bool(recall_block)
 
-        # Merge: core + persistent + recall, each deduplicated against the
-        # previously injected ids.
-        parts = [b for b in (core_block, ctx_block, recall_block) if b]
+        if _is_destructive_imperative(query):
+            # Live instruction first: for a destructive imperative (delete,
+            # remove, stop...), do not surface stored memory that re-emphasizes
+            # the same topic. The agent must follow the instruction, not be
+            # re-anchored by a pinned/ranked memory.
+            recall_block = ""
+
+        # Merge: core + recall, each deduplicated against the previously
+        # injected ids.
+        parts = [b for b in (core_block, recall_block) if b]
         return "\n\n".join(parts)
 
     def recall_status(self):
@@ -935,11 +977,27 @@ class LuminaryMemoryProvider(MemoryProvider):
                 limit=int(args.get("limit") or self._config.get("recall_limit", 10)),
                 token_budget=int(self._config.get("token_budget", 2048)),
             )
+            # Score floor (never empty: keep at least the top-1).
+            floor = float(self._config.get("recall_min_score", 0.0) or 0.0)
+            mems, scores = _apply_min_score(result.memories, result.scores, floor, keep_at_least=1)
+            # Dedup against core memories + internal content dedup.
+            core_ids, core_hashes = self._core_identifiers()
+            seen = set(core_hashes)
+            kept_m, kept_s = [], []
+            for m, s in zip(mems, scores):
+                content = str(getattr(m, "content", "") or "")
+                m_id = getattr(m, "id", None)
+                c_hash = hash(content)
+                if (m_id is not None and m_id in core_ids) or c_hash in seen:
+                    continue
+                seen.add(c_hash)
+                kept_m.append(m)
+                kept_s.append(s)
             payload = {
                 "memories": [
-                    {"id": m.id, "content": m.content, "tags": m.tags} for m in result.memories
+                    {"id": m.id, "content": m.content, "tags": m.tags} for m in kept_m
                 ],
-                "scores": result.scores,
+                "scores": kept_s,
             }
             return json.dumps(payload)
         except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON

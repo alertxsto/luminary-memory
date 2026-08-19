@@ -1,23 +1,26 @@
 # Recall
 
-## Persistent context (v0.2.11+)
+## Core memory (DB-backed, auto-loaded)
 
-In the Hermes provider, recall is not just a ranked list — the top-N most
-important memories (durable rules, critical facts) are injected into context
-**every turn**, regardless of query match, and merged with the query-recall
-block under anti-duplication. This guarantees the agent never "forgets" a rule
-that exists in the store, even when the current query does not mention it.
+Rules tagged `core` are injected into the system prompt **every session**,
+regardless of query match (the DB-backed equivalent of Hermes' `MEMORY.md`).
+All other memories are surfaced through query retrieval only:
 
 ```
-Key memories:                          <- persistent block (top-N by importance)
-- <rule/fact 1>
-- <rule/fact 2>
+Core memory (auto-loaded every session):   <- always present, subordinate to live instruction
+- <durable rule 1>
+- <durable rule 2>
 
 # Luminary Memory (persistent cross-session context)   <- query-recall block
-- <query-relevant memory>              <- skips anything already injected above
+- <query-relevant memory>                  <- skips anything already injected above
 ```
 
-Anti-duplication: memory ids injected by the persistent block are tracked per
+> Persistent-context injection (top-N by importance every turn) was **removed
+> in v0.2.18**. Importance now scores query relevance and drives pruning only —
+> it does not pin memory into the prompt as rules that override a live user
+> instruction. Use the `core` tag for rules that must always be present.
+
+Anti-duplication: memory ids injected by the core block are tracked per
 turn and skipped by the query-recall block, so no memory appears twice in one
 turn's context.
 
@@ -83,7 +86,7 @@ query tokens, so recall quality can never get worse than baseline.
 
 ## Adaptive importance (v0.2.15)
 
-Memories that keep getting recalled have their importance re-estimated immediately during the recall pass (based on access count and recency). This allows frequently accessed facts to naturally climb in importance and eventually enter the persistent context, adapting to the agent's current focus.
+Memories that keep getting recalled have their importance re-estimated immediately during the recall pass (based on access count and recency). This allows frequently accessed facts to naturally climb in score and rank higher in the next turn's query recall, adapting to the agent's current focus.
 
 ## Adaptive cutoff
 
@@ -120,9 +123,10 @@ Results are truncated to a token budget (`LUMINARY_TOKEN_BUDGET`, default 4096) 
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | caps total injected tokens |
 | `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | quality/speed tradeoff |
 | `importance_recall_boost` | `LUMINARY_IMPORTANCE_RECALL_BOOST` | ranking bonus for memories at importance ≥ 0.8 (default 1.0) |
-| `context_top_n` | `LUMINARY_CONTEXT_TOP_N` | top-N important memories injected every turn (provider, default 8) |
-| `context_budget` | `LUMINARY_CONTEXT_BUDGET` | max tokens of persistent context (provider, default 2000) |
-| `context_min_importance` | `LUMINARY_CONTEXT_MIN_IMPORTANCE` | minimum importance for persistent-context injection (provider, default 0.0) |
+
+> Persistent-context knobs (`context_top_n`, `context_budget`,
+> `context_min_importance`) were removed in v0.2.18 — importance is now used
+> only for query retrieval/recall and pruning, never to pin rules per turn.
 
 ## Performance
 
@@ -136,8 +140,7 @@ Recall runs four strategies in parallel and fuses them. On a 5k-memory store
 | Keyword (FTS5 BM25) | ~2–5 ms |
 | Temporal (batched fetch) | ~16–20 ms |
 | Graph (SQL aggregation) | ~20–25 ms |
-| Persistent context (lean scan, top-8) | ~5 ms |
+| Core memory (tag 'core', auto-load) | ~5 ms |
 
 Per-turn bookkeeping (access-count bump) is batched into one UPDATE statement,
-and the persistent-context scan reads only `id/content/importance/access_count`
-columns — never embedding blobs — so agent turns stay cheap.
+so agent turns stay cheap.

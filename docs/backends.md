@@ -18,7 +18,7 @@
   a background recall thread and the writer thread never trip
   `sqlite3.ProgrammingError`. `close()` only touches the caller's thread-local
   connection.
-- **Lean scans** power the per-turn persistent-context/core blocks and avoid
+- **Lean scans** power the per-turn core/recall blocks and avoid
   decoding the (large) embedding blobs for every row:
   `top_by_importance`, `by_tag_top`, `temporal_scan`, `scan_embeddings`,
   `scan_embeddings_matrix`. Writes are batched (`touch_memories`,

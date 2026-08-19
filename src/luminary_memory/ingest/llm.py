@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -119,16 +122,32 @@ class OpenAICompatibleEnricher(LLMEnricher):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            raw = resp.read()
-            payload = json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw))
+        for attempt in range(2):
             try:
-                choices = payload.get("choices") or []
-                if choices:
-                    return (choices[0].get("message") or {}).get("content") or ""
-            except Exception:  # noqa: BLE001, S110
-                pass
-            return ""
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    raw = resp.read()
+                    payload = json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw))
+                    # Some OpenAI-compatible gateways (e.g. the cline gateway) wrap the
+                    # standard ChatCompletion shape inside a top-level "data" envelope:
+                    #   {"data": {"choices": [...]}}
+                    # Unwrap it so we always read "choices" from the payload root.
+                    if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+                        payload = payload["data"]
+                    try:
+                        choices = payload.get("choices") or []
+                        if choices:
+                            return (choices[0].get("message") or {}).get("content") or ""
+                    except Exception:  # noqa: BLE001, S110
+                        pass
+                    return ""
+            except Exception as exc:
+                if attempt == 0:
+                    import time
+                    time.sleep(0.3)
+                    continue
+                logger.warning("enricher call failed after retry: %s", exc)
+                raise
+        return ""
 
     def enrich(self, text: str) -> EnrichedContent:
         if not self.base_url:

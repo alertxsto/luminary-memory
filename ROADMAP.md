@@ -2,7 +2,7 @@
 
 > **Tagline:** A lightweight, self-hosted memory layer for AI agents.
 
-**Current release:** v0.2.16 (complete dashboard coverage + config reference) · **Tests:** 370+ passing · **Coverage:** 93% · **License:** Apache-2.0
+**Current release:** v0.2.17 (gateway envelope unwrap & resilience) · **Tests:** 375+ passing · **Coverage:** 93% · **License:** Apache-2.0
 
 ---
 
@@ -24,21 +24,22 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 
 | Area | Status |
 |------|--------|
-| Core library (ingest / recall / lifecycle) | ✅ Done (v0.2.16) |
+| Core library (ingest / recall / lifecycle) | ✅ Done (v0.2.17) |
 | Backends (SQLite default, pgvector optional) | ✅ Done (v0.2.14) |
-| Python API (`MemoryClient`) | ✅ Done (v0.2.16) |
+| Python API (`MemoryClient`) | ✅ Done (v0.2.17) |
 | CLI (`luminary-memory`) | ✅ Done (v0.2.7) |
-| Hermes memory provider | ✅ Done (v0.2.16, 29 dashboard fields) |
+| Hermes memory provider | ✅ Done (v0.2.17, 29 dashboard fields) |
 | Dashboard settings | ✅ Done (v0.2.16, 100% schema coverage) |
 | Recall quality (weighted fusion + query expansion) | ✅ Done (v0.2.15, rule-aware expansion) |
-| Persistent context (per-turn rule injection) | ✅ Done (v0.2.11, adaptive importance v0.2.15) |
+| Persistent context (per-turn importance pinning) | ⛔ Removed (v0.2.18). Importance is retrieval-only now; durable rules live in core memory |
 | Core memory (DB-backed, auto-loaded every session) | ✅ Done (v0.2.13, integrity v0.2.15) |
 | Adaptive memory (importance on recall, content-level anti-dup) | ✅ Done (v0.2.15) |
 | Rule hygiene (pinning, auto-replace, summary-only) | ✅ Done (v0.2.11) |
 | Performance (vectorized scans, batched writes) | ✅ Done (v0.2.12) |
 | Store hardening (max cap, dedup, selective curation) | ✅ Done (v0.2.12) |
-| Website | ✅ Done (v0.2.16) |
-| Documentation | ✅ Done (v0.2.16, config-ref + agent-tools) |
+| Gateway resilience (data envelope unwrapping) | ✅ Done (v0.2.17) |
+| Website | ✅ Done (v0.2.17) |
+| Documentation | ✅ Done (v0.2.17, config-ref + agent-tools) |
 | Test coverage | ✅ 93% total |
 
 ---
@@ -66,10 +67,25 @@ Every AI agent deserves durable memory that lives on its own infrastructure. Lum
 | v0.2.14 | 2026-08-18 | SQLite backend hardening: FTS5 rebuild migration, dead-code cleanup, 12 new backend tests, backends.md rewrite |
 | v0.2.15 | 2026-08-18 | Adaptive memory: importance on recall, rule-aware query expansion, content-level anti-dup, core integrity tests |
 | v0.2.16 | 2026-08-19 | Complete dashboard config coverage (29 fields), importance_recall_boost dual config+env, docs/config-reference.md & docs/agent-tools.md, website v0.2.16 |
+| v0.2.17 | 2026-08-19 | Gateway resilience: enricher unwrap data envelope (fixes Cline Pass / proxy gateway silent memory curation drops) |
+| v0.2.18 | 2026-08-20 | Importance repurposing: removed persistent-context pinning, importance is retrieval-only, core = MEMORY.md rules, recall noise filter + destructive-imperative suppression |
 
 ---
 
 ## Roadmap
+
+### v0.2.18 — Importance Repurposing: Retrieval-Only (✅ in progress)
+
+- [x] Remove the persistent-context family (`context_top_n`, `context_budget`, `context_min_importance`) from `_DEFAULTS`, `config_schema` (dashboard), and `Settings`.
+- [x] Decouple the provider: importance no longer pins memory into the system prompt per turn.
+- [x] Core = DB-backed `MEMORY.md`: tagged `core` rules auto-load every session, subordinate label to live instructions.
+- [x] Recall noise filter (shell/terminal artifacts) + destructive-imperative suppression (delete/remove/stop).
+- [ ] Regression tests, docs sync, skill version bump, release.
+
+### v0.2.17 — Gateway Resilience & Bugfix (✅ released)
+
+- [x] Enricher envelope unwrap — automatic unwrapping of `{"data": {"choices": [...]}}` responses from Cline Pass and OpenAI-compatible proxy gateways.
+- [x] Regression tests added (`test_unwrap_data_envelope` & `test_unwrap_data_envelope_plain_shape`).
 
 ### v0.2.16 — Complete Dashboard Coverage & Config Reference (✅ released)
 

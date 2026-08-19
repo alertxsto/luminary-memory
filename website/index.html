@@ -70,7 +70,7 @@
     <div class="hero-inner reveal-on-scroll">
       <div class="eyebrow">
         <span class="eyebrow-dot" aria-hidden="true"></span>
-        <span>v0.2.16 · Self-Hosted Memory Layer · 93% Test Coverage</span>
+        <span>v0.2.18 · Self-Hosted Memory Layer · 93% Test Coverage</span>
       </div>
 
       <h1 class="hero-title">
@@ -255,7 +255,7 @@
       <div class="arch-step">
         <div class="arch-body">
           <h3>Always in the system prompt</h3>
-          <p>Memories tagged <code>core</code> are injected into the system prompt <strong>every session, before persistent context and recall</strong>. A new session that asks "riset x, y, z" without ever mentioning "tabel" still has the table rule in context from turn one — no query match needed.</p>
+          <p>Memories tagged <code>core</code> are injected into the system prompt <strong>every session</strong>. A new session that asks "riset x, y, z" without ever mentioning "tabel" still has the table rule in context from turn one, no query match needed.</p>
         </div>
       </div>
       <div class="arch-step">
@@ -273,13 +273,13 @@
       <div class="arch-step">
         <div class="arch-body">
           <h3>Never duplicated</h3>
-          <p>Core memories are tracked in the injected-id set, so they never reappear in persistent context or query recall. Three-way dedup across core, persistent, and recall blocks.</p>
+          <p>Core memories are tracked in the injected-id set, so they never reappear in recall. Dedup across core and recall blocks keeps identical text to once per turn.</p>
         </div>
       </div>
     </div>
 
     <div class="arch-foot reveal-on-scroll">
-      <span>Every turn, context = core memory + persistent context + query recall, each deduplicated.</span>
+      <span>Every turn, context = core rules + query recall, each deduplicated.</span>
     </div>
   </section>
 
@@ -358,7 +358,7 @@
         <div class="bench-pg bench-pg-missing">not yet benchmarked</div>
       </div>
       <div class="bench-row">
-        <div class="bench-metric">Persistent context build (per turn)</div>
+        <div class="bench-metric">Recall blocks (per turn)</div>
         <div class="bench-sqlite">~5.3ms (lean scan, no embedding decode)</div>
         <div class="bench-pg bench-pg-missing">not yet benchmarked</div>
       </div>
@@ -622,7 +622,7 @@
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>Configure <code>memory.provider=luminary</code> in your Hermes agent settings. The provider performs local fused recall on every conversational turn (zero LLM tokens), injects core memory + top-N important memories into context every turn as persistent context, exposes six memory tools to the model, and triggers automatic store maintenance when the session closes.</p>
+          <p>Configure <code>memory.provider=luminary</code> in your Hermes agent settings. The provider performs local fused recall on every conversational turn (zero LLM tokens), injects core memory (rules) into the system prompt and recalls relevant memories each turn, exposes six memory tools to the model, and triggers automatic store maintenance when the session closes.</p>
         </div>
       </details>
 
@@ -632,7 +632,7 @@
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>Four safeguards: (1) <strong>Core memory</strong> — memories tagged <code>core</code> are auto-loaded into the system prompt every session (the DB-backed equivalent of <code>MEMORY.md</code>), so durable rules are present from the very first prompt. (2) <strong>Persistent context</strong> — the top-N memories by importance are injected every turn, merged with query recall under anti-duplication (by id and content hash, so identical text never appears twice). (3) <strong>Rule pinning</strong> — memories at importance ≥ 0.9 are never pruned or consolidated away. (4) <strong>Rule auto-replace</strong> — a similar rule ingest replaces the old one (anti-contradiction), so "never use tables" never coexists with "always use tables". Since v0.2.16 the store also <strong>learns from use</strong>: memories that keep getting recalled are re-estimated immediately and climb into the next turn's context.</p>
+          <p>Four safeguards: (1) <strong>Core memory</strong> - memories tagged <code>core</code> are auto-loaded into the system prompt every session (the DB-backed equivalent of <code>MEMORY.md</code>), so durable rules are present from the very first prompt. (2) <strong>Query recall</strong> - relevant memories are recalled on demand and injected as a reference that is subordinate to your current instruction. (3) <strong>Rule pinning</strong> - memories at importance ≥ 0.9 are never pruned or consolidated away. (4) <strong>Rule auto-replace</strong> - a similar rule ingest replaces the old one (anti-contradiction), so "never use tables" never coexists with "always use tables". Since v0.2.16 the store also <strong>learns from use</strong>: memories that keep getting recalled are re-estimated immediately and rank higher in the next turn's recall.</p>
         </div>
       </details>
     </div>

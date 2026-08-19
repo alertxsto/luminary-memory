@@ -33,7 +33,7 @@ importance dimension both use these live values.
 Every time a memory is recalled, its importance is **re-estimated immediately**
 (after the batched access bump), not just at lifecycle time. A memory that keeps
 getting recalled climbs toward the top of `top_by_importance`, so it rises into
-the next turn's persistent-context block — the store literally learns what the
+the next turn's query recall ranking, so the store literally learns what the
 agent uses. Pinned rules (importance ≥ 0.9) are never downgraded by this pass.
 
 ### prune, drop low-value memories

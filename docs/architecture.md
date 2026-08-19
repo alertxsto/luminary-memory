@@ -10,7 +10,7 @@ ingest(text) ──► whitelist filter ──► (LLM enrich, optional) ──�
                                                                            │
 recall(query) ──► query expansion ──► 4 strategies ──► weighted RRF ──► adaptive cutoff ──► dedup ──► budget ──► results
                                          │
-persistent context (provider) ──► top-N by importance every turn ──► merged with recall, anti-duplicated
+core rules (DB, tag 'core', auto-loaded every session) ──► merged with recall, anti-duplicated
                                          │
 lifecycle() ──► cleanup (TTL) ──► consolidate (semantic) ──► prune (importance + pinned-rules exempt) ──► max_memories cap
 ```
@@ -35,14 +35,18 @@ lifecycle() ──► cleanup (TTL) ──► consolidate (semantic) ──► p
 5. **Adaptive cutoff** (cliff detection), cuts at the first steep score drop (default 45%) so a sparse store returns only the relevant cluster instead of padding to the limit.
 6. **Dedup**, Jaccard similarity removes near-duplicates.
 7. **Budget**, results truncated to a token budget so the context window stays safe.
-8. **Batched access bookkeeping**, recalled memories are marked accessed with one batched UPDATE (not N writes), and their importance is adaptively re-estimated on the spot so frequently used facts climb into persistent context.
+8. **Batched access bookkeeping**, recalled memories are marked accessed with one batched UPDATE (not N writes), and their importance is adaptively re-estimated on the spot so frequently used facts rank higher in the next turn's query recall.
 
-## Persistent context (Hermes provider)
+## Injection (Hermes provider)
 
-The system prompt is byte-stable for prompt caching, so mid-session memories
-never reach the model through it. The provider therefore builds the top-N
-by-importance block **every turn** in `prefetch()` (lean backend scan, no
-embedding decode), merges it with the query-recall block, and applies content-level anti-duplication (by id and content hash) so identical text never appears twice in one turn even if stored under different ids.
+The provider injects two things per turn (anti-duplicated by id and content
+hash, so identical text never appears twice even under different ids):
+
+- **Core rules** (DB, tag `core`) auto-loaded every session like `MEMORY.md`.
+- **Query recall** (retrieval-only) ranked by relevance.
+
+The importance-based persistent-context block (top-N pinned every turn) was
+**removed in v0.2.18**; importance now drives retrieval and pruning only.
 
 ## Backends
 

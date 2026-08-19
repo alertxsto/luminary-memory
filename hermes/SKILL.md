@@ -1,7 +1,7 @@
 ---
 name: luminary-memory
 description: "Use luminary-memory for agent memory: auto-recall context, auto-save turns, explicit recall/ingest/list tools, config tweaks."
-version: 2.0.0
+version: 2.1.0
 author: Dwiky Candra
 license: Apache-2.0
 platforms: [linux, macos, windows]
@@ -119,32 +119,31 @@ Provider config lives in `~/.hermes/luminary/config.json` (auto-created,
 | `recall_indicator` | `true` | Show `🌙 Luminary, recalled N memories` |
 | `retain_indicator` | `true` | Show `🌙 Luminary, memory saved` |
 | `backend` | `sqlite` | `sqlite` (zero config) or `pgvector` (scale) |
-| `context_top_n` | `8` | **Persistent context**, top-N important memories injected every turn (always in context, independent of query) |
-| `context_budget` | `2000` | Max tokens of persistent context per turn |
-| `context_min_importance` | `0.0` | Only inject memories at/above this importance into persistent context |
 | `core_tag` | `core` | **Core memory**, tag marking rules auto-loaded into the system prompt every session (DB-backed MEMORY.md) |
 | `core_top_n` | `12` | Max core memories in the system prompt |
 | `core_budget` | `8000` | Max chars of core memory in the system prompt |
 
-**Persistent context (v0.2.11+):** the system prompt is byte-stable for prompt
-caching, so the provider rebuilds the top-N-by-importance block **every turn**
-in `prefetch()` and merges it with query recall under anti-duplication. Durable
-rules and critical facts are always in context, even when the current query
-never mentions them — the agent cannot "forget" a rule that exists in the
-store.
+**Persistent context (removed in v0.2.18):** the importance-based
+persistent-context family (`context_top_n`, `context_budget`,
+`context_min_importance`) was removed. Importance now drives query
+retrieval/recall and pruning only; it no longer pins memory into the prompt as
+rules that could override a live user instruction. Durable rules that must
+always be present belong in **core memory** (below).
 
 **Core memory (v0.2.13+):** memories tagged `core` are auto-loaded into the
-system prompt every session — the DB-backed equivalent of Hermes' native
-`MEMORY.md`. Rules the user wants always present (e.g. "always use markdown tables")
+system prompt every session (the DB-backed equivalent of Hermes' native
+`MEMORY.md`). Rules the user wants always present (e.g. "always use markdown tables")
 should be stored with the `core` tag (or via `luminary_core_add`). Capped by
 `core_top_n` / `core_budget` (characters). Use `luminary_core_remove` to unpin.
-Core content comes **only** from the DB (`by_tag_top`), never from recall.
+Core content comes **only** from the DB (`by_tag_top`), never from recall. Core
+is injected as a reference that is subordinate to the user's current explicit
+instruction.
 
 **Adaptive memory (v0.2.15):** three behaviors keep the store "smart":
 - **Importance on recall** — a memory that keeps getting recalled is
-  re-estimated immediately, so it climbs into the next turn's persistent
-  context; pinned rules (≥ 0.9) never downgrade.
-- **Content-level anti-duplication** — core / persistent / recall share one
+  re-estimated immediately, so it ranks higher in the next turn's query recall;
+  pinned rules (≥ 0.9) never downgrade.
+- **Content-level anti-duplication** — core and recall share one
   dedup set (ids + content hashes), so a rule stored both as `core` and as a
   plain memory appears exactly once per turn.
 - **Rule-aware query expansion** — when the graph has no entity to expand a

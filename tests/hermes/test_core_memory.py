@@ -35,22 +35,8 @@ def test_system_prompt_includes_core_block(tmp_path):
     p = _init_provider(tmp_path)
     _seed_core(p, ["always use markdown tables in Telegram"])
     block = p.system_prompt_block()
-    assert "Core memory (auto-loaded every session)" in block
+    assert "Core memory, auto-loaded every session" in block
     assert "markdown table" in block
-    p.shutdown()
-
-
-def test_core_block_before_persistent_context(tmp_path):
-    p = _init_provider(tmp_path)
-    _seed_core(p, ["rule inti format tabel"])
-    # A non-core high-importance memory that would land in persistent context.
-    p._client.settings.rule_auto_replace = False
-    p._client.ingest("fakta biasa deploy cluster", tags=["biasa"], source="test")
-    block = p.system_prompt_block()
-    core_idx = block.find("Core memory (auto-loaded")
-    ctx_idx = block.find("Key memories")
-    assert core_idx != -1 and ctx_idx != -1
-    assert core_idx < ctx_idx, "core block must come before persistent context"
     p.shutdown()
 
 
@@ -150,7 +136,7 @@ def test_core_block_included_in_prefetch_context(tmp_path):
     _seed_core(p, ["always use markdown tables in all output"])
     p._config["recall_sync"] = True
     result = p.prefetch("riset teknologi x y z", session_id="s1")
-    assert "Core memory (auto-loaded every session)" in result
+    assert "Core memory, auto-loaded every session" in result
     assert "markdown tables" in result
     p.shutdown()
 

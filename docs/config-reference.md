@@ -74,18 +74,18 @@ Controls how stored memories are matched and ranked against a query.
 | `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | `0.85` | Near-duplicates (token-overlap Jaccard ≥ this) are removed before ranking. Lower = more aggressive dedup. |
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` | Hard cap on total tokens injected by a recall, so memory never overflows the agent context. |
 | `importance_recall_boost` | `LUMINARY_IMPORTANCE_RECALL_BOOST` | `1.0` | Ranking multiplier applied to memories at importance ≥ 0.8, so durable rules surface before chit-chat in recall. |
+| `recall_min_score` | `LUMINARY_RECALL_MIN_SCORE` | `0.0` | Score floor for recall results; memory below this is dropped (0 = off). Never empties recall (keeps top-1). |
 | `query_planner` | `LUMINARY_QUERY_PLANNER` | `true` | Route the query among strategies (skip semantic if low confidence, etc.). |
 | `query_planner_keyword_threshold` | `LUMINARY_QUERY_PLANNER_KEYWORD_THRESHOLD` | `0.9` | Score above which a keyword match is trusted so the planner skips semantic/graph passes. |
 
-## Persistent context (Hermes provider)
-
-Injected into the system prompt every turn, independent of query match.
-
-| Field | Env var | Default | Meaning |
-|-------|---------|---------|---------|
-| `context_top_n` | `LUMINARY_CONTEXT_TOP_N` | `8` | Top-N most-important memories injected every turn as "key memories". |
-| `context_budget` | `LUMINARY_CONTEXT_BUDGET` | `2000` | Max tokens budget for the persistent-context block. |
-| `context_min_importance` | `LUMINARY_CONTEXT_MIN_IMPORTANCE` | `0.0` | Only inject memories at/above this importance into persistent context. |
+> ### Persistent context (removed in v0.2.18)
+>
+> The importance-based persistent-context family (`context_top_n`,
+> `context_budget`, `context_min_importance`) was removed. Importance is now
+> used **only** for query retrieval/recall and pruning — it no longer pins
+> memory into the system prompt as rules that could override a live user
+> instruction. Durable rules that must always be present belong in **core
+> memory** (below).
 
 ## Core memory (DB-backed, auto-loaded system prompt)
 
@@ -119,7 +119,7 @@ The Luminary equivalent of Hermes `MEMORY.md`, stored in the DB.
 
 | Field | Env var | Default | Meaning |
 |-------|---------|---------|---------|
-| `llm_base_url` | `LUMINARY_LLM_BASE_URL` | (none) | OpenAI-compatible endpoint for the enricher. |
+| `llm_base_url` | `LUMINARY_LLM_BASE_URL` | (none) | OpenAI-compatible endpoint for the enricher (supports standard endpoints and gateway envelopes like Cline Pass). |
 | `llm_api_key` | `LUMINARY_LLM_API_KEY` | (none) | API key for the enricher (secret). |
 | `llm_model` | `LUMINARY_LLM_MODEL` | `gpt-4o-mini` | Enricher model id. |
 | `llm_timeout` | `LUMINARY_LLM_TIMEOUT` | `10` | Request timeout (seconds). |
@@ -167,19 +167,17 @@ forward-compatible. This is what the dashboard (`Settings → Memory`) and
 | `auto_maintain` | `false` | LLM store review at session end (keeps/updates/deletes stale or duplicate facts; requires `ingest_llm`). | ✅ |
 | `consolidate_semantic` | `true` | Embedding-cosine consolidation in lifecycle. | ✅ |
 | `importance_auto` | `true` | Auto importance estimation on ingest/lifecycle. | ✅ |
-| `llm_base_url` | `""` | OpenAI-compatible endpoint for the enricher. | ✅ |
+| `llm_base_url` | `""` | OpenAI-compatible endpoint for the enricher (supports standard endpoints and gateway envelopes like Cline Pass). | ✅ |
 | `llm_model` | `""` | Enricher model. | ✅ |
 | `llm_timeout` | `60` | Enricher request timeout (seconds). | ✅ |
 | `recall_indicator` | `true` | Show `🌙 Luminary, recalled N memories`. | ✅ |
 | `retain_indicator` | `true` | Show `🌙 Luminary, memory saved`. | ✅ |
-| `context_top_n` | `8` | Top-N important memories injected every turn. | ✅ |
-| `context_budget` | `2000` | Max tokens of persistent context per turn. | ✅ |
-| `context_min_importance` | `0.0` | Only inject memories at/above this importance. | ✅ |
 | `core_tag` | `core` | Tag marking DB-backed core memories. | ✅ |
 | `core_top_n` | `12` | Max core memories injected into the system prompt. | ✅ |
 | `core_budget` | `8000` | Max characters of core memory injected. | ✅ |
 | `extract_on_session_end` | `false` | Run extraction at session end. | ✅ |
 | `importance_recall_boost` | `1.0` | Ranking multiplier for memories at importance ≥ 0.8 — durable rules surface first in recall. | ✅ |
+| `recall_min_score` | `0.0` | Score floor for recall results (0 = off, keeps top-1). | ✅ |
 
 ---
 

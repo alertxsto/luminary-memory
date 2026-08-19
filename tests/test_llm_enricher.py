@@ -155,3 +155,117 @@ def test_rule_importance_from_rule_summary():
         out = e.enrich("User: always use markdown tables in Telegram replies")
     assert out.importance == e.rule_importance
     assert out.importance == 0.9
+
+
+def test_unwrap_data_envelope():
+    """Regression: some OpenAI-compatible gateways (e.g. the cline gateway)
+    wrap the standard ChatCompletion shape under a top-level 'data' key:
+        {"data": {"choices": [...]}}
+    The enricher must unwrap it and still read the assistant content. Without
+    this, enrich() silently returns an empty summary and curation deadlocks
+    ('no curated summary' in the retain path)."""
+    import json as _json
+    from unittest.mock import patch as _patch
+
+    from luminary_memory.ingest.llm import OpenAICompatibleEnricher
+
+    class _FakeResp:
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def read(self):
+            return _json.dumps({
+                "data": {
+                    "choices": [{"message": {"content": _json.dumps({
+                        "worth_saving": True,
+                        "summary": "Deploy target moved to production cluster",
+                        "entities": ["production cluster"],
+                        "tags": ["deploy"],
+                    })}}],
+                }
+            }).encode()
+
+    class _FakeUrlopen:
+        def __call__(self, req, timeout=None):
+            return _FakeResp()
+
+    e = OpenAICompatibleEnricher(
+        base_url="https://fake.example/v1", api_key="k", model="m",
+    )
+    with _patch("urllib.request.urlopen", _FakeUrlopen()):
+        out = e.enrich("deploy target changed")
+    assert out.summary == "Deploy target moved to production cluster"
+    assert out.worth_saving is True
+    assert out.entities == ["production cluster"]
+
+
+def test_unwrap_data_envelope_plain_shape():
+    """An endpoint that does NOT wrap in a 'data' envelope must keep working
+    (backward compatible), reading choices straight from the payload root."""
+    import json as _json
+    from unittest.mock import patch as _patch
+
+    from luminary_memory.ingest.llm import OpenAICompatibleEnricher
+
+    class _FakeResp:
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def read(self):
+            return _json.dumps({
+                "choices": [{"message": {"content": "plain ok"}}],
+            }).encode()
+
+    class _FakeUrlopen:
+        def __call__(self, req, timeout=None):
+            return _FakeResp()
+
+    e = OpenAICompatibleEnricher(
+        base_url="https://fake.example/v1", api_key="k", model="m",
+    )
+    with _patch("urllib.request.urlopen", _FakeUrlopen()):
+        out = e._call_llm([{"role": "user", "content": "hi"}])
+    assert out == "plain ok"
+
+
+def test_call_llm_retries_on_transient_error():
+    """Verify that a transient network error triggers a 1x retry that can succeed."""
+    import json as _json
+    from unittest.mock import patch as _patch
+
+    from luminary_memory.ingest.llm import OpenAICompatibleEnricher
+
+    attempts = 0
+
+    class _RetryUrlopen:
+        def __call__(self, req, timeout=None):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError("temporary glitch")
+
+            class _FakeResp:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+                def read(self):
+                    return _json.dumps({
+                        "choices": [{"message": {"content": "retry succeeded"}}],
+                    }).encode()
+
+            return _FakeResp()
+
+    e = OpenAICompatibleEnricher(
+        base_url="https://fake.example/v1", api_key="k", model="m",
+    )
+    with _patch("urllib.request.urlopen", _RetryUrlopen()), \
+         _patch("time.sleep"):
+        out = e._call_llm([{"role": "user", "content": "hi"}])
+    assert attempts == 2
+    assert out == "retry succeeded"
+
