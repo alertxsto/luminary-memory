@@ -154,11 +154,48 @@ diagnostic callers can request conflicts explicitly.
 $HERMES_HOME/luminary/
 ├── config.json          # provider config, 0600
 ├── memory.db            # SQLite store (created by MemoryClient)
-└── luminary.log         # transparency log (initialize/recall/retain/errors)
+└── luminary.log         # JSONL transparency log (scoped operations/errors)
 ```
 
 The store is profile-scoped and picked up by `hermes backup` automatically. If you
 override `db_path` to a location outside HERMES_HOME, `backup_paths()` declares it.
+
+### Transparency log and troubleshooting
+
+The provider emits one JSON object per line for initialization, retain, recall,
+pre-compress, core-tool/core-load, maintenance, discard, failure, and shutdown
+events. Each operation
+has a `trace_id` and a stable `scope` object (`user_id`, `workspace_id`,
+`agent_id`, `session_id`) plus `context` (`backend`, `mode`, `platform`).
+Completion events include `status`, `reason`, result count, confidence, and
+`latency_ms`. Async prefetch uses a short `query_hash` instead of writing the
+query itself.
+
+Initialization reports `provider.initialize.started` followed by
+`provider.initialized` only after the client and writer are live; failures use
+`provider.initialize.failed`. Shutdown reports `partial` when a worker could
+not be joined within the timeout. This keeps the log truthful during startup
+and recovery rather than treating an attempted transition as completed.
+
+Example:
+
+```json
+{"event":"recall.completed","trace_id":"8f2c1e0a7b91d4c2","scope":{"user_id":"u_42","workspace_id":"main","agent_id":"luminary","session_id":"s_17"},"status":"abstain","reason":"low_confidence_or_ambiguous","memory_count":0,"confidence":0.22,"latency_ms":3.4}
+```
+
+The log intentionally omits prompt text, memory content, Telegram tokens, and
+LLM API keys. Use it to answer “which scoped operation failed and why”, not to
+recover the stored memory itself:
+
+```bash
+tail -f ~/.hermes/luminary/luminary.log | jq
+rg '"trace_id": "8f2c1e0a7b91d4c2"' ~/.hermes/luminary/luminary.log
+jq 'select(.event == "recall.completed" or .event == "recall.failed")' \
+  ~/.hermes/luminary/luminary.log
+```
+
+Because scope identifiers are included for support correlation, keep the file
+under normal local permission and retention controls.
 
 ### Activity hook contract
 

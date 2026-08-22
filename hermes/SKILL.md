@@ -194,15 +194,28 @@ threads, and retries pending IDs when Telegram delivery fails.
 
 ## Transparency Log
 
-`~/.hermes/luminary/luminary.log` records every recall, retain, and error:
+`~/.hermes/luminary/luminary.log` is JSONL and records initialization, recall,
+retain, pre-compress, core, maintenance, discard, shutdown, and error events
+with a correlated `trace_id`:
 
 ```
-2026-08-18 04:26:37 INFO initialize session=... platform=telegram agent=default
-2026-08-18 04:26:40 INFO recall query='deploy target' limit=10 -> 5 memories (142ms)
-2026-08-18 04:26:45 INFO retain stored len=312 tags=['session:...', 'platform:telegram']
+{"event":"recall.completed","trace_id":"8f2c1e0a7b91d4c2","scope":{"user_id":"u_42","workspace_id":"main","agent_id":"luminary","session_id":"s_17"},"status":"abstain","reason":"low_confidence_or_ambiguous","memory_count":0,"confidence":0.22,"latency_ms":3.4}
 ```
 
-Check this first when memory seems wrong or missing.
+Scope, backend, mode, status/reason, counts, confidence, and latency are
+included for troubleshooting. Query text, memory content, Telegram tokens, and
+LLM API keys are intentionally omitted; recall uses a short `query_hash`.
+Correlate a `*.started` line with its `*.completed`, `*.discarded`, or
+`*.failed` event:
+
+```bash
+tail -f ~/.hermes/luminary/luminary.log | jq
+rg '"trace_id": "8f2c1e0a7b91d4c2"' ~/.hermes/luminary/luminary.log
+```
+
+Check this first when memory seems wrong or missing. Keep the file under
+normal local permission and retention controls because scope identifiers are
+present.
 
 ## Verification
 
@@ -217,10 +230,12 @@ bash hermes/test.sh --hermes   # hermes runtime smoke only
 Run this before every push (see AGENTS-workflow: laporan + tes + verifikasi
 hermes wajib sebelum push).
 
-Latest repository verification (2026-08-23): `448 passed, 3 skipped`, 83%
-full-source coverage (4,167 statements, 694 missed), Ruff clean. Local pgvector tests remain skipped without
-`LUMINARY_PG_DSN`; a live Telegram delivery was not exercised in this
-workspace.
+Latest repository verification is recorded in `docs/IMPLEMENTATION-AUDIT.md`.
+The long-term suite includes cross-process SQLite deduplication, replacement
+lineage, evidence fail-closed behavior, scoped JSONL telemetry, and real
+pgvector integration when `LUMINARY_PG_DSN` is supplied. A live Telegram
+delivery still requires a real bot/channel and is covered locally by mocked
+contract tests.
 
 ## Dashboard settings
 

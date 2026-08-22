@@ -236,6 +236,25 @@ def test_post_falls_back_to_plain_text_on_http_400(tmp_path):
     assert calls[1]["text"] == "content with strange _ formatting"
 
 
+def test_post_error_log_does_not_include_bot_token(tmp_path, caplog):
+    h = _load_handler(tmp_path, TELEGRAM_BOT_TOKEN="super-secret-token")
+
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=urllib.error.HTTPError(
+            "https://api.telegram.org/botsuper-secret-token/sendMessage",
+            400,
+            "server error",
+            {},
+            None,
+        ),
+    ):
+        assert h._post("redacted error") is False
+
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "super-secret-token" not in log_text
+
+
 
 # ============================================================================
 # handle — only on agent:end; the cursor commits after delivery succeeds

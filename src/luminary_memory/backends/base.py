@@ -8,6 +8,17 @@ from luminary_memory.types import Memory
 class MemoryBackend(ABC):
     @abstractmethod
     def add(self, m: Memory) -> int: ...
+
+    def add_with_status(self, m: Memory) -> tuple[int, bool]:
+        """Insert *m* and report whether a new row was created.
+
+        The second value is important for idempotent callers: a backend can
+        resolve a concurrent exact duplicate without making the API write a
+        second episode, evidence row, or graph edge for the same fact.
+        Lightweight/custom backends keep the old contract through this
+        default implementation.
+        """
+        return self.add(m), True
     @abstractmethod
     def get(self, id: int) -> Memory | None: ...
     @abstractmethod
@@ -20,6 +31,10 @@ class MemoryBackend(ABC):
     def add_many(self, memories: list[Memory]) -> list[int]:
         """Batch insert; default falls back to per-item add. Subclasses may override."""
         return [self.add(m) for m in memories]
+
+    def add_many_with_status(self, memories: list[Memory]) -> list[tuple[int, bool]]:
+        """Batch variant of :meth:`add_with_status` for backend parity."""
+        return [self.add_with_status(m) for m in memories]
 
     def delete_many(self, ids: list[int]) -> None:
         """Batch delete; default falls back to per-item delete. Subclasses may override."""

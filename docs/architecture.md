@@ -23,7 +23,8 @@ lifecycle() ──► cleanup (TTL) ──► consolidate ──► prune ──
    no durable summary; it does not pollute the store with the raw transcript.
 3. **Evidence and identity**, validates the quote, assigns ownership/time
    fields, status, confidence, source, and a normalized content hash.
-4. **Claim safety**, exact duplicates are suppressed within scope; same-key
+4. **Claim safety**, exact active duplicates are suppressed within scope by a
+   database unique invariant; same-key
    conflicting claims remain versioned until an explicit supersession.
 5. **Embed and index**, local CPU embedding plus FTS, graph, evidence, claim,
    episode, and audit records.

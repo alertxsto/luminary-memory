@@ -1,9 +1,9 @@
 # Gateway, Hermes, and Telegram Debugging Guide
 
 This guide preserves the v0.2.17 gateway investigation and records the
-post-v0.2.18 runtime behavior. The detailed current implementation audit is
-kept as a local-only note because planning and audit files under `docs/` are
-intentionally excluded from source.
+post-v0.2.18 runtime behavior. The current implementation audit is kept
+locally as `IMPLEMENTATION-AUDIT.md`; planning and audit files remain
+local-only under the project `docs/` ignore rule.
 
 ## 1. Gateway envelope failure and fix
 
@@ -114,8 +114,31 @@ luminary-memory activity --db-path ~/.hermes/luminary/memory.db --json
 - `shutdown()` sends a sentinel, joins the writer, then closes the caller's
   client.
 
-If a memory appears from an earlier session, inspect the generation/session
-fields in the provider log before changing ranking weights.
+If a memory appears from an earlier session, inspect the `trace_id`, scope, and
+status/reason fields in the provider log before changing ranking weights.
+
+### Provider transparency events
+
+`$HERMES_HOME/luminary/luminary.log` is JSONL. A normal operation has a
+`*.started` event followed by `*.completed`, `*.discarded`, or `*.failed` with
+the same `trace_id`. Every event includes `scope.user_id`,
+`scope.workspace_id`, `scope.agent_id`, and `scope.session_id` (null when the
+runtime did not provide one), plus backend/mode/platform context.
+
+```bash
+tail -f ~/.hermes/luminary/luminary.log | jq
+rg '"trace_id": "<trace-id>"' ~/.hermes/luminary/luminary.log
+```
+
+Recall events expose `query_hash`, not the query. Retain events expose content
+length and memory ID, not content. The provider deliberately omits memory
+text, prompts, Telegram credentials, and LLM API keys. Scope IDs are still
+present, so use normal local file permissions and retention.
+
+Pre-compress and core-tool events use the same scope/trace contract. A
+`provider.shutdown.completed` event with `status: "partial"` means a writer or
+prefetch worker remained alive after the join timeout and needs investigation;
+it is not a clean shutdown.
 
 ## 5. Accuracy/debugging checklist
 
@@ -151,7 +174,7 @@ ruff check .
 python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-gold.json
 ```
 
-The current repository verification record is `448 passed, 3 skipped`, 83%
+The current repository verification record is `466 passed, 3 skipped`, 83%
 full-source coverage, and clean Ruff. The controlled gold run reports
 recall@10 `0.95`, MRR `1.00`, abstention accuracy `1.00`, evidence support
 precision `1.00`, and zero cross-scope leakage. These are regression numbers,

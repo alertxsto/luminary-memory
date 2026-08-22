@@ -254,4 +254,47 @@ def init_schema(conn: sqlite3.Connection) -> None:
             "UPDATE memories SET content_hash = ? WHERE id = ? AND content_hash IS NULL",
             (content_hash, memory_id),
         )
+
+    # Exact deduplication is a database invariant, not just an API
+    # pre-check. Two independent processes can both observe an empty result
+    # from ``find_by_hash`` and race into INSERT. Keep the oldest active row,
+    # move derived references to it, and retain the event/episode ledgers for
+    # auditability before installing the unique constraint.
+    duplicate_groups = conn.execute(
+        "SELECT COALESCE(user_id, ''), COALESCE(workspace_id, ''), "
+        "COALESCE(agent_id, ''), COALESCE(session_id, ''), content_hash, "
+        "MIN(id) AS survivor, COUNT(*) AS copies "
+        "FROM memories "
+        "WHERE COALESCE(status, 'active') = 'active' AND content_hash IS NOT NULL "
+        "GROUP BY COALESCE(user_id, ''), COALESCE(workspace_id, ''), "
+        "COALESCE(agent_id, ''), COALESCE(session_id, ''), content_hash "
+        "HAVING COUNT(*) > 1"
+    ).fetchall()
+    for user_id, workspace_id, agent_id, session_id, content_hash, survivor, _copies in duplicate_groups:
+        duplicate_ids = conn.execute(
+            "SELECT id FROM memories WHERE COALESCE(status, 'active') = 'active' "
+            "AND content_hash = ? AND COALESCE(user_id, '') = ? "
+            "AND COALESCE(workspace_id, '') = ? AND COALESCE(agent_id, '') = ? "
+            "AND COALESCE(session_id, '') = ? AND id <> ?",
+            (content_hash, user_id, workspace_id, agent_id, session_id, survivor),
+        ).fetchall()
+        for (duplicate_id,) in duplicate_ids:
+            # Keep all durable provenance attached to the surviving memory.
+            for table in ("memory_evidence", "claims", "relations"):
+                conn.execute(
+                    f"UPDATE {table} SET memory_id = ? WHERE memory_id = ?",
+                    (survivor, duplicate_id),
+                )
+            conn.execute(
+                "UPDATE memories SET supersedes_id = ? WHERE supersedes_id = ?",
+                (survivor, duplicate_id),
+            )
+            conn.execute("DELETE FROM memories WHERE id = ?", (duplicate_id,))
+
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_memories_active_scope_hash "
+        "ON memories (COALESCE(user_id, ''), COALESCE(workspace_id, ''), "
+        "COALESCE(agent_id, ''), COALESCE(session_id, ''), content_hash) "
+        "WHERE COALESCE(status, 'active') = 'active' AND content_hash IS NOT NULL"
+    )
     conn.commit()

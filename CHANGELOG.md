@@ -4,6 +4,23 @@
 
 ### Fixed
 
+- **Atomic cross-process exact deduplication** — SQLite and pgvector now
+  enforce a scoped unique active-memory invariant, repair legacy duplicates
+  during schema initialization, and return the winning row without creating
+  duplicate episode/evidence/graph lineage.
+- **Rule-replacement source lineage** — every in-place replacement now records
+  a distinct raw episode and claim version, retiring the old structured claims
+  as `superseded` instead of leaving the source ledger stale.
+- **Evidence fail-closed in every recall mode** — `evidence_required` now
+  filters permissive recall and importance/temporal fallbacks too; fabricated
+  quotes and source labels cannot become answer support.
+- **Scoped JSONL transparency events** — Hermes logs per-home `trace_id`,
+  operation, scope, status/reason, result counts, confidence, and latency while
+  omitting prompt/memory content and credentials.
+- **PostgreSQL import/transaction polish** — missing export timestamps receive
+  UTC defaults, inactive history does not block an active restore, scoped
+  imports do not dedup against global compatibility rows, and unique-conflict
+  recovery closes the lookup transaction for long-lived writers.
 - **Deep long-term correctness audit** — scoped clients no longer mutate
   compatibility-visible global rows during recall, lifecycle, or LLM
   maintenance; malformed update state is normalized and content hashes are
@@ -14,7 +31,8 @@
 - **Truthful Telegram activity delivery** — the hook requires Telegram's
   `{"ok": true}` envelope, retries malformed/API/network failures, excludes
   soft-deleted rows from counts and content, and acknowledges inactive-only
-  backlog rows without emitting a misleading message.
+  backlog rows without emitting a misleading message; HTTP error logging does
+  not stringify token-bearing request URLs.
 - **CI coverage of the actual integration surface** — `develop` pushes now
   trigger CI and Ruff checks include the Telegram hook.
 
@@ -22,7 +40,7 @@
 
 - Added scope, lifecycle, hash-repair, claim-rollback, inactive-hook, and
   malformed-Telegram-response invariants to the long-term regression suite.
-- Current verification: `448 passed, 3 skipped`, `83%` full-source coverage,
+- Current verification: `466 passed, 3 skipped`, `83%` full-source coverage,
   and clean Ruff. The controlled gold fixture remains a regression signal, not
   a matched Mem0/Hindsight accuracy claim.
 

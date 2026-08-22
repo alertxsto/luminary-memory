@@ -78,12 +78,27 @@ def consolidate(
     def _pinned(m) -> bool:
         return float(getattr(m, "importance", 0.0) or 0.0) >= pin_threshold
 
+    def _same_ownership_scope(a, b) -> bool:
+        """Never merge near-duplicates that belong to different owners.
+
+        An unbound lifecycle client is allowed to inspect the whole database,
+        but it is not allowed to collapse two tenants/sessions into one row.
+        The exact four-field identity matches the database dedup invariant and
+        keeps lineage, tags, and future reads attributable to one scope.
+        """
+        return all(
+            getattr(a, field, None) == getattr(b, field, None)
+            for field in ("user_id", "workspace_id", "agent_id", "session_id")
+        )
+
     for i, m in enumerate(memories):
         if m.id in visited:
             continue
         cluster = [m]
         for n in memories[i + 1:]:
             if n.id in visited:
+                continue
+            if not _same_ownership_scope(m, n):
                 continue
             # A shared claim key with different content is a conflict, not a
             # duplicate.  Embeddings are intentionally not allowed to merge

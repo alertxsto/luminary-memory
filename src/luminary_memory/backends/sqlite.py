@@ -175,45 +175,88 @@ class SQLiteBackend(MemoryBackend):
             return None
         return array.tobytes()
 
-    def add(self, m: Memory) -> int:
-        cur = self.conn.execute(
+    def _insert_values(self, m: Memory) -> tuple:
+        return (
+            m.content,
+            json.dumps(m.metadata),
+            m.source,
+            json.dumps(m.tags),
+            m.importance,
+            m.ttl_seconds,
+            m.created_at,
+            m.updated_at,
+            m.last_accessed_at,
+            m.access_count,
+            self._encode_embedding(m.embedding),
+            m.user_id,
+            m.session_id,
+            m.workspace_id,
+            m.agent_id,
+            m.observed_at,
+            m.valid_from,
+            m.valid_to,
+            m.status or "active",
+            float(m.confidence),
+            m.evidence_quote,
+            m.source_id,
+            m.claim_key,
+            m.supersedes_id,
+            m.content_hash,
+            int(bool(m.needs_reindex)),
+        )
+
+    def _insert_row(self, m: Memory):
+        return self.conn.execute(
             "INSERT INTO memories (content, metadata, source, tags, importance, "
             "ttl_seconds, created_at, updated_at, last_accessed_at, access_count, embedding, "
             "user_id, session_id, workspace_id, agent_id, observed_at, valid_from, valid_to, "
             "status, confidence, evidence_quote, source_id, claim_key, supersedes_id, "
             "content_hash, needs_reindex) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            self._insert_values(m),
+        )
+
+    def _find_active_hash_exact(self, m: Memory) -> Memory | None:
+        if not m.content_hash:
+            return None
+        row = self.conn.execute(
+            "SELECT * FROM memories WHERE content_hash = ? "
+            "AND COALESCE(user_id, '') = COALESCE(?, '') "
+            "AND COALESCE(workspace_id, '') = COALESCE(?, '') "
+            "AND COALESCE(agent_id, '') = COALESCE(?, '') "
+            "AND COALESCE(session_id, '') = COALESCE(?, '') "
+            "AND COALESCE(status, 'active') = 'active' ORDER BY id LIMIT 1",
             (
-                m.content,
-                json.dumps(m.metadata),
-                m.source,
-                json.dumps(m.tags),
-                m.importance,
-                m.ttl_seconds,
-                m.created_at,
-                m.updated_at,
-                m.last_accessed_at,
-                m.access_count,
-                self._encode_embedding(m.embedding),
+                m.content_hash,
                 m.user_id,
-                m.session_id,
                 m.workspace_id,
                 m.agent_id,
-                m.observed_at,
-                m.valid_from,
-                m.valid_to,
-                m.status or "active",
-                float(m.confidence),
-                m.evidence_quote,
-                m.source_id,
-                m.claim_key,
-                m.supersedes_id,
-                m.content_hash,
-                int(bool(m.needs_reindex)),
+                m.session_id,
             ),
-        )
-        self.conn.commit()
-        return int(cur.lastrowid)
+        ).fetchone()
+        return self._row_to_memory(row) if row else None
+
+    def add_with_status(self, m: Memory) -> tuple[int, bool]:
+        """Atomically insert or resolve an exact active duplicate."""
+        try:
+            cur = self._insert_row(m)
+            self.conn.commit()
+            return int(cur.lastrowid), True
+        except sqlite3.IntegrityError as exc:
+            self.conn.rollback()
+            # Only the scoped active-hash index is an expected duplicate race.
+            # Other integrity failures (for example a malformed NOT NULL row)
+            # must remain visible to callers instead of being misreported as a
+            # successful deduplication.
+            if "uq_memories_active_scope_hash" not in str(exc):
+                raise
+            existing = self._find_active_hash_exact(m)
+            if existing is None or existing.id is None:
+                raise
+            return existing.id, False
+
+    def add(self, m: Memory) -> int:
+        return self.add_with_status(m)[0]
 
     def get(self, id: int) -> Memory | None:
         row = self.conn.execute("SELECT * FROM memories WHERE id = ?", (id,)).fetchone()
@@ -449,59 +492,33 @@ class SQLiteBackend(MemoryBackend):
         rows = self.conn.execute("SELECT * FROM memories ORDER BY id").fetchall()
         return [self._row_to_memory(r) for r in rows]
 
-    def add_many(self, memories: list[Memory]) -> list[int]:
+    def add_many_with_status(self, memories: list[Memory]) -> list[tuple[int, bool]]:
         if not memories:
             return []
-        # sqlite3.executemany.lastrowid is unreliable (None) on this build;
-        # use explicit transaction + per-row insert returning lastrowid, or
-        # query the tail. Simpler and portable: iterate add() inside a transaction.
-        ids: list[int] = []
+        results: list[tuple[int, bool]] = []
         self.conn.execute("BEGIN")
         try:
             for m in memories:
-                cur = self.conn.execute(
-                    "INSERT INTO memories (content, metadata, source, tags, importance, "
-                    "ttl_seconds, created_at, updated_at, last_accessed_at, access_count, embedding, "
-                    "user_id, session_id, workspace_id, agent_id, observed_at, valid_from, valid_to, "
-                    "status, confidence, evidence_quote, source_id, claim_key, supersedes_id, "
-                    "content_hash, needs_reindex) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        m.content,
-                        json.dumps(m.metadata),
-                        m.source,
-                        json.dumps(m.tags),
-                        m.importance,
-                        m.ttl_seconds,
-                        m.created_at,
-                        m.updated_at,
-                        m.last_accessed_at,
-                        m.access_count,
-                        self._encode_embedding(m.embedding),
-                        m.user_id,
-                        m.session_id,
-                        m.workspace_id,
-                        m.agent_id,
-                        m.observed_at,
-                        m.valid_from,
-                        m.valid_to,
-                        m.status or "active",
-                        float(m.confidence),
-                        m.evidence_quote,
-                        m.source_id,
-                        m.claim_key,
-                        m.supersedes_id,
-                        m.content_hash,
-                        int(bool(m.needs_reindex)),
-                    ),
-                )
-                ids.append(int(cur.lastrowid))
+                try:
+                    cur = self._insert_row(m)
+                except sqlite3.IntegrityError as exc:
+                    if "uq_memories_active_scope_hash" not in str(exc):
+                        raise
+                    existing = self._find_active_hash_exact(m)
+                    if existing is None or existing.id is None:
+                        raise
+                    results.append((existing.id, False))
+                else:
+                    results.append((int(cur.lastrowid), True))
             self.conn.commit()
         except Exception:
             logger.exception("add_many batch failed — rolling back")
             self.conn.rollback()
             raise
-        return ids
+        return results
+
+    def add_many(self, memories: list[Memory]) -> list[int]:
+        return [memory_id for memory_id, _inserted in self.add_many_with_status(memories)]
 
     def recent(
         self,

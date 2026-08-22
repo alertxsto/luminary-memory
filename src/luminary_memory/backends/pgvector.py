@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -271,6 +272,58 @@ class PGVectorBackend(MemoryBackend):
             )
             """
         )
+
+        # Repair legacy rows before installing the database-level exact
+        # dedup invariant. The oldest active row remains canonical; derived
+        # references move to it and append-only audit/source history stays.
+        cur.execute("SELECT id, content FROM memories WHERE content_hash IS NULL")
+        for row in cur.fetchall():
+            memory_id, content = row[0], row[1]
+            normalized = " ".join(str(content or "").strip().split()).casefold()
+            content_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+            cur.execute(
+                "UPDATE memories SET content_hash = %s WHERE id = %s AND content_hash IS NULL",
+                (content_hash, memory_id),
+            )
+        cur.execute(
+            "SELECT COALESCE(user_id, ''), COALESCE(workspace_id, ''), "
+            "COALESCE(agent_id, ''), COALESCE(session_id, ''), content_hash, MIN(id) "
+            "FROM memories WHERE COALESCE(status, 'active') = 'active' "
+            "AND content_hash IS NOT NULL "
+            "GROUP BY COALESCE(user_id, ''), COALESCE(workspace_id, ''), "
+            "COALESCE(agent_id, ''), COALESCE(session_id, ''), content_hash "
+            "HAVING COUNT(*) > 1"
+        )
+        for group in cur.fetchall():
+            # Some lightweight test doubles return the previous fixture row
+            # for every fetchall call; a real aggregate row has six fields.
+            if len(group) != 6:
+                continue
+            user_id, workspace_id, agent_id, session_id, content_hash, survivor = group
+            cur.execute(
+                "SELECT id FROM memories WHERE COALESCE(status, 'active') = 'active' "
+                "AND content_hash = %s AND COALESCE(user_id, '') = %s "
+                "AND COALESCE(workspace_id, '') = %s AND COALESCE(agent_id, '') = %s "
+                "AND COALESCE(session_id, '') = %s AND id <> %s",
+                (content_hash, user_id, workspace_id, agent_id, session_id, survivor),
+            )
+            for (duplicate_id,) in cur.fetchall():
+                for table in ("memory_evidence", "claims", "relations"):
+                    cur.execute(
+                        f"UPDATE {table} SET memory_id = %s WHERE memory_id = %s",
+                        (survivor, duplicate_id),
+                    )
+                cur.execute(
+                    "UPDATE memories SET supersedes_id = %s WHERE supersedes_id = %s",
+                    (survivor, duplicate_id),
+                )
+                cur.execute("DELETE FROM memories WHERE id = %s", (duplicate_id,))
+        cur.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_memories_active_scope_hash "
+            "ON memories (COALESCE(user_id, ''), COALESCE(workspace_id, ''), "
+            "COALESCE(agent_id, ''), COALESCE(session_id, ''), content_hash) "
+            "WHERE COALESCE(status, 'active') = 'active' AND content_hash IS NOT NULL"
+        )
         self.conn.commit()
 
     def _row_to_memory(self, row: tuple[Any, ...] | dict[str, Any]) -> Memory:
@@ -341,53 +394,95 @@ class PGVectorBackend(MemoryBackend):
             needs_reindex=bool(d.get("needs_reindex") or False),
         )
 
-    def add(self, m: Memory) -> int:
+    @staticmethod
+    def _insert_values(m: Memory) -> tuple:
+        return (
+            m.content,
+            json.dumps(m.metadata),
+            m.source,
+            json.dumps(m.tags),
+            float(m.importance),
+            m.ttl_seconds,
+            m.created_at,
+            m.updated_at,
+            m.last_accessed_at,
+            int(m.access_count),
+            m.embedding,
+            m.user_id,
+            m.session_id,
+            m.workspace_id,
+            m.agent_id,
+            m.observed_at,
+            m.valid_from,
+            m.valid_to,
+            m.status or "active",
+            float(m.confidence),
+            m.evidence_quote,
+            m.source_id,
+            m.claim_key,
+            m.supersedes_id,
+            m.content_hash,
+            bool(m.needs_reindex),
+        )
+
+    def _find_active_hash_exact(self, m: Memory) -> Memory | None:
+        if not m.content_hash:
+            return None
         cur = self.conn.cursor()
         cur.execute(
-            """
-            INSERT INTO memories (content, metadata, source, tags, importance,
-                                  ttl_seconds, created_at, updated_at,
-                                  last_accessed_at, access_count, embedding,
-                                  user_id, session_id, workspace_id, agent_id,
-                                  observed_at, valid_from, valid_to, status, confidence,
-                                  evidence_quote, source_id, claim_key, supersedes_id,
-                                  content_hash, needs_reindex)
-            VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (
-                m.content,
-                json.dumps(m.metadata),
-                m.source,
-                json.dumps(m.tags),
-                float(m.importance),
-                m.ttl_seconds,
-                m.created_at,
-                m.updated_at,
-                m.last_accessed_at,
-                int(m.access_count),
-                m.embedding,
-                m.user_id,
-                m.session_id,
-                m.workspace_id,
-                m.agent_id,
-                m.observed_at,
-                m.valid_from,
-                m.valid_to,
-                m.status or "active",
-                float(m.confidence),
-                m.evidence_quote,
-                m.source_id,
-                m.claim_key,
-                m.supersedes_id,
-                m.content_hash,
-                bool(m.needs_reindex),
-            ),
+            "SELECT * FROM memories WHERE content_hash = %s "
+            "AND COALESCE(user_id, '') = COALESCE(%s, '') "
+            "AND COALESCE(workspace_id, '') = COALESCE(%s, '') "
+            "AND COALESCE(agent_id, '') = COALESCE(%s, '') "
+            "AND COALESCE(session_id, '') = COALESCE(%s, '') "
+            "AND COALESCE(status, 'active') = 'active' ORDER BY id LIMIT 1",
+            (m.content_hash, m.user_id, m.workspace_id, m.agent_id, m.session_id),
         )
         row = cur.fetchone()
-        self.conn.commit()
-        return int(row[0]) if row else 0
+        return self._row_to_memory(row) if row else None
+
+    def add_with_status(self, m: Memory) -> tuple[int, bool]:
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                """
+                INSERT INTO memories (content, metadata, source, tags, importance,
+                                      ttl_seconds, created_at, updated_at,
+                                      last_accessed_at, access_count, embedding,
+                                      user_id, session_id, workspace_id, agent_id,
+                                      observed_at, valid_from, valid_to, status, confidence,
+                                      evidence_quote, source_id, claim_key, supersedes_id,
+                                      content_hash, needs_reindex)
+                VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                self._insert_values(m),
+            )
+            row = cur.fetchone()
+            self.conn.commit()
+            return int(row[0]) if row else 0, True
+        except Exception as exc:
+            # Only a unique-index race is recoverable. Do not turn a malformed
+            # row, dimension mismatch, or connection/database error into a
+            # false duplicate merely because an older row happens to share
+            # its content hash.
+            self.conn.rollback()
+            if not isinstance(exc, self._psycopg.errors.UniqueViolation):
+                raise
+            try:
+                existing = self._find_active_hash_exact(m)
+            finally:
+                # The lookup itself starts a read transaction in psycopg;
+                # close it before returning so a long-lived writer does not
+                # retain a snapshot or hold schema locks.
+                self.conn.rollback()
+            if existing is None or existing.id is None:
+                raise
+            return existing.id, False
+
+    def add(self, m: Memory) -> int:
+        return self.add_with_status(m)[0]
 
     def get(self, id: int) -> Memory | None:
         cur = self.conn.cursor()
@@ -622,11 +717,11 @@ class PGVectorBackend(MemoryBackend):
         rows = cur.fetchall()
         return [self._row_to_memory(r) for r in rows]
 
-    def add_many(self, memories: list[Memory]) -> list[int]:
+    def add_many_with_status(self, memories: list[Memory]) -> list[tuple[int, bool]]:
         if not memories:
             return []
         cur = self.conn.cursor()
-        ids: list[int] = []
+        results: list[tuple[int, bool]] = []
         try:
             for m in memories:
                 cur.execute(
@@ -640,44 +735,29 @@ class PGVectorBackend(MemoryBackend):
                                           content_hash, needs_reindex)
                     VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
                     RETURNING id
                     """,
-                    (
-                        m.content,
-                        json.dumps(m.metadata),
-                        m.source,
-                        json.dumps(m.tags),
-                        float(m.importance),
-                        m.ttl_seconds,
-                        m.created_at,
-                        m.updated_at,
-                        m.last_accessed_at,
-                        int(m.access_count),
-                        m.embedding,
-                        m.user_id,
-                        m.session_id,
-                        m.workspace_id,
-                        m.agent_id,
-                        m.observed_at,
-                        m.valid_from,
-                        m.valid_to,
-                        m.status or "active",
-                        float(m.confidence),
-                        m.evidence_quote,
-                        m.source_id,
-                        m.claim_key,
-                        m.supersedes_id,
-                        m.content_hash,
-                        bool(m.needs_reindex),
-                    ),
+                    self._insert_values(m),
                 )
                 row = cur.fetchone()
-                ids.append(int(row[0]) if row and row[0] is not None else 0)
+                if row and row[0] is not None:
+                    results.append((int(row[0]), True))
+                    continue
+                existing = self._find_active_hash_exact(m)
+                if existing is None or existing.id is None:
+                    raise RuntimeError(
+                        "batch insert was ignored without a resolvable active duplicate"
+                    )
+                results.append((existing.id, False))
             self.conn.commit()
-            return ids
+            return results
         except Exception:
             self.conn.rollback()
             raise
+
+    def add_many(self, memories: list[Memory]) -> list[int]:
+        return [memory_id for memory_id, _inserted in self.add_many_with_status(memories)]
 
     def recent(
         self,

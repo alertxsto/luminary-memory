@@ -168,18 +168,31 @@ def _post(text: str) -> bool:
     except urllib.error.HTTPError as exc:
         # If Telegram rejects markdown formatting with 400 Bad Request, retry as plain text
         if exc.code == 400 and "parse_mode" in payload_data:
-            logger.warning("Telegram markdown parse error, falling back to plain text: %s", exc)
+            # HTTPError stringification can include the request URL, which
+            # contains the Telegram bot token. Keep the retry diagnostic
+            # useful without putting credentials in the hook log.
+            logger.warning(
+                "Telegram markdown parse error, falling back to plain text (HTTP %s)",
+                exc.code,
+            )
             try:
                 payload_data.pop("parse_mode", None)
                 return _send_telegram_request(url, payload_data)
-            except Exception:
-                logger.exception("failed to post activity in plain text fallback")
+            except Exception as fallback_exc:  # noqa: BLE001 -- hook boundary must never raise
+                # Do not log the exception object: urllib errors can carry the
+                # request URL, which contains the Telegram bot token.
+                logger.error(
+                    "failed to post activity in plain text fallback (%s)",
+                    type(fallback_exc).__name__,
+                )
                 return False
         else:
-            logger.exception("failed to post activity")
+            logger.error("failed to post activity (HTTP %s)", exc.code)
             return False
-    except Exception:
-        logger.exception("failed to post activity")
+    except Exception as exc:  # noqa: BLE001 -- hook boundary must never raise
+        # Keep hook logs useful without risking credentials from a URL-bearing
+        # exception or traceback.
+        logger.error("failed to post activity (%s)", type(exc).__name__)
         return False
 
 

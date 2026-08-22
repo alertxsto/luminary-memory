@@ -16,6 +16,7 @@ import os
 import queue
 import threading
 import time
+import uuid
 
 from agent.memory_provider import MemoryProvider  # present only in hermes runtime
 
@@ -86,17 +87,36 @@ def _setup_logger(hermes_home: str) -> logging.Logger:
     The log records every recall, retain, and error so users can see what
     the provider is doing (transparency log).
     """
-    logger = logging.getLogger("luminary_memory.hermes")
+    log_dir = os.path.abspath(os.path.join(hermes_home, "luminary"))
+    logger_name = "luminary_memory.hermes." + hashlib.sha256(
+        log_dir.encode("utf-8")
+    ).hexdigest()[:12]
+    logger = logging.getLogger(logger_name)
     logger.setLevel(logging.INFO)
     if not logger.handlers:
-        log_dir = os.path.join(hermes_home, "luminary")
         os.makedirs(log_dir, exist_ok=True)
         fh = logging.FileHandler(os.path.join(log_dir, "luminary.log"), encoding="utf-8")
-        fh.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-        )
+        fh.setFormatter(_JsonLineFormatter())
         logger.addHandler(fh)
     return logger
+
+
+class _JsonLineFormatter(logging.Formatter):
+    """Keep the provider log machine-readable without changing caplog text."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        message = record.getMessage()
+        try:
+            payload = json.loads(message)
+            if not isinstance(payload, dict):
+                raise TypeError("log payload must be an object")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = {"event": "log", "message": message}
+        payload.setdefault("timestamp", self.formatTime(record, self.default_time_format))
+        payload.setdefault("level", record.levelname.lower())
+        if record.exc_info:
+            payload["exception_type"] = record.exc_info[0].__name__
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
 
 class LuminaryMemoryProvider(MemoryProvider):
@@ -174,6 +194,45 @@ class LuminaryMemoryProvider(MemoryProvider):
                 return f"backend 'pgvector' requires: {', '.join(missing)}"
         return ""
 
+    def _transparency_scope(self, session_id: str | None = None) -> dict[str, str | None]:
+        """Return stable identity context safe to put in a troubleshooting log."""
+        return {
+            "user_id": self._user_id or None,
+            "workspace_id": self._agent_workspace or None,
+            "agent_id": self._agent_identity or None,
+            "session_id": session_id or self._session_id or None,
+        }
+
+    def _log_event(
+        self,
+        event: str,
+        *,
+        trace_id: str | None = None,
+        level: int = logging.INFO,
+        session_id: str | None = None,
+        **fields,
+    ) -> str:
+        """Write a redacted, correlated JSONL operation event.
+
+        Callers deliberately pass lengths, hashes, IDs, and decisions rather
+        than prompt or memory text. This makes a trace actionable for support
+        without turning the troubleshooting file into a second memory store.
+        """
+        trace = trace_id or uuid.uuid4().hex[:16]
+        payload = {
+            "event": event,
+            "trace_id": trace,
+            "scope": self._transparency_scope(session_id),
+            "context": {
+                "backend": self._config.get("backend", "sqlite"),
+                "mode": self._config.get("mode", "hybrid"),
+                "platform": self._platform or None,
+            },
+        }
+        payload.update(fields)
+        self._log.log(level, json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        return trace
+
     # ------------------------------------------------------------------ #
     # Lifecycle
     # ------------------------------------------------------------------ #
@@ -200,10 +259,6 @@ class LuminaryMemoryProvider(MemoryProvider):
         )
         self._hermes_home = str(hermes_home)
         self._log = _setup_logger(self._hermes_home)
-        self._log.info(
-            "initialize session=%s platform=%s agent=%s",
-            session_id, kwargs.get("platform", ""), kwargs.get("agent_identity", ""),
-        )
         self._config = load_config(self._hermes_home)
         # A pre-initialize shutdown may have no writer to consume its sentinel;
         # start each lifecycle with a fresh queue once all old workers stopped.
@@ -223,6 +278,13 @@ class LuminaryMemoryProvider(MemoryProvider):
             if value
         }
         self._status_callback = kwargs.get("status_callback")
+        init_started = time.perf_counter()
+        init_trace = self._log_event(
+            "provider.initialize.started",
+            session_id=session_id,
+            operation="initialize",
+            status="started",
+        )
 
         self._session_turns = []
         self._turn_counter = 0
@@ -232,15 +294,42 @@ class LuminaryMemoryProvider(MemoryProvider):
             self._injected_ids = set()
             self._injected_contents = set()
 
-        db_path = self._resolve_db_path()
-        settings = self._build_settings(db_path)
-        self._client = MemoryClient(
-            settings=settings,
-            enricher=self._build_enricher(),
-            scope=self._scope,
+        try:
+            db_path = self._resolve_db_path()
+            settings = self._build_settings(db_path)
+            self._client = MemoryClient(
+                settings=settings,
+                enricher=self._build_enricher(),
+                scope=self._scope,
+            )
+            self._shutting_down.clear()
+            self._start_writer()
+        except Exception as exc:
+            self._log_event(
+                "provider.initialize.failed",
+                trace_id=init_trace,
+                session_id=session_id,
+                operation="initialize",
+                status="error",
+                error_type=type(exc).__name__,
+                latency_ms=round((time.perf_counter() - init_started) * 1000, 2),
+                level=logging.ERROR,
+            )
+            if self._client is not None:
+                try:
+                    self._client.close()
+                except Exception:  # noqa: BLE001 -- preserve original init error
+                    self._log.debug("failed to close partially initialized client", exc_info=True)
+                self._client = None
+            raise
+        self._log_event(
+            "provider.initialized",
+            trace_id=init_trace,
+            session_id=session_id,
+            operation="initialize",
+            status="ok",
+            latency_ms=round((time.perf_counter() - init_started) * 1000, 2),
         )
-        self._shutting_down.clear()
-        self._start_writer()
         if kwargs.get("status_callback") is None:
             # Hermes passes a status callback; a no-op keeps the provider safe
             # when constructed and initialized directly.
@@ -336,6 +425,11 @@ class LuminaryMemoryProvider(MemoryProvider):
 
     def shutdown(self) -> None:
         """Flush queued retains, stop the writer, close the store."""
+        shutdown_trace = None
+        if self._hermes_home:
+            shutdown_trace = self._log_event(
+                "provider.shutdown.started", operation="shutdown", status="started"
+            )
         self._shutting_down.set()
         with self._prefetch_lock:
             # Invalidate any result that finishes during shutdown.  The
@@ -373,6 +467,18 @@ class LuminaryMemoryProvider(MemoryProvider):
             self._prefetch_thread = None
         if writer_thread is None or not writer_thread.is_alive():
             self._writer_thread = None
+        workers_alive = bool(
+            (prefetch_thread is not None and prefetch_thread.is_alive())
+            or (writer_thread is not None and writer_thread.is_alive())
+        )
+        if shutdown_trace:
+            self._log_event(
+                "provider.shutdown.completed",
+                trace_id=shutdown_trace,
+                operation="shutdown",
+                status="partial" if workers_alive else "ok",
+                reason="workers_still_alive" if workers_alive else None,
+            )
 
     # ------------------------------------------------------------------ #
     # Config
@@ -458,13 +564,29 @@ class LuminaryMemoryProvider(MemoryProvider):
         survive compaction. Returns an empty block (Hermes compresses normally)."""
         if not self._client or self._shutting_down.is_set():
             return ""
+        started = time.perf_counter()
+        trace_id = self._log_event(
+            "precompress.started",
+            operation="precompress",
+            status="started",
+            message_count=len(messages or []),
+        )
         try:
             raw = str(self._config.get("rule_keywords") or "")
             kw_text = raw or getattr(self._client.settings, "rule_keywords", "")
             keywords = [k.strip().lower() for k in str(kw_text).split(",") if k.strip()]
             if not keywords:
+                self._log_event(
+                    "precompress.skipped",
+                    trace_id=trace_id,
+                    operation="precompress",
+                    status="skipped",
+                    reason="no_rule_keywords",
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
                 return ""
             seen = set()
+            matched = stored = 0
             for m in (messages or []):
                 if isinstance(m, dict):
                     text = str(m.get("content") or "")
@@ -478,14 +600,64 @@ class LuminaryMemoryProvider(MemoryProvider):
                     if h in seen:
                         continue
                     seen.add(h)
-                    self._client.ingest(
+                    matched += 1
+                    mid = self._client.ingest(
                         text.strip(),
                         tags=["pre-compress", "rule"],
                         source="hermes-pcomp",
                         **self._operation_scope(),
                     )
-                    self._log.info("pre-compress persisted durable rule len=%d", len(text.strip()))
-        except Exception:
+                    if mid is None:
+                        self._log_event(
+                            "precompress.skipped",
+                            trace_id=trace_id,
+                            operation="precompress",
+                            status="skipped",
+                            reason="whitelist_rejected",
+                            latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                        )
+                        continue
+                    stored += 1
+                    self._log_event(
+                        "precompress.completed",
+                        trace_id=trace_id,
+                        operation="precompress",
+                        status="ok",
+                        memory_id=mid,
+                        content_chars=len(text.strip()),
+                        latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                    )
+            if matched == 0:
+                self._log_event(
+                    "precompress.completed",
+                    trace_id=trace_id,
+                    operation="precompress",
+                    status="empty",
+                    reason="no_rule_match",
+                    memory_count=0,
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
+            else:
+                self._log_event(
+                    "precompress.summary",
+                    trace_id=trace_id,
+                    operation="precompress",
+                    status="ok" if stored else "skipped",
+                    reason=None if stored else "all_matches_rejected",
+                    matched_count=matched,
+                    memory_count=stored,
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
+        except Exception as exc:
+            self._log_event(
+                "precompress.failed",
+                trace_id=trace_id,
+                operation="precompress",
+                status="error",
+                error_type=type(exc).__name__,
+                latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                level=logging.ERROR,
+            )
             logging.getLogger(__name__).exception("on_pre_compress failed")
         return ""
 
@@ -531,8 +703,24 @@ class LuminaryMemoryProvider(MemoryProvider):
                 # a stale snapshot and race a queued retain.
                 self._retain_queue.join()
                 result = self._client.run_maintenance()
-                self._log.info("maintenance %s", result)
-            except Exception:
+                self._log_event(
+                    "maintenance.completed",
+                    operation="maintenance",
+                    status="ok",
+                    result={
+                        str(key): value
+                        for key, value in (result or {}).items()
+                        if isinstance(value, (str, int, float, bool)) or value is None
+                    },
+                )
+            except Exception as exc:
+                self._log_event(
+                    "maintenance.failed",
+                    operation="maintenance",
+                    status="error",
+                    error_type=type(exc).__name__,
+                    level=logging.ERROR,
+                )
                 logging.getLogger(__name__).exception("LLM maintenance failed")
 
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
@@ -620,8 +808,26 @@ class LuminaryMemoryProvider(MemoryProvider):
         turn is worth saving and produces a factual summary; turns the LLM
         deems trivial are dropped instead of polluting the store.
         """
+        started = time.perf_counter()
+        trace_id = self._log_event(
+            "retain.started",
+            operation="retain",
+            status="started",
+            session_id=(metadata or {}).get("session_id"),
+            source_kind=source,
+            content_chars=len(content or ""),
+            tag_count=len(tags or []),
+        )
         client = self._writer_client()
         if client is None:
+            self._log_event(
+                "retain.failed",
+                trace_id=trace_id,
+                operation="retain",
+                status="error",
+                reason="client_unavailable",
+                latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
             return
         try:
             extra_tags = []
@@ -629,14 +835,28 @@ class LuminaryMemoryProvider(MemoryProvider):
             if self._config.get("ingest_llm") and client.enricher is not None:
                 enriched = client.enricher.enrich(content)
                 if not enriched.worth_saving:
-                    self._log.info("retain skipped (LLM: not worth saving) len=%d", len(content))
+                    self._log_event(
+                        "retain.skipped",
+                        trace_id=trace_id,
+                        operation="retain",
+                        status="skipped",
+                        reason="llm_not_worth_saving",
+                        latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                    )
                     return
                 if not enriched.summary:
                     # LLM curation was enabled but produced no distilled fact
                     # (enrichment failure, empty reply, or "nothing durable").
                     # Storing the raw transcript would pollute the store with
                     # conversation noise that recall then surfaces. Drop it.
-                    self._log.info("retain skipped (LLM: no curated summary) len=%d", len(content))
+                    self._log_event(
+                        "retain.skipped",
+                        trace_id=trace_id,
+                        operation="retain",
+                        status="skipped",
+                        reason="llm_no_curated_summary",
+                        latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                    )
                     return
                 # Store the factual summary (not the raw transcript) as content.
                 content = enriched.summary
@@ -665,14 +885,38 @@ class LuminaryMemoryProvider(MemoryProvider):
                 source_id=meta.get("source_id") or source,
             )
             if mid is None:
-                self._log.info("retain skipped (whitelist) len=%d", len(content))
+                self._log_event(
+                    "retain.skipped",
+                    trace_id=trace_id,
+                    operation="retain",
+                    status="skipped",
+                    reason="whitelist_rejected",
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
                 return
             # Emit only after the writer has committed a real memory. This
             # keeps the CLI/Hermes indicator truthful when the whitelist or
             # LLM curation rejects a queued turn.
             self._emit_retain_indicator()
-            self._log.info("retain stored len=%d tags=%s", len(content), all_tags)
-        except Exception:  # writer must never die
+            self._log_event(
+                "retain.completed",
+                trace_id=trace_id,
+                operation="retain",
+                status="ok",
+                memory_id=mid,
+                content_chars=len(content),
+                tag_count=len(all_tags),
+                latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
+        except Exception as exc:  # writer must never die
+            self._log_event(
+                "retain.failed",
+                trace_id=trace_id,
+                operation="retain",
+                status="error",
+                error_type=type(exc).__name__,
+                latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
             logging.getLogger(__name__).exception("retain ingest failed")
 
     def _close_thread_client(self) -> None:
@@ -898,7 +1142,21 @@ class LuminaryMemoryProvider(MemoryProvider):
                 self._injected_ids = picked_ids | self._injected_ids
                 self._injected_contents = picked_hashes | self._injected_contents
             if not picked:
+                self._log_event(
+                    "core.loaded",
+                    operation="core_load",
+                    status="empty",
+                    memory_count=0,
+                    content_chars=0,
+                )
                 return ""
+            self._log_event(
+                "core.loaded",
+                operation="core_load",
+                status="ok",
+                memory_count=len(picked),
+                content_chars=sum(len(line) - 2 for line in picked),
+            )
             return (
                 "<luminary-memory-untrusted>\n"
                 "Core memory, auto-loaded every session (reference from store only; "
@@ -972,10 +1230,29 @@ class LuminaryMemoryProvider(MemoryProvider):
             scope_signature = tuple(sorted(self._scope.items()))
 
         def _worker() -> None:
+            started = time.perf_counter()
+            trace_id = self._log_event(
+                "recall.started",
+                operation="prefetch",
+                status="started",
+                session_id=session_id,
+                query_hash=_stable_content_hash(query)[:16],
+                query_chars=len(query or ""),
+                limit=int(self._config.get("recall_limit", 10)),
+                async_mode=True,
+            )
             try:
-                _t0 = time.time()
                 client = self._writer_client()
                 if client is None:
+                    self._log_event(
+                        "recall.failed",
+                        trace_id=trace_id,
+                        operation="prefetch",
+                        status="error",
+                        reason="client_unavailable",
+                        session_id=session_id,
+                        latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                    )
                     return
                 result = client.recall(
                     query,
@@ -984,21 +1261,47 @@ class LuminaryMemoryProvider(MemoryProvider):
                 )
                 with self._prefetch_lock:
                     if generation != self._prefetch_generation or session_id != self._session_id:
+                        self._log_event(
+                            "recall.discarded",
+                            trace_id=trace_id,
+                            operation="prefetch",
+                            status="discarded",
+                            reason="stale_session_or_generation",
+                            session_id=session_id,
+                            latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                        )
                         return
                     self._prefetch_cache = (
                         session_id,
                         query,
                         generation,
                         scope_signature,
+                        trace_id,
                         result.memories,
                         result.scores,
                     )
-                self._log.info(
-                    "recall query=%r limit=%s -> %d memories (%.0fms)",
-                    query, self._config.get("recall_limit", 10),
-                    len(result.memories), (time.time() - _t0) * 1000,
+                self._log_event(
+                    "recall.completed",
+                    trace_id=trace_id,
+                    operation="prefetch",
+                    status=getattr(result, "status", "ok"),
+                    reason=getattr(result, "reason", None),
+                    session_id=session_id,
+                    memory_count=len(result.memories),
+                    confidence=float(getattr(result, "confidence", 0.0) or 0.0),
+                    strategies_hit=getattr(result, "strategies_hit", {}),
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
                 )
-            except Exception:
+            except Exception as exc:
+                self._log_event(
+                    "recall.failed",
+                    trace_id=trace_id,
+                    operation="prefetch",
+                    status="error",
+                    error_type=type(exc).__name__,
+                    session_id=session_id,
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
                 logging.getLogger(__name__).exception("prefetch recall failed")
             finally:
                 # The prefetch thread owns its SQLite connection and must
@@ -1054,6 +1357,17 @@ class LuminaryMemoryProvider(MemoryProvider):
 
         recall_block = ""
         if self._config.get("recall_sync", False):
+            started = time.perf_counter()
+            trace_id = self._log_event(
+                "recall.started",
+                operation="prefetch",
+                status="started",
+                session_id=session_id,
+                query_hash=_stable_content_hash(query)[:16],
+                query_chars=len(query or ""),
+                limit=int(self._config.get("recall_limit", 10)),
+                async_mode=False,
+            )
             try:
                 result = self._client.recall(
                     query,
@@ -1063,7 +1377,29 @@ class LuminaryMemoryProvider(MemoryProvider):
                 recall_block = self._format_recall_block(result.memories, result.scores)
                 self._last_recall_count = len(result.memories)
                 self._last_recall_returned = bool(recall_block)
-            except Exception:
+                self._log_event(
+                    "recall.completed",
+                    trace_id=trace_id,
+                    operation="prefetch",
+                    status=getattr(result, "status", "ok"),
+                    reason=getattr(result, "reason", None),
+                    memory_count=len(result.memories),
+                    confidence=float(getattr(result, "confidence", 0.0) or 0.0),
+                    strategies_hit=getattr(result, "strategies_hit", {}),
+                    returned=bool(recall_block),
+                    session_id=session_id,
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
+            except Exception as exc:
+                self._log_event(
+                    "recall.failed",
+                    trace_id=trace_id,
+                    operation="prefetch",
+                    status="error",
+                    error_type=type(exc).__name__,
+                    session_id=session_id,
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
                 logging.getLogger(__name__).exception("sync recall failed")
         else:
             # Cached path: join the worker briefly, then drain the cache.
@@ -1073,7 +1409,15 @@ class LuminaryMemoryProvider(MemoryProvider):
                 cached = self._prefetch_cache
                 self._prefetch_cache = None
             if cached is not None:
-                cached_session, cached_query, cached_generation, cached_scope, memories, scores = cached
+                (
+                    cached_session,
+                    cached_query,
+                    cached_generation,
+                    cached_scope,
+                    cached_trace_id,
+                    memories,
+                    scores,
+                ) = cached
                 if (
                     cached_session == session_id
                     and cached_query == query
@@ -1083,6 +1427,16 @@ class LuminaryMemoryProvider(MemoryProvider):
                     self._last_recall_count = len(memories)
                     recall_block = self._format_recall_block(memories, scores)
                     self._last_recall_returned = bool(recall_block)
+                    self._log_event(
+                        "recall.context_ready",
+                        trace_id=cached_trace_id,
+                        operation="prefetch",
+                        status="ok",
+                        session_id=cached_session,
+                        cache_hit=True,
+                        memory_count=len(memories),
+                        returned=bool(recall_block),
+                    )
 
         if _is_destructive_imperative(query):
             # Live instruction first: for a destructive imperative (delete,
@@ -1231,6 +1585,16 @@ class LuminaryMemoryProvider(MemoryProvider):
         query = args.get("query")
         if not query or not str(query).strip():
             return self._tool_error("luminary_recall requires a non-empty 'query'")
+        started = time.perf_counter()
+        trace_id = self._log_event(
+            "recall.started",
+            operation="tool_recall",
+            status="started",
+            query_hash=_stable_content_hash(str(query))[:16],
+            query_chars=len(str(query)),
+            limit=int(args.get("limit") or self._config.get("recall_limit", 10)),
+            async_mode=False,
+        )
         try:
             result = self._client.recall(
                 str(query),
@@ -1286,14 +1650,42 @@ class LuminaryMemoryProvider(MemoryProvider):
                 "scores": kept_s,
                 "provenance": kept_provenance,
             }
+            self._log_event(
+                "recall.completed",
+                trace_id=trace_id,
+                operation="tool_recall",
+                status=payload["status"],
+                reason=payload["reason"],
+                memory_count=len(kept_m),
+                confidence=payload["confidence"],
+                returned=bool(kept_m),
+                latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
             return json.dumps(payload)
         except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
+            self._log_event(
+                "recall.failed",
+                trace_id=trace_id,
+                operation="tool_recall",
+                status="error",
+                error_type=type(exc).__name__,
+                latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
             return self._tool_error(f"recall failed: {exc}")
 
     def _handle_ingest(self, args: dict) -> str:
         content = args.get("content")
         if not content or not str(content).strip():
             return self._tool_error("luminary_ingest requires non-empty 'content'")
+        started = time.perf_counter()
+        trace_id = self._log_event(
+            "retain.started",
+            operation="tool_ingest",
+            status="started",
+            content_chars=len(str(content)),
+            tag_count=len(args.get("tags") or []),
+            source_kind="hermes-tool",
+        )
         try:
             tags = args.get("tags") or []
             mid = self._client.ingest(
@@ -1303,9 +1695,33 @@ class LuminaryMemoryProvider(MemoryProvider):
                 **self._operation_scope(),
             )
             if mid is None:
+                self._log_event(
+                    "retain.skipped",
+                    trace_id=trace_id,
+                    operation="tool_ingest",
+                    status="skipped",
+                    reason="whitelist_rejected",
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
                 return json.dumps({"result": "Memory rejected by whitelist."})
+            self._log_event(
+                "retain.completed",
+                trace_id=trace_id,
+                operation="tool_ingest",
+                status="ok",
+                memory_id=mid,
+                latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
             return json.dumps({"result": f"Memory stored (id={mid})."})
         except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
+            self._log_event(
+                "retain.failed",
+                trace_id=trace_id,
+                operation="tool_ingest",
+                status="error",
+                error_type=type(exc).__name__,
+                latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
             return self._tool_error(f"ingest failed: {exc}")
 
     def _handle_list(self, args: dict) -> str:
@@ -1323,6 +1739,13 @@ class LuminaryMemoryProvider(MemoryProvider):
         content = args.get("content")
         if not content or not str(content).strip():
             return self._tool_error("luminary_core_add requires non-empty 'content'")
+        started = time.perf_counter()
+        trace_id = self._log_event(
+            "core_add.started",
+            operation="core_add",
+            status="started",
+            content_chars=len(str(content)),
+        )
         try:
             tag = self._core_tag()
             mid = self._client.ingest(
@@ -1332,6 +1755,14 @@ class LuminaryMemoryProvider(MemoryProvider):
                 **self._operation_scope(),
             )
             if mid is None:
+                self._log_event(
+                    "core_add.skipped",
+                    trace_id=trace_id,
+                    operation="core_add",
+                    status="skipped",
+                    reason="whitelist_rejected",
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
                 return json.dumps({"result": "Memory rejected by whitelist."})
             # An exact duplicate may have been ingested earlier without the
             # core tag. Promote that existing row instead of assuming ingest
@@ -1348,8 +1779,25 @@ class LuminaryMemoryProvider(MemoryProvider):
                     changed = True
                 if changed:
                     self._client.update(m)
+            self._log_event(
+                "core_add.completed",
+                trace_id=trace_id,
+                operation="core_add",
+                status="ok",
+                memory_id=mid,
+                latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
             return json.dumps({"result": f"Core memory stored (id={mid})."})
         except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
+            self._log_event(
+                "core_add.failed",
+                trace_id=trace_id,
+                operation="core_add",
+                status="error",
+                error_type=type(exc).__name__,
+                latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                level=logging.ERROR,
+            )
             return self._tool_error(f"core_add failed: {exc}")
 
     def _handle_core_remove(self, args: dict) -> str:
@@ -1357,18 +1805,61 @@ class LuminaryMemoryProvider(MemoryProvider):
             mid = int(args.get("id"))
         except (TypeError, ValueError):
             return self._tool_error("luminary_core_remove requires an integer 'id'")
+        started = time.perf_counter()
+        trace_id = self._log_event(
+            "core_remove.started",
+            operation="core_remove",
+            status="started",
+            memory_id=mid,
+        )
         try:
             m = self._client.get(mid)
             if m is None:
+                self._log_event(
+                    "core_remove.skipped",
+                    trace_id=trace_id,
+                    operation="core_remove",
+                    status="skipped",
+                    reason="memory_not_found",
+                    memory_id=mid,
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
                 return self._tool_error(f"memory {mid} not found")
             tag = self._core_tag()
             new_tags = [t for t in (m.tags or []) if t != tag]
             if len(new_tags) == len(m.tags or []):
+                self._log_event(
+                    "core_remove.skipped",
+                    trace_id=trace_id,
+                    operation="core_remove",
+                    status="skipped",
+                    reason="not_core",
+                    memory_id=mid,
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
                 return json.dumps({"result": f"memory {mid} was not core (no change)"})
             m.tags = new_tags
             self._client.update(m)
+            self._log_event(
+                "core_remove.completed",
+                trace_id=trace_id,
+                operation="core_remove",
+                status="ok",
+                memory_id=mid,
+                latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
             return json.dumps({"result": f"memory {mid} removed from core"})
         except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
+            self._log_event(
+                "core_remove.failed",
+                trace_id=trace_id,
+                operation="core_remove",
+                status="error",
+                memory_id=mid,
+                error_type=type(exc).__name__,
+                latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                level=logging.ERROR,
+            )
             return self._tool_error(f"core_remove failed: {exc}")
 
     def _handle_core_list(self, args: dict) -> str:

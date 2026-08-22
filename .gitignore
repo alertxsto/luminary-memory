@@ -106,5 +106,8 @@ website/screenshot_*.png
 website/test_*.png
 website/*.png
 
+# ---- Firecrawl research cache (local only) ----
+.firecrawl/
+
 # ---- Internal plan files ----
 website/plan.md

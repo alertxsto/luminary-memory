@@ -143,6 +143,51 @@ def test_scope_isolation_applies_to_get_list_recall_and_fallback(tmp_path):
     alice.close()
 
 
+def test_scoped_graph_excludes_orphan_entities_from_other_scope(tmp_path):
+    """Graph/debug output must not expose stale entity names across tenants."""
+    client = _client(tmp_path)
+    alice_id = client.ingest(
+        "AliceOnly deployment alpha",
+        user_id="alice",
+        evidence_quote="AliceOnly deployment alpha",
+    )
+    bob_id = client.ingest(
+        "BobOnly deployment beta",
+        user_id="bob",
+        evidence_quote="BobOnly deployment beta",
+    )
+    # Simulate normal hard deletion after an earlier tenant-owned memory. The
+    # current schema removes relations but deliberately keeps entity rows, so
+    # the graph query must scope through visible memory links rather than
+    # treating orphan entities as globally visible.
+    client.backend.delete(bob_id)
+
+    alice = _client(tmp_path, scope={"user_id": "alice"})
+    graph = alice.graph(limit=50)
+    names = {row["name"] for row in graph["entities"]}
+    assert "aliceonly" in names
+    assert "bobonly" not in names
+    assert alice.get(alice_id) is not None
+    alice.close()
+    client.close()
+
+
+def test_duplicate_fallback_ignores_deleted_rows(tmp_path):
+    """A legacy backend fallback must dedup only active memories."""
+    client = _client(tmp_path)
+    first = client.ingest("reusable durable fact")
+    client.retract(first, reason="test retraction")
+
+    # Simulate a third-party backend that has not implemented find_by_hash().
+    client.backend.find_by_hash = None
+    second = client.ingest("reusable durable fact")
+
+    assert second != first
+    assert client.get(second).status == "active"
+    assert client.count() == 1
+    client.close()
+
+
 def test_bound_scope_cannot_be_overridden_by_write_or_read_arguments(tmp_path):
     client = _client(tmp_path, scope={"user_id": "alice"})
 
@@ -365,6 +410,28 @@ def test_strict_recall_requires_quote_not_just_source_label(tmp_path):
     memory.id = client.backend.add(memory)
     result = client.recall("deploy target staging", strict=True)
     assert result.memories == []
+    assert result.reason == "missing_evidence"
+    client.close()
+
+
+def test_evidence_required_blocks_ungrounded_candidates_even_when_not_strict(tmp_path):
+    settings = Settings(
+        db_path=str(tmp_path / "permissive-evidence.db"),
+        strict_recall=False,
+        evidence_required=True,
+        rule_auto_replace=False,
+    )
+    client = _client(tmp_path, settings=settings)
+    memory = Memory(
+        content="The deploy target is staging.",
+        evidence_quote="fabricated quote",
+        source_id="ticket:42",
+        embedding=_Engine().embed("The deploy target is staging."),
+    )
+    memory.id = client.backend.add(memory)
+    result = client.recall("deploy target staging", strict=False)
+    assert result.memories == []
+    assert result.status == "empty"
     assert result.reason == "missing_evidence"
     client.close()
 

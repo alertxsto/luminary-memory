@@ -4,7 +4,8 @@ A lightweight, self-hosted memory layer for AI agents.
 
 > Current implementation: `0.2.18`. The strict CLI/Hermes accuracy path now
 > includes scope isolation, evidence/provenance, conflict history, abstention,
-> and delivery-safe Telegram activity reporting.
+> delivery-safe Telegram activity reporting, and scoped JSONL transparency
+> events. Current verification: `466 passed, 3 skipped`, 83% coverage.
 
 ## What it does
 
@@ -26,6 +27,10 @@ A lightweight, self-hosted memory layer for AI agents.
 - SQLite out of the box, optional pgvector for scale (integration-tested in CI).
 - Local CPU embeddings via ONNX, no GPU, no cloud.
 - Configurable token budget so memory never overflows the agent's context.
+- Database-enforced exact deduplication across concurrent writers, with
+  legacy duplicate migration and replacement lineage.
+- Redacted Hermes JSONL logs with trace IDs, scope, status/reason, counts,
+  confidence, and latency for long-running troubleshooting.
 - Clean Python API + CLI.
 - **Automated contribution tooling**, CI (3.11/3.12 + pgvector), triage auto-labeling, stale bot, contributor account check.
 

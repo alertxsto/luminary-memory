@@ -16,6 +16,28 @@ def test_add_and_get(tmp_path):
     assert m is not None and m.content == "The sky is blue"
     assert b.count() == 1
 
+
+def test_non_unique_integrity_error_is_not_treated_as_duplicate(tmp_path):
+    b = _mk(tmp_path)
+    b.add(Memory(content="same content", content_hash="same-hash"))
+
+    with pytest.raises(sqlite3.IntegrityError, match="NOT NULL"):
+        b.add_with_status(Memory(content=None, content_hash="same-hash"))  # type: ignore[arg-type]
+    assert b.count() == 1
+    b.close()
+
+
+def test_batch_non_unique_integrity_error_rolls_back_all_rows(tmp_path):
+    b = _mk(tmp_path)
+    valid = Memory(content="batch valid")
+    invalid = Memory(content=None)  # type: ignore[arg-type]
+
+    with pytest.raises(sqlite3.IntegrityError, match="NOT NULL"):
+        b.add_many([valid, invalid])
+    assert b.count() == 0
+    b.close()
+
+
 def test_keyword_search_ranks(tmp_path):
     b = _mk(tmp_path)
     b.add(Memory(content="database indexing with sqlite fts5"))

@@ -70,12 +70,12 @@ representative of a real store.
 Command:
 
 ```bash
-python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-gold-final.json
+python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-deep-audit-final-3.json
 ```
 
 The run used SQLite, strict recall, evidence-required results, and the
 deterministic fake embedding engine for repeatable timing. It measured batch
-ingest at **21.35 ms** and end-to-end recall at **2.72 ms p50** (**2.92 ms
+ingest at **18.51 ms** and end-to-end recall at **2.29 ms p50** (**2.59 ms
 mean**). These are engineering smoke measurements, not a production capacity
 claim; the report was generated from an uncommitted working tree.
 

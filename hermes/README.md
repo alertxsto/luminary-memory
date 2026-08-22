@@ -80,8 +80,9 @@ changed ones, and **deletes stale, contradicted, or duplicate memories**:
 }
 ```
 
-Results land in the transparency log:
-`maintenance {'reviewed': N, 'deleted': N, 'updated': N}`.
+Results land in the JSONL transparency log as a scoped
+`maintenance.completed` event with `trace_id`, status, counts, and latency.
+The log never includes raw prompt or memory content.
 
 For correctness, Hermes sets strict recall/evidence mode and disables
 destructive rule replacement. Conflicting claim keys remain visible in audit
@@ -119,9 +120,12 @@ cp hermes/SKILL.md ~/.hermes/skills/luminary-memory/SKILL.md
 - 🛡️ **Accuracy guard**, scoped/evidence-aware recall can abstain instead of
   injecting a weak or unrelated memory.
 - 🧠 **Skill**, agent-side guidance for store usage.
-- 📜 **Transparency log**, `~/.hermes/luminary/luminary.log` records every
-  recall, retain, and error (initialize/recall/retain lines), so you can see
-  exactly what the provider is doing and whether anything failed.
+- 📜 **Transparency log**, `~/.hermes/luminary/luminary.log` records JSONL
+  initialization/recall/retain/pre-compress/core/maintenance events with
+  scope, `trace_id`, status/reason, counts, confidence, and latency, so you
+  can see exactly what the provider is doing and correlate failures without
+  logging memory content. A partial shutdown is reported when a worker cannot
+  be joined.
 
 ## Requirements
 

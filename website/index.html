@@ -71,7 +71,7 @@
     <div class="hero-inner reveal-on-scroll">
       <div class="eyebrow">
         <span class="eyebrow-dot" aria-hidden="true"></span>
-        <span>v0.2.18 · Self-Hosted Memory Layer · 448 Tests Passing</span>
+        <span>v0.2.18 · Self-Hosted Memory Layer · Deep-audited</span>
       </div>
 
       <h1 class="hero-title">
@@ -131,7 +131,7 @@
       <!-- CLI Tab Content -->
       <div class="term-panel" id="panel-cli" role="tabpanel" aria-labelledby="tab-cli">
         <pre class="term-body"><code><span class="c-com"># 1. Ingest a memory with metadata tags</span>
-<span class="c-fn">luminary-memory</span> add <span class="c-str">"The deploy target is the staging cluster"</span> --tags deploy infra
+<span class="c-fn">luminary-memory</span> add <span class="c-str">"The deploy target is the staging cluster"</span> --tags deploy,infra
 
 <span class="c-com"># 2. Recall with scoped 4-strategy fusion + abstention</span>
 <span class="c-fn">luminary-memory</span> recall <span class="c-str">"where do we deploy?"</span> --limit 5 --json
@@ -149,8 +149,8 @@
 <span class="c-fn">luminary-memory</span> stats
 
 <span class="c-com"># 7. Backup and restore</span>
-<span class="c-fn">luminary-memory</span> export memories.jsonl
-<span class="c-fn">luminary-memory</span> import memories.jsonl
+<span class="c-fn">luminary-memory</span> export --path memories.json
+<span class="c-fn">luminary-memory</span> import --path memories.json
 
 <span class="c-com"># 8. Visualize entity co-occurrence graph</span>
 <span class="c-fn">luminary-memory</span> graph
@@ -190,9 +190,9 @@
         <p class="stat-sub">Retrieval runs locally via CPU ONNX embeddings. You never burn API tokens to search memory.</p>
       </div>
       <div class="stat-card">
-        <span class="stat-num">76.9<em>ms</em></span>
-        <h3 class="stat-label">Pipeline Recall p50 @ 5k</h3>
-        <p class="stat-sub">Deterministic SQLite smoke measurement. This is a latency signal, not an independent accuracy claim.</p>
+        <span class="stat-num">0.95</span>
+        <h3 class="stat-label">Controlled Gold Recall@10</h3>
+        <p class="stat-sub">12-case regression fixture with abstention, evidence, and scope gates. Not a competitor claim.</p>
       </div>
       <div class="stat-card">
         <span class="stat-num">4</span>
@@ -350,7 +350,7 @@
       </div>
       <div class="bench-row">
         <div class="bench-metric">Recall latency, 5k store</div>
-        <div class="bench-sqlite">76.9ms p50 (deterministic pipeline, vectorized)</div>
+        <div class="bench-sqlite">76.9ms p50 historical (deterministic pipeline)</div>
         <div class="bench-pg bench-pg-missing">not yet benchmarked</div>
       </div>
       <div class="bench-row">
@@ -426,6 +426,22 @@
   📌 #12 ALWAYS verify tests before release
   • #11 Deploy target is staging</code></pre>
       <p class="fusion-meta">The Telegram hook reports persisted writes only. It escapes Markdown, supports Forum Topics, and retries pending IDs after network or API failures.</p>
+    </div>
+
+    <div class="fusion-note reveal-on-scroll accuracy-output">
+      <h3 class="fusion-title">Traceable troubleshooting, without leaking memory</h3>
+      <p>Hermes initialization, retain, recall, pre-compress, core, and maintenance operations write JSONL events with a <code>trace_id</code>, user/workspace/agent/session scope, status, reason, count, confidence, and latency. Query text and memory content stay out of the file; recalls use a short <code>query_hash</code>. A worker that cannot shut down cleanly is reported as <code>partial</code>.</p>
+      <pre><code>{
+  "event": "recall.completed",
+  "trace_id": "8f2c1e0a7b91d4c2",
+  "scope": {"user_id": "u_42", "workspace_id": "main", "agent_id": "luminary", "session_id": "s_17"},
+  "status": "abstain",
+  "reason": "low_confidence_or_ambiguous",
+  "memory_count": 0,
+  "confidence": 0.22,
+  "latency_ms": 3.4
+}</code></pre>
+      <p class="fusion-meta"><code>tail -f ~/.hermes/luminary/luminary.log | jq</code> · correlate <code>*.started</code> with <code>*.completed</code> or <code>*.failed</code>.</p>
     </div>
   </section>
 
@@ -724,7 +740,7 @@
       <div class="cta-meta">
         <span>Apache-2.0 License</span>
         <span class="dot" aria-hidden="true">·</span>
-        <span>448 Tests Passing</span>
+        <span>466 Tests Passing</span>
         <span class="dot" aria-hidden="true">·</span>
         <span>Python 3.11+</span>
         <span class="dot" aria-hidden="true">·</span>

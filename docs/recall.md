@@ -92,6 +92,11 @@ external taxonomy service.
 ## Strict results, evidence, and conflicts
 
 Hermes and the CLI enable `strict_recall=true` and `evidence_required=true`.
+When `evidence_required` is enabled, the evidence gate applies in permissive
+recall too: a source label or fabricated quote is rejected unless the quote is
+grounded in the stored content, and importance/temporal fallbacks are filtered
+by the same rule. Strict mode returns `status="abstain"`; permissive mode
+returns an empty result with `reason="missing_evidence"`.
 They return a structured status rather than forcing a top-1 answer:
 
 ```json

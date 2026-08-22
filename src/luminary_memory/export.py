@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import math
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -140,6 +141,7 @@ def import_memories(
     memories: list[Memory] = []
     normalized_scope = normalize_scope(scope)
     valid_statuses = {"candidate", "active", "conflicted", "superseded", "expired", "deleted"}
+    import_timestamp = datetime.now(UTC).isoformat()
     for d in memories_data:
         if not isinstance(d, dict):
             raise TypeError("each exported memory must be an object")
@@ -185,6 +187,8 @@ def import_memories(
                 ttl_seconds = None
         computed_hash = _hash(content)
         supplied_hash = str(d.get("content_hash") or "").strip().lower()
+        created_at = str(d.get("created_at") or import_timestamp)
+        updated_at = str(d.get("updated_at") or created_at)
         m = Memory(
             content=content,
             tags=tags,
@@ -192,8 +196,8 @@ def import_memories(
             source=d.get("source"),
             importance=importance,
             ttl_seconds=ttl_seconds,
-            created_at=str(d.get("created_at") or ""),
-            updated_at=str(d.get("updated_at") or ""),
+            created_at=created_at,
+            updated_at=updated_at,
             last_accessed_at=(str(d["last_accessed_at"]) if d.get("last_accessed_at") else None),
             access_count=access_count,
             embedding=_embedding(emb),
@@ -236,12 +240,23 @@ def import_memories(
     # Prevents bulk imports (e.g. MEMORY.md/USER.md merges) from creating
     # duplicate entries.
     existing_contents: set[str] = set()
+    # An explicit target scope always uses exact ownership for deduplication;
+    # ``include_global`` only applies to an unbound/compatibility lookup.
+    dedup_include_global = bool(include_global) and not bool(normalized_scope)
     try:
         for existing in backend.all():
+            # Import deduplication mirrors the active-row database invariant.
+            # A retracted/superseded history row must not block restoring the
+            # same fact as a new active row.
+            if str(getattr(existing, "status", "active") or "active") != "active":
+                continue
             if normalized_scope and not memory_matches_scope(
                 existing,
                 normalized_scope,
-                include_global=include_global,
+                # A global compatibility row is readable by a scoped caller,
+                # but it is not the same ownership key as the target import.
+                include_global=dedup_include_global,
+                active_only=True,
             ):
                 continue
             c = getattr(existing, "content", None)
@@ -263,17 +278,29 @@ def import_memories(
     if not deduped:
         return {"imported": 0, "skipped_duplicates": skipped_dups}
 
-    # Prefer batch path when available.
-    add_many = getattr(backend, "add_many", None)
-    if callable(add_many):
-        ids = add_many(deduped)
+    # Prefer the status-aware batch path when available. The pre-check above
+    # is only an optimization; concurrent importers can still race between
+    # reading existing rows and inserting. A loser must not append a second
+    # episode/evidence/graph lineage for the canonical row.
+    add_many_with_status = getattr(backend, "add_many_with_status", None)
+    if callable(add_many_with_status):
+        added = add_many_with_status(deduped)
     else:
-        ids = [backend.add(m) for m in deduped]
+        add_many = getattr(backend, "add_many", None)
+        if callable(add_many):
+            added = [(mid, True) for mid in add_many(deduped)]
+        else:
+            added = [(backend.add(m), True) for m in deduped]
     from luminary_memory.recall.graph import index_memory_entities
 
     secondary_failures = 0
-    for m, mid in zip(deduped, ids):
+    imported_count = 0
+    for m, (mid, inserted) in zip(deduped, added):
         m.id = mid
+        if not inserted:
+            skipped_dups += 1
+            continue
+        imported_count += 1
         try:
             backend.record_episode(
                 f"memory:{mid}",
@@ -324,7 +351,7 @@ def import_memories(
             except Exception:
                 logger.debug("could not mark imported memory %s for reindex", mid, exc_info=True)
             logger.warning("import index/evidence rebuild incomplete for memory %s", mid, exc_info=True)
-    result: dict = {"imported": len(deduped)}
+    result: dict = {"imported": imported_count}
     if skipped_dups:
         result["skipped_duplicates"] = skipped_dups
     if secondary_failures:

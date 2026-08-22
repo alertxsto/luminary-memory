@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/luminary-memory?color=8ab4e8)](https://pypi.org/project/luminary-memory)
 [![License](https://img.shields.io/github/license/alertxsto/luminary-memory?color=8ab4e8)](LICENSE)
 [![CI](https://github.com/alertxsto/luminary-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/alertxsto/luminary-memory/actions)
-[![Tests](https://img.shields.io/badge/tests-448%2B%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
+[![Tests](https://img.shields.io/badge/tests-466%2B%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
 [![Coverage](https://img.shields.io/badge/coverage-83%25-8ab4e8)](https://github.com/alertxsto/luminary-memory)
 [![Stars](https://img.shields.io/github/stars/alertxsto/luminary-memory?color=8ab4e8)](https://github.com/alertxsto/luminary-memory)
 
@@ -81,6 +81,29 @@ Two optional LLM-powered features keep the store sharp:
 28 settings are exposed in the [Hermes dashboard](https://alertxsto.github.io/luminary-memory) for zero-hassle tuning. See
 [docs/config-reference.md](docs/config-reference.md) for the complete reference and
 [hermes/README.md](hermes/README.md) for the one-shot installer.
+
+### Audit-grade behavior
+
+Exact active-memory deduplication is enforced by the database for the full
+`user/workspace/agent/session` scope, so concurrent writers converge on one
+row instead of racing through a read-then-insert check. Evidence-required
+recall fails closed when a quote is not grounded in the stored content, and
+`MemoryClient.count()` reports the same active, scope-visible view as
+`list()`.
+
+Hermes writes scoped JSONL troubleshooting events to
+`~/.hermes/luminary/luminary.log`. Events include `trace_id`, operation,
+status/reason, counts, confidence, and latency; prompt text, memory content,
+Telegram tokens, and API keys are omitted. Inspect it with:
+
+```bash
+tail -f ~/.hermes/luminary/luminary.log | jq
+```
+
+The full implementation-audit record is kept locally at
+`docs/IMPLEMENTATION-AUDIT.md`; it is intentionally excluded by the
+repository's `docs/*` rule alongside planning notes. The public benchmark
+notes retain the honest boundary around Mem0/Hindsight comparisons.
 
 ---
 

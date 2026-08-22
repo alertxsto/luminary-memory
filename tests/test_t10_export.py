@@ -1,6 +1,7 @@
 import json
 
 from luminary_memory.api import MemoryClient
+from luminary_memory.config import Settings
 from luminary_memory.ingest.llm import NoopEnricher
 
 
@@ -86,6 +87,22 @@ def test_import_bare_list_format(tmp_path):
     assert "bare list memory one" in contents
 
 
+def test_import_fills_missing_timestamps_for_strict_backends(tmp_path):
+    payload = [{"content": "timestamp-safe imported memory"}]
+    path = tmp_path / "timestamp-safe.json"
+    path.write_text(json.dumps(payload))
+    dst = MemoryClient(
+        db_path=str(tmp_path / "timestamp-safe.db"),
+        engine=_FakeEngine(),
+        enricher=NoopEnricher(),
+    )
+    assert dst.import_memories(path)["imported"] == 1
+    memory = dst.list(limit=0)[0]
+    assert memory.created_at
+    assert memory.updated_at
+    dst.close()
+
+
 def test_import_missing_file_raises_cleanly(tmp_path):
     """Missing file raises FileNotFoundError (not swallowed)."""
     from luminary_memory.api import MemoryClient
@@ -159,6 +176,90 @@ def test_import_dedup_uses_same_normalized_content_hash_as_ingest(tmp_path):
     result = dst.import_memories(path)
     assert result["imported"] == 0
     assert result["skipped_duplicates"] == 1
+    dst.close()
+
+
+def test_import_can_restore_content_after_retraction(tmp_path):
+    """Inactive history must not block an active restore/import."""
+    dst = MemoryClient(
+        db_path=str(tmp_path / "restore-after-retract.db"),
+        engine=_FakeEngine(),
+        enricher=NoopEnricher(),
+    )
+    memory_id = dst.ingest("retractable durable fact")
+    assert memory_id is not None
+    dst.retract(memory_id, reason="source revoked")
+
+    path = tmp_path / "restore-after-retract.json"
+    path.write_text(
+        json.dumps({"memories": [{"content": "retractable durable fact"}]}),
+        encoding="utf-8",
+    )
+    result = dst.import_memories(path)
+
+    assert result["imported"] == 1
+    assert dst.count() == 1
+    assert [m.status for m in dst.list(limit=0)] == ["active"]
+    assert sum(m.content == "retractable durable fact" for m in dst.backend.all()) == 2
+    dst.close()
+
+
+def test_scoped_import_does_not_dedup_against_global_compatibility_row(tmp_path):
+    """Global read compatibility must not block a tenant-owned restore."""
+    db = tmp_path / "scoped-restore.db"
+    writer = MemoryClient(db_path=str(db), engine=_FakeEngine(), enricher=NoopEnricher())
+    writer.ingest("shared global restore fact")
+    path = tmp_path / "scoped-restore.json"
+    path.write_text(
+        json.dumps({"memories": [{"content": "shared global restore fact"}]}),
+        encoding="utf-8",
+    )
+    writer.close()
+
+    scoped = MemoryClient(
+        db_path=str(db),
+        engine=_FakeEngine(),
+        enricher=NoopEnricher(),
+        settings=Settings(db_path=str(db), scope_include_global=False),
+        scope={"user_id": "alice"},
+    )
+    result = scoped.import_memories(path)
+
+    assert result["imported"] == 1
+    assert scoped.count() == 1
+    assert [m.user_id for m in scoped.list(limit=0)] == ["alice"]
+    assert sum(m.content == "shared global restore fact" for m in scoped.backend.all()) == 2
+    scoped.close()
+
+
+def test_import_race_winner_does_not_duplicate_lineage(tmp_path, monkeypatch):
+    """A DB-level duplicate winner must not get a second import episode."""
+    from luminary_memory.api import MemoryClient
+
+    dst = MemoryClient(
+        db_path=str(tmp_path / "race-import.db"),
+        engine=_FakeEngine(),
+        enricher=NoopEnricher(),
+    )
+    dst.ingest("concurrent import durable fact")
+    path = tmp_path / "race-import.json"
+    path.write_text(
+        json.dumps({"memories": [{"content": "concurrent import durable fact"}]}),
+        encoding="utf-8",
+    )
+
+    # Hide the optimistic pre-check so the test exercises the backend's
+    # database-enforced conflict resolution path.
+    monkeypatch.setattr(dst.backend, "all", list)
+    result = dst.import_memories(path)
+
+    assert result["imported"] == 0
+    assert result["skipped_duplicates"] == 1
+    assert dst.count() == 1
+    assert dst.backend.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == 1
+    assert dst.backend.conn.execute(
+        "SELECT COUNT(*) FROM memory_events WHERE event_type = 'import'"
+    ).fetchone()[0] == 0
     dst.close()
 
 

@@ -319,11 +319,12 @@ class MemoryClient:
         memory: Memory,
         source_text: str,
         claims: list[dict] | None = None,
+        episode_id: str | None = None,
     ) -> None:
         """Persist immutable source context plus validated atomic claims."""
         if memory.id is None:
             return
-        episode_id = f"memory:{memory.id}"
+        episode_id = episode_id or f"memory:{memory.id}"
         try:
             self.backend.record_episode(
                 episode_id,
@@ -378,7 +379,7 @@ class MemoryClient:
         for existing in self.backend.all():
             existing_hash = existing.content_hash or _content_hash(existing.content)
             if existing_hash == content_hash and memory_matches_scope(
-                existing, scope, include_global=False
+                existing, scope, include_global=False, active_only=True
             ):
                 return existing
         return None
@@ -575,11 +576,24 @@ class MemoryClient:
             float(m.importance) >= 0.8 or is_rule
         )
         if should_try_replace:
-            replaced = self._maybe_replace_rule(content, m)
+            replaced = self._maybe_replace_rule(
+                content,
+                m,
+                source_text=text,
+                claims=enriched_claims,
+            )
             if replaced is not None:
                 return replaced
 
-        mid = self.backend.add(m)
+        add_with_status = getattr(self.backend, "add_with_status", None)
+        if callable(add_with_status):
+            mid, inserted = add_with_status(m)
+        else:  # pragma: no cover - compatibility for third-party backends
+            mid, inserted = self.backend.add(m), True
+        if not inserted:
+            existing = self.backend.get(mid)
+            self._record_event("duplicate_suppressed", mid, before=existing, after=m)
+            return mid
         m.id = mid
         self._record_episode_and_claims(m, text, enriched_claims)
         self._record_event("ingest", mid, after=m)
@@ -587,7 +601,14 @@ class MemoryClient:
         _try_index_graph(self.backend, m)
         return mid
 
-    def _maybe_replace_rule(self, content: str, new_memory: Memory) -> int | None:
+    def _maybe_replace_rule(
+        self,
+        content: str,
+        new_memory: Memory,
+        *,
+        source_text: str | None = None,
+        claims: list[dict] | None = None,
+    ) -> int | None:
         """Replace a similar existing memory with the new one (anti-contradiction).
 
         Returns the id of the replaced (updated) memory, or None when nothing
@@ -656,6 +677,19 @@ class MemoryClient:
                     existing.confidence = new_memory.confidence
                     existing.needs_reindex = False
                     self.backend.update(existing)
+                    # Rule replacement is an in-place compatibility path, but
+                    # it still represents a new source observation. Preserve
+                    # that observation under a stable per-version episode ID
+                    # and retire any old structured claims before appending
+                    # the new ones. Without this, the memory text changes
+                    # while the raw lineage silently remains the old fact.
+                    self._sync_claim_status(best_id, "superseded", _utc_now())
+                    self._record_episode_and_claims(
+                        existing,
+                        source_text or content,
+                        claims,
+                        episode_id=f"memory:{best_id}:replace:{new_memory.content_hash}",
+                    )
                     self._record_event("rule_replace", best_id, before=before, after=existing)
                     self._record_evidence(existing, extractor="rule-replace")
                     _try_index_graph(self.backend, existing)
@@ -913,7 +947,12 @@ class MemoryClient:
                 float(mem.importance) >= 0.8 or is_rule
             )
             if should_try:
-                replaced = self._maybe_replace_rule(content, mem)
+                replaced = self._maybe_replace_rule(
+                    content,
+                    mem,
+                    source_text=raw_sources[orig_idx],
+                    claims=list(mem.metadata.get("claims") or []),
+                )
                 if replaced is not None:
                     result[orig_idx] = replaced
                     continue
@@ -921,9 +960,20 @@ class MemoryClient:
             to_insert_idx.append(orig_idx)
 
         if to_insert:
-            ids = self.backend.add_many(to_insert)  # type: ignore[attr-defined]
-            for mem, mid, orig_idx in zip(to_insert, ids, to_insert_idx):
+            add_many_with_status = getattr(self.backend, "add_many_with_status", None)
+            if callable(add_many_with_status):
+                added = add_many_with_status(to_insert)
+            else:  # pragma: no cover - compatibility for third-party backends
+                added = [(mid, True) for mid in self.backend.add_many(to_insert)]
+            for mem, (mid, inserted), orig_idx in zip(to_insert, added, to_insert_idx):
                 mem.id = mid
+                if not inserted:
+                    existing = self.backend.get(mid)
+                    self._record_event(
+                        "duplicate_suppressed", mid, before=existing, after=mem
+                    )
+                    result[orig_idx] = mid
+                    continue
                 self._record_event("ingest", mid, after=mem)
                 self._record_episode_and_claims(
                     mem,
@@ -1225,9 +1275,11 @@ class MemoryClient:
         }
 
     def count(self) -> int:
-        if self.scope:
-            return len(self.list(limit=0))
-        return self.backend.count()
+        """Return active, scope-visible rows in the public client view."""
+        # Client count is the active, scope-visible view and therefore stays
+        # consistent with list(). Backends still expose raw row counts for
+        # low-level diagnostics and migration checks.
+        return len(self.list(limit=0))
 
     def run_lifecycle(self, semantic: bool | None = None) -> dict[str, int]:
         from luminary_memory.lifecycle.runner import run_lifecycle
@@ -1655,9 +1707,8 @@ class MemoryClient:
                 "SELECT e.name, COUNT(DISTINCT r.source_id) + COUNT(DISTINCT r.target_id) AS degree, "
                 "COUNT(DISTINCT r.memory_id) AS memories "
                 "FROM entities e "
-                "LEFT JOIN relations r ON r.source_id = e.id OR r.target_id = e.id "
-                f"LEFT JOIN memories m ON m.id = r.memory_id AND {scope_where} "
-                "WHERE r.id IS NULL OR m.id IS NOT NULL "
+                "JOIN relations r ON r.source_id = e.id OR r.target_id = e.id "
+                f"JOIN memories m ON m.id = r.memory_id AND {scope_where} "
                 "GROUP BY e.id ORDER BY degree DESC LIMIT ?",
                 (*scope_params, graph_limit),
             ).fetchall()
@@ -1856,6 +1907,14 @@ class MemoryClient:
                     and (wanted <= set(m.tags or []) if tag_mode in {"all", "strict"} else wanted & set(m.tags or []))
                 }
 
+        evidence_required = bool(getattr(self.settings, "evidence_required", False))
+
+        def _has_required_evidence(memory: Memory) -> bool:
+            """Accept only a quote grounded in the memory content."""
+            quote = " ".join(str(memory.evidence_quote or "").split()).casefold()
+            content = " ".join(str(memory.content or "").split()).casefold()
+            return bool(quote and content and quote in content)
+
         def _is_current(memory: Memory) -> bool:
             if memory.status != "active" and not (include_conflicted and memory.status == "conflicted"):
                 return False
@@ -1904,10 +1963,25 @@ class MemoryClient:
                 return memories
             return [full.get(memory.id, memory) for memory in memories]
 
+        evidence_candidates_seen = 0
+        if evidence_required:
+            evidence_candidates_seen = sum(
+                1
+                for strat in strategies
+                for row in strat
+                if row
+                and _is_current(row[0])
+                and not _has_required_evidence(row[0])
+            )
+
         filtered_strategies: list[list[tuple]] = []
         for strat in strategies:
             filtered_strategies.append([
-                row for row in strat if row and _is_current(row[0])
+                row
+                for row in strat
+                if row
+                and _is_current(row[0])
+                and (not evidence_required or _has_required_evidence(row[0]))
             ])
         strategies = filtered_strategies
 
@@ -1933,6 +2007,8 @@ class MemoryClient:
                 if memory.id in existing_ids or memory.status != "conflicted":
                     continue
                 if not _is_current(memory) or not query_terms:
+                    continue
+                if evidence_required and not _has_required_evidence(memory):
                     continue
                 content_terms = set(
                     re.findall(r"[a-z0-9][a-z0-9_./:+#@=-]*", memory.content.casefold())
@@ -1966,25 +2042,6 @@ class MemoryClient:
             (id_to_mem[mid], score) for mid, score in fused if mid in id_to_mem
         ]
 
-        if strict_policy and getattr(self.settings, "evidence_required", False):
-            # Evidence is a candidate-validity gate, not a late presentation
-            # filter. Removing unsupported top candidates before confidence and
-            # margin calculation prevents their scores from distorting
-            # abstention decisions for the grounded alternatives below them.
-            scored = [
-                (memory, score)
-                for memory, score in scored
-                if str(memory.evidence_quote or "").strip()
-            ]
-            if not scored:
-                return RecallResult(
-                    memories=[],
-                    scores=[],
-                    strategies_hit=strategies_hit,
-                    status="abstain",
-                    reason="missing_evidence",
-                )
-
         # Importance boost: high-importance memories (durable rules, critical
         # facts) get a ranking bonus so they surface even when the query only
         # loosely matches. Importance alone never tops an exact match, but it
@@ -1999,6 +2056,14 @@ class MemoryClient:
                 scored.sort(key=lambda x: -x[1])
 
         if not scored:
+            if evidence_required and evidence_candidates_seen:
+                return RecallResult(
+                    memories=[],
+                    scores=[],
+                    strategies_hit=strategies_hit,
+                    status="abstain" if strict_policy else "empty",
+                    reason="missing_evidence",
+                )
             if strict_policy:
                 return RecallResult(
                     memories=[],
@@ -2040,7 +2105,12 @@ class MemoryClient:
                 else:
                     important = []
             important = _hydrate(important)
-            important = [m for m in important if _is_current(m)]
+            important = [
+                m
+                for m in important
+                if _is_current(m)
+                and (not evidence_required or _has_required_evidence(m))
+            ]
             if important:
                 return RecallResult(
                     memories=important,
@@ -2055,7 +2125,12 @@ class MemoryClient:
                 scope=effective_scope,
                 include_global=include_global,
             )
-            fallback = [row for row in fallback if _is_current(row[0])]
+            fallback = [
+                row
+                for row in fallback
+                if _is_current(row[0])
+                and (not evidence_required or _has_required_evidence(row[0]))
+            ]
             fallback_pairs: list[tuple] = [(m, s * 0.1) for m, s, _label in fallback]
             if fallback_pairs:
                 return RecallResult(

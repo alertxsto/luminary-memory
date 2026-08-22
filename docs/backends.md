@@ -32,6 +32,10 @@
   in backend queries where supported and defensively again in the orchestrator
   before fusion/fallback. Scope-aware indexes cover ownership, status, claim
   keys, and content hashes.
+- Exact active deduplication is a database invariant, not only an API
+  pre-check: `uq_memories_active_scope_hash` covers the normalized ownership
+  tuple plus `content_hash`. Concurrent writers resolve the winning row and
+  the API avoids writing duplicate episode/evidence/graph lineage.
 
 ## pgvector
 
@@ -44,6 +48,11 @@
 - Integration tests run against a real Postgres service in CI
   (`.github/workflows/ci.yml`); run them locally with `LUMINARY_PG_DSN`
   (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
+- Schema initialization backfills legacy hashes, collapses exact active
+  duplicates while rehoming derived references, and installs the same scoped
+  unique invariant as SQLite. Unique-conflict recovery rolls back the failed
+  transaction and closes its lookup snapshot, which matters for long-lived
+  writer connections.
 
 ## Choosing
 

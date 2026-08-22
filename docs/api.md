@@ -20,4 +20,18 @@ pdoc --output-dir docs/api --docformat markdown src/luminary_memory
   confidence, evidence, claim, supersession, and reindex fields.
 - Subpackages `backends/`, `embeddings/`, `ingest/`, `recall/`, `lifecycle/`, `export`.
 
+## Consistency contracts
+
+- `MemoryClient.count()` is the active, scope-visible count and agrees with
+  `list(limit=0)`. Use `client.backend.count()` only when inspecting raw rows
+  retained for lifecycle/audit history.
+- Exact active duplicates are resolved by the database for the complete
+  `user_id`/`workspace_id`/`agent_id`/`session_id` scope. A concurrent duplicate
+  write returns the canonical ID and does not create a second episode,
+  evidence row, or graph lineage.
+- Export/import deduplication follows the same active-row rule: deleted or
+  superseded history does not block restoring an active copy.
+- With `evidence_required=True`, recall only returns quotes grounded in the
+  stored content, including permissive and fallback paths.
+
 Regenerate whenever public docstrings change; CI optionally checks freshness with `pdoc --output-dir /tmp/pdoc_check && diff`.
