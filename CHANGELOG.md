@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Deep long-term correctness audit** — scoped clients no longer mutate
+  compatibility-visible global rows during recall, lifecycle, or LLM
+  maintenance; malformed update state is normalized and content hashes are
+  repaired before future deduplication.
+- **Atomic claim ledger writes** — a failed `claim_evidence` insert rolls back
+  its parent claim, while independent claims continue to be recorded when one
+  malformed/external claim fails.
+- **Truthful Telegram activity delivery** — the hook requires Telegram's
+  `{"ok": true}` envelope, retries malformed/API/network failures, excludes
+  soft-deleted rows from counts and content, and acknowledges inactive-only
+  backlog rows without emitting a misleading message.
+- **CI coverage of the actual integration surface** — `develop` pushes now
+  trigger CI and Ruff checks include the Telegram hook.
+
+### Tests & documentation
+
+- Added scope, lifecycle, hash-repair, claim-rollback, inactive-hook, and
+  malformed-Telegram-response invariants to the long-term regression suite.
+- Current verification: `448 passed, 3 skipped`, `83%` full-source coverage,
+  and clean Ruff. The controlled gold fixture remains a regression signal, not
+  a matched Mem0/Hindsight accuracy claim.
+
 ## [0.2.18] - 2026-08-20
 
 ### Changed

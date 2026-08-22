@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sqlite3
 import threading
 
@@ -13,6 +14,35 @@ from luminary_memory.scope import scope_sql
 from luminary_memory.types import Memory
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_float(value, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if math.isfinite(parsed) else default
+
+
+def _safe_unit_float(value, default: float) -> float:
+    return max(0.0, min(1.0, _safe_float(value, default)))
+
+
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _optional_int(value) -> int | None:
+    if value is None:
+        return None
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return None
+
 
 def _sanitize_fts_query(query: str) -> str:
     """Build a safe FTS5 query from plain user text.
@@ -87,18 +117,24 @@ class SQLiteBackend(MemoryBackend):
             except (TypeError, ValueError, json.JSONDecodeError):
                 return default
 
+        metadata = _json(row["metadata"], {})
+        tags = _json(row["tags"], [])
+        if not isinstance(metadata, dict):
+            metadata = {}
+        if not isinstance(tags, list):
+            tags = []
         m = Memory(
             id=row["id"],
             content=row["content"],
-            metadata=_json(row["metadata"], {}),
+            metadata=metadata,
             source=row["source"],
-            tags=_json(row["tags"], []),
-            importance=row["importance"],
-            ttl_seconds=row["ttl_seconds"],
+            tags=[str(tag) for tag in tags],
+            importance=_safe_unit_float(row["importance"], 0.5),
+            ttl_seconds=_optional_int(row["ttl_seconds"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             last_accessed_at=row["last_accessed_at"],
-            access_count=row["access_count"],
+            access_count=_safe_int(row["access_count"]),
             user_id=row["user_id"],
             session_id=row["session_id"],
             workspace_id=row["workspace_id"],
@@ -107,7 +143,7 @@ class SQLiteBackend(MemoryBackend):
             valid_from=row["valid_from"],
             valid_to=row["valid_to"],
             status=str(row["status"] or "active"),
-            confidence=float(row["confidence"] if row["confidence"] is not None else 1.0),
+            confidence=_safe_unit_float(row["confidence"], 1.0),
             evidence_quote=row["evidence_quote"],
             source_id=row["source_id"],
             claim_key=row["claim_key"],
@@ -117,14 +153,27 @@ class SQLiteBackend(MemoryBackend):
         )
         emb = row["embedding"]
         if emb is not None:
-            m.embedding = np.frombuffer(emb, dtype=np.float32).tolist()
+            try:
+                vector = np.frombuffer(emb, dtype=np.float32)
+                if vector.size and np.isfinite(vector).all():
+                    m.embedding = vector.tolist()
+            except (TypeError, ValueError):
+                # A malformed legacy blob must not make list/get/recall
+                # unusable; keyword and graph recall can still operate.
+                m.embedding = None
         return m
 
     @staticmethod
     def _encode_embedding(vec: list[float] | None) -> bytes | None:
         if vec is None:
             return None
-        return np.asarray(vec, dtype=np.float32).tobytes()
+        try:
+            array = np.asarray(vec, dtype=np.float32)
+        except (TypeError, ValueError):
+            return None
+        if array.ndim != 1 or not array.size or not np.isfinite(array).all():
+            return None
+        return array.tobytes()
 
     def add(self, m: Memory) -> int:
         cur = self.conn.execute(
@@ -174,11 +223,17 @@ class SQLiteBackend(MemoryBackend):
         """Batch get — one SELECT for many ids instead of N per-id queries."""
         if not ids:
             return {}
-        ph = ",".join("?" for _ in ids)
-        rows = self.conn.execute(
-            f"SELECT * FROM memories WHERE id IN ({ph})", ids
-        ).fetchall()
-        return {int(r["id"]): self._row_to_memory(r) for r in rows}
+        out: dict[int, Memory] = {}
+        # Keep a margin below SQLite's common 999-variable limit so callers
+        # can safely use this method for long-lived maintenance batches.
+        for start in range(0, len(ids), 900):
+            chunk = ids[start : start + 900]
+            ph = ",".join("?" for _ in chunk)
+            rows = self.conn.execute(
+                f"SELECT * FROM memories WHERE id IN ({ph})", chunk
+            ).fetchall()
+            out.update({int(r["id"]): self._row_to_memory(r) for r in rows})
+        return out
 
     def find_by_hash(self, content_hash: str, scope: dict | None = None) -> Memory | None:
         where, params = scope_sql(scope, alias="m", include_global=False)
@@ -266,42 +321,42 @@ class SQLiteBackend(MemoryBackend):
         quote = str(claim.get("evidence_quote") or "").strip()
         if not subject or not predicate or not object_value or not quote:
             return
-        cur = self.conn.execute(
-            "INSERT INTO claims "
-            "(memory_id, subject, predicate, object, polarity, status, confidence, evidence_quote, "
-            "source_episode_id, user_id, session_id, workspace_id, agent_id, observed_at, valid_from, valid_to) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                memory_id,
-                subject,
-                predicate,
-                object_value,
-                str(claim.get("polarity") or "positive"),
-                str(claim.get("status") or "active"),
-                float(claim.get("confidence") if claim.get("confidence") is not None else 1.0),
-                quote,
-                claim.get("source_episode_id"),
-                scope.get("user_id"),
-                scope.get("session_id"),
-                scope.get("workspace_id"),
-                scope.get("agent_id"),
-                claim.get("observed_at"),
-                claim.get("valid_from"),
-                claim.get("valid_to"),
-            ),
-        )
-        claim_id = int(cur.lastrowid)
-        self.conn.execute(
-            "INSERT INTO claim_evidence "
-            "(claim_id, quote, source_episode_id, confidence) VALUES (?, ?, ?, ?)",
-            (
-                claim_id,
-                quote,
-                claim.get("source_episode_id"),
-                float(claim.get("confidence") if claim.get("confidence") is not None else 1.0),
-            ),
-        )
-        self.conn.commit()
+        confidence = _safe_unit_float(claim.get("confidence"), 1.0)
+        try:
+            cur = self.conn.execute(
+                "INSERT INTO claims "
+                "(memory_id, subject, predicate, object, polarity, status, confidence, evidence_quote, "
+                "source_episode_id, user_id, session_id, workspace_id, agent_id, observed_at, valid_from, valid_to) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    memory_id,
+                    subject,
+                    predicate,
+                    object_value,
+                    str(claim.get("polarity") or "positive"),
+                    str(claim.get("status") or "active"),
+                    confidence,
+                    quote,
+                    claim.get("source_episode_id"),
+                    scope.get("user_id"),
+                    scope.get("session_id"),
+                    scope.get("workspace_id"),
+                    scope.get("agent_id"),
+                    claim.get("observed_at"),
+                    claim.get("valid_from"),
+                    claim.get("valid_to"),
+                ),
+            )
+            claim_id = int(cur.lastrowid)
+            self.conn.execute(
+                "INSERT INTO claim_evidence "
+                "(claim_id, quote, source_episode_id, confidence) VALUES (?, ?, ?, ?)",
+                (claim_id, quote, claim.get("source_episode_id"), confidence),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def sync_claim_status(
         self,
@@ -363,13 +418,31 @@ class SQLiteBackend(MemoryBackend):
         self.conn.execute("DELETE FROM memories WHERE id = ?", (id,))
         self.conn.commit()
 
+    def rehome_memory_references(self, source_id: int, target_id: int) -> None:
+        """Preserve evidence/claims/graph edges when a duplicate is removed."""
+        self.conn.execute(
+            "UPDATE memory_evidence SET memory_id = ? WHERE memory_id = ?",
+            (target_id, source_id),
+        )
+        self.conn.execute(
+            "UPDATE claims SET memory_id = ? WHERE memory_id = ?",
+            (target_id, source_id),
+        )
+        self.conn.execute(
+            "UPDATE relations SET memory_id = ? WHERE memory_id = ?",
+            (target_id, source_id),
+        )
+        self.conn.commit()
+
     def delete_many(self, ids: list[int]) -> None:
         """Batch delete (relations + memories) in two statements."""
         if not ids:
             return
-        ph = ",".join("?" for _ in ids)
-        self.conn.execute(f"DELETE FROM relations WHERE memory_id IN ({ph})", ids)
-        self.conn.execute(f"DELETE FROM memories WHERE id IN ({ph})", ids)
+        for start in range(0, len(ids), 450):
+            chunk = ids[start : start + 450]
+            ph = ",".join("?" for _ in chunk)
+            self.conn.execute(f"DELETE FROM relations WHERE memory_id IN ({ph})", chunk)
+            self.conn.execute(f"DELETE FROM memories WHERE id IN ({ph})", chunk)
         self.conn.commit()
 
     def all(self) -> list[Memory]:
@@ -616,23 +689,27 @@ class SQLiteBackend(MemoryBackend):
         import time
 
         now = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
-        ph = ",".join("?" for _ in ids)
-        self.conn.execute(
-            f"UPDATE memories SET access_count = access_count + 1, "
-            f"last_accessed_at = ? "
-            f"WHERE id IN ({ph})",
-            (now, *ids),
-        )
+        for start in range(0, len(ids), 900):
+            chunk = ids[start : start + 900]
+            ph = ",".join("?" for _ in chunk)
+            self.conn.execute(
+                f"UPDATE memories SET access_count = access_count + 1, "
+                f"last_accessed_at = ? "
+                f"WHERE id IN ({ph})",
+                (now, *chunk),
+            )
         self.conn.commit()
 
     def update_importances(self, pairs: list[tuple[float, int]]) -> None:
         """Bulk-update importance for (importance, id) pairs in one pass."""
         if not pairs:
             return
-        self.conn.executemany(
-            "UPDATE memories SET importance = ? WHERE id = ?",
-            [(float(imp), int(_id)) for imp, _id in pairs],
-        )
+        normalized = [(float(imp), int(_id)) for imp, _id in pairs]
+        for start in range(0, len(normalized), 450):
+            self.conn.executemany(
+                "UPDATE memories SET importance = ? WHERE id = ?",
+                normalized[start : start + 450],
+            )
         self.conn.commit()
 
     def keyword_search(

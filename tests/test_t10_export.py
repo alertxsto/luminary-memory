@@ -146,3 +146,75 @@ def test_import_dedup_skips_existing(tmp_path):
     contents = [m.content for m in dst.list(limit=0)]
     assert contents.count("existing fact about deploy target") == 1
     assert "brand new fact about database" in contents
+
+
+def test_import_dedup_uses_same_normalized_content_hash_as_ingest(tmp_path):
+    import json as _json
+
+    dst = MemoryClient(db_path=str(tmp_path / "normalized.db"), engine=_FakeEngine(), enricher=NoopEnricher())
+    dst.ingest("normalized   durable   fact")
+    path = tmp_path / "normalized.json"
+    path.write_text(_json.dumps({"memories": [{"content": "  NORMALIZED durable fact  "}]}))
+
+    result = dst.import_memories(path)
+    assert result["imported"] == 0
+    assert result["skipped_duplicates"] == 1
+    dst.close()
+
+
+def test_import_recomputes_tampered_content_hash_and_sanitizes_scores(tmp_path):
+    import json as _json
+
+    dst = MemoryClient(
+        db_path=str(tmp_path / "tampered.db"),
+        engine=_FakeEngine(),
+        enricher=NoopEnricher(),
+    )
+    path = tmp_path / "tampered.json"
+    path.write_text(
+        _json.dumps(
+            {
+                "memories": [
+                    {
+                        "content": "durable imported fact",
+                        "content_hash": "stale-hash",
+                        "importance": 99,
+                        "confidence": -4,
+                        "ttl_seconds": "broken",
+                        "tags": "not-a-list",
+                        "metadata": ["not", "a", "mapping"],
+                        "access_count": "broken",
+                    }
+                ]
+            }
+        )
+    )
+
+    assert dst.import_memories(path)["imported"] == 1
+    memory = dst.list(limit=0)[0]
+    assert memory.importance == 1.0
+    assert memory.confidence == 0.0
+    assert memory.tags == []
+    assert memory.metadata == {}
+    assert memory.access_count == 0
+    assert memory.content_hash == dst.backend.find_by_hash(memory.content_hash).content_hash
+    assert memory.ttl_seconds is None
+    dst.close()
+
+
+def test_import_rejects_future_or_malformed_exports(tmp_path):
+    import json as _json
+
+    import pytest
+
+    dst = MemoryClient(db_path=str(tmp_path / "validate.db"), engine=_FakeEngine(), enricher=NoopEnricher())
+    future = tmp_path / "future.json"
+    future.write_text(_json.dumps({"format": "luminary-memory-export", "version": 999, "memories": []}))
+    with pytest.raises(ValueError, match="unsupported export version"):
+        dst.import_memories(future)
+
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text(_json.dumps({"format": "other", "memories": []}))
+    with pytest.raises(ValueError, match="unsupported export format"):
+        dst.import_memories(malformed)
+    dst.close()

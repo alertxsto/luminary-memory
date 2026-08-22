@@ -190,6 +190,26 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories_fts'"
     ).fetchone() is not None
     conn.executescript(SCHEMA_SQL)
+    rebuild_fts = not had_fts
+    if had_fts:
+        # A crash or hand-edited legacy database can leave the derived FTS
+        # table/triggers only partially present. Existence of the table name
+        # alone is not enough to establish that keyword recall is healthy.
+        fts_columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(memories_fts)").fetchall()
+        }
+        trigger_names = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'memories_%'"
+            ).fetchall()
+        }
+        expected_triggers = {"memories_ai", "memories_au", "memories_ad"}
+        if not {"content", "tags"} <= fts_columns or not expected_triggers <= trigger_names:
+            conn.execute("DROP TABLE IF EXISTS memories_fts")
+            conn.executescript(SCHEMA_SQL)
+            rebuild_fts = True
     # ``CREATE TABLE IF NOT EXISTS`` does not evolve a database created by an
     # older release.  Keep migrations deliberately small and idempotent so a
     # provider can open an existing store without a manual migration command.
@@ -214,7 +234,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_memories_hash "
         "ON memories(user_id, workspace_id, content_hash)"
     )
-    if not had_fts:
+    if rebuild_fts:
         mem_count = conn.execute("SELECT count(*) FROM memories").fetchone()[0]
         if mem_count > 0:
             conn.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")

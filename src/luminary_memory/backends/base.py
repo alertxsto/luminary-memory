@@ -95,6 +95,14 @@ class MemoryBackend(ABC):
         """Keep derived claim rows aligned with a memory lifecycle mutation."""
         return
 
+    def rehome_memory_references(self, source_id: int, target_id: int) -> None:
+        """Move derived references before a hard-delete consolidation.
+
+        Backends with provenance tables override this. The no-op default keeps
+        lightweight/custom backends compatible with lifecycle operations.
+        """
+        return
+
     @abstractmethod
     def keyword_search(
         self,

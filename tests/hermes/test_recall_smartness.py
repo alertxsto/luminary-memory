@@ -72,11 +72,19 @@ def test_tool_recall_dedups_against_core(tmp_path, monkeypatch):
 
     core_mem = _fake(101, "core rule always use tables")
     extra_mem = _fake(202, "the deploy target is the staging cluster.")
-    result = SimpleNamespace(memories=[core_mem, extra_mem], scores=[0.95, 0.7])
+    result = SimpleNamespace(
+        memories=[core_mem, extra_mem],
+        scores=[0.95, 0.7],
+        provenance=[
+            {"memory_id": 101, "evidence_quote": "core"},
+            {"memory_id": 202, "evidence_quote": "deploy"},
+        ],
+    )
     monkeypatch.setattr(p._client, "recall", lambda *a, **k: result)
 
     payload = json.loads(p.handle_tool_call("luminary_recall", {"query": "q"}))
     contents = [m["content"] for m in payload["memories"]]
     assert "core rule always use tables" not in contents, "core duplicate leaked into tool"
     assert any("deploy target" in c for c in contents)
+    assert [item["memory_id"] for item in payload["provenance"]] == [202]
     p.shutdown()

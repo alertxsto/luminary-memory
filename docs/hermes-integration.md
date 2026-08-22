@@ -163,9 +163,11 @@ override `db_path` to a location outside HERMES_HOME, `backup_paths()` declares 
 ### Activity hook contract
 
 The optional `luminary-activity` hook is registered for `agent:end`. It reports
-only persisted writes, escapes Telegram Markdown, supports Forum Topic IDs,
-and advances its cursor only after Telegram returns `ok: true`. Telegram
-failure/network errors leave the cursor unchanged so the notification retries.
+only persisted active writes, excludes soft-deleted rows, escapes Telegram
+Markdown, supports Forum Topic IDs, and advances its cursor only after
+Telegram returns `ok: true`. Telegram failure/network errors leave active rows
+unchanged so the notification retries; inactive-only ranges are acknowledged
+without an empty post.
 See [`hermes/hooks/luminary-activity/README.md`](../hermes/hooks/luminary-activity/README.md).
 
 ### Directory-install fallback

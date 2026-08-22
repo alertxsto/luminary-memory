@@ -217,6 +217,11 @@ bash hermes/test.sh --hermes   # hermes runtime smoke only
 Run this before every push (see AGENTS-workflow: laporan + tes + verifikasi
 hermes wajib sebelum push).
 
+Latest repository verification (2026-08-23): `448 passed, 3 skipped`, 83%
+full-source coverage (4,167 statements, 694 missed), Ruff clean. Local pgvector tests remain skipped without
+`LUMINARY_PG_DSN`; a live Telegram delivery was not exercised in this
+workspace.
+
 ## Dashboard settings
 
 All provider settings (including `max_memories`, `consolidate_semantic`,

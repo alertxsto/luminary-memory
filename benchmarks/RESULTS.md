@@ -4,7 +4,7 @@
 > These results do not by themselves establish superiority over Mem0,
 > Hindsight, or another provider.
 
-## Latest run (2026-08-18, v0.2.15)
+## Historical pipeline run (2026-08-18, v0.2.15)
 
 ```
 python benchmarks/run_benchmarks.py --n 5000 --backend sqlite --report /tmp/bench_final_run.json
@@ -64,6 +64,33 @@ representative of a real store.
 | Rule auto-replace scan | **31 ms** | One matmul over stored embeddings instead of N Python cosines |
 | Access bookkeeping (`touch_memories`) | batched | One `UPDATE ... WHERE id IN (...)` instead of N writes |
 | Temporal recall | **28 ms** | Batch top-id fetch (`get_many`), no N+1 |
+
+## Current deep-audit run (2026-08-23, v0.2.18 working tree)
+
+Command:
+
+```bash
+python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-gold-final.json
+```
+
+The run used SQLite, strict recall, evidence-required results, and the
+deterministic fake embedding engine for repeatable timing. It measured batch
+ingest at **21.35 ms** and end-to-end recall at **2.72 ms p50** (**2.92 ms
+mean**). These are engineering smoke measurements, not a production capacity
+claim; the report was generated from an uncommitted working tree.
+
+The independent gold arm remained unchanged:
+
+| Metric | Result |
+|--------|--------|
+| Gold cases | 12 (10 answer, 2 no-answer) |
+| Recall@10 | 0.95 |
+| MRR | 1.00 |
+| Precision@10 | 1.00 |
+| Abstention accuracy | 1.00 |
+| Unsupported answer rate | 0.00 |
+| Evidence support precision | 1.00 |
+| Cross-scope leakage | 0 |
 
 ## Independent gold-set run
 

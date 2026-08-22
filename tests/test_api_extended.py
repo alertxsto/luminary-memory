@@ -329,6 +329,16 @@ def test_health_score_healthy_store(tmp_path):
     c.close()
 
 
+def test_health_score_inspects_long_tail_and_never_read_rows(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "long-health.db"), engine=_E())
+    c.ingest_batch([f"long lived fact number {i}" for i in range(505)])
+
+    report = c.health_score()
+    assert report["dimensions"]["size"]["value"] == 505
+    assert report["dimensions"]["staleness"]["value"] == 1.0
+    c.close()
+
+
 def test_health_score_duplicates_detected(tmp_path):
     c = MemoryClient(db_path=str(tmp_path / "h3.db"), engine=_E())
     c.ingest("deploy target is production cluster")

@@ -131,6 +131,37 @@ def test_core_list_returns_core_memories(tmp_path):
     p.shutdown()
 
 
+def test_core_list_respects_provider_scope(tmp_path):
+    import json
+
+    from luminary_memory.api import MemoryClient
+    from luminary_memory.ingest.llm import NoopEnricher
+
+    p = LuminaryMemoryProvider()
+    p.initialize(
+        "s1",
+        hermes_home=str(tmp_path),
+        platform="cli",
+        agent_identity="test",
+        user_id="alice",
+    )
+    p._client.engine = _FakeEngine()
+    p._client.ingest("alice scoped core", tags=[p._core_tag()])
+    other = MemoryClient(
+        db_path=str(tmp_path / "luminary" / "memory.db"),
+        engine=_FakeEngine(),
+        enricher=NoopEnricher(),
+    )
+    other.ingest("bob scoped core", tags=[p._core_tag()], user_id="bob")
+
+    data = json.loads(p.handle_tool_call("luminary_core_list", {}))
+    contents = {row["content"] for row in data["core"]}
+    assert "alice scoped core" in contents
+    assert "bob scoped core" not in contents
+    other.close()
+    p.shutdown()
+
+
 def test_core_block_included_in_prefetch_context(tmp_path):
     p = _init_provider(tmp_path)
     _seed_core(p, ["always use markdown tables in all output"])
@@ -187,6 +218,40 @@ def test_core_content_independent_of_injected_ids(tmp_path):
         p._injected_ids = set()
     block = p._build_core_memory()
     assert "aturan inti stabil" in block
+    p.shutdown()
+
+
+def test_core_budget_skips_oversized_top_row_and_keeps_later_rule(tmp_path):
+    p = _init_provider(tmp_path)
+    p._client.settings.core_top_n = 2
+    p._client.settings.core_budget = 24
+    tag = p._core_tag()
+    p._client.ingest("this core rule is much too long for the budget", tags=[tag], importance=1.0)
+    p._client.ingest("short core rule", tags=[tag], importance=0.8)
+
+    block = p._build_core_memory()
+    assert "this core rule is much too long" not in block
+    assert "short core rule" in block
+    core_ids, core_hashes = p._core_identifiers()
+    assert len(core_ids) == 1
+    assert len(core_hashes) == 1
+    p.shutdown()
+
+
+def test_core_add_promotes_exact_duplicate_without_creating_second_row(tmp_path):
+    p = _init_provider(tmp_path)
+    content = "always keep the deploy target evidence grounded"
+    p._client.ingest(content, tags=["ordinary"], source="test", **p._operation_scope())
+
+    import json
+
+    out = p.handle_tool_call("luminary_core_add", {"content": content})
+    data = json.loads(out)
+    assert "Core memory stored" in data["result"]
+    matching = [m for m in p._client.list(limit=0) if m.content == content]
+    assert len(matching) == 1
+    assert p._core_tag() in (matching[0].tags or [])
+    assert matching[0].importance >= p._client.settings.rule_importance
     p.shutdown()
 
 

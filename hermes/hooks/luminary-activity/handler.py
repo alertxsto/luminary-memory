@@ -19,7 +19,13 @@ import os
 import sqlite3
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback
+    fcntl = None
 
 logger = logging.getLogger("luminary-activity")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -71,15 +77,37 @@ def _last_shown_id() -> int:
         if STATE_FILE.exists():
             data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
             return int(data.get("last_id", 0))
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         logger.warning("could not parse state file: %s", exc)
     return 0
+
+
+@contextmanager
+def _cursor_lock():
+    """Serialize read -> send -> cursor-advance across hook processes."""
+    lock_file = STATE_FILE.with_name(f"{STATE_FILE.name}.lock")
+    try:
+        with open(lock_file, "a+", encoding="utf-8") as fh:
+            if fcntl is not None:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        # Hooks must never block agent completion because a local lock file is
+        # unavailable. The atomic state replacement still protects the write.
+        yield
 
 
 def _set_last_shown_id(mid: int) -> None:
     tmp_file = STATE_FILE.with_name(f"{STATE_FILE.name}.tmp")
     try:
-        tmp_file.write_text(json.dumps({"last_id": mid}), encoding="utf-8")
+        with open(tmp_file, "w", encoding="utf-8") as fh:
+            json.dump({"last_id": int(mid)}, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(tmp_file, STATE_FILE)
     except OSError as exc:
         logger.warning("could not write state file: %s", exc)
@@ -98,18 +126,19 @@ def _send_telegram_request(url: str, payload_data: dict[str, str | int]) -> bool
     )
     with urllib.request.urlopen(req, timeout=10) as response:
         raw = response.read()
-    # Telegram may return HTTP 200 with {"ok": false}. Treat that as a
-    # delivery failure so the activity cursor is not advanced prematurely.
+    # Telegram may return HTTP 200 with {"ok": false}. Treat that, malformed
+    # JSON, and non-boolean success responses as delivery failures so the
+    # activity cursor is not advanced prematurely. Telegram's Bot API always
+    # returns a JSON envelope; accepting arbitrary HTTP-200 proxy bodies would
+    # silently lose activity when the request was not actually delivered.
     try:
         response = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else str(raw))
-        if isinstance(response, dict) and response.get("ok") is False:
+        if not isinstance(response, dict) or response.get("ok") is not True:
             logger.warning("Telegram API rejected activity message: %s", response)
             return False
     except (TypeError, ValueError, UnicodeDecodeError):
-        # A successful HTTP response from a proxy may not be JSON. The request
-        # was accepted at the transport layer, so preserve the old best-effort
-        # behavior rather than treating a proxy body as a hard failure.
-        pass
+        logger.warning("Telegram API returned a malformed response body")
+        return False
     return True
 
 
@@ -164,6 +193,9 @@ def _read_recent_activity() -> tuple[str | None, int | None]:
         conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         last_id = _last_shown_id()
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(memories)")}
+        has_status = "status" in columns
+        active_filter = " AND COALESCE(status, 'active') = 'active'" if has_status else ""
         # First run after install: show only the newest row to avoid replaying
         # the entire existing store into Telegram.
         if last_id == 0:
@@ -171,36 +203,58 @@ def _read_recent_activity() -> tuple[str | None, int | None]:
             max_id = int(row["max_id"] or 0) if row else 0
             if max_id == 0:
                 return None, None
-            all_rows = conn.execute(
-                "SELECT * FROM memories WHERE id = ?",
+            count = 1
+            display_rows = conn.execute(
+                f"SELECT * FROM memories WHERE id <= ?{active_filter} ORDER BY id DESC LIMIT 1",
                 (max_id,),
             ).fetchall()
         else:
-            all_rows = conn.execute(
-                "SELECT * FROM memories WHERE id > ? ORDER BY id ASC",
+            summary = conn.execute(
+                f"SELECT COUNT(*) AS count, MAX(id) AS max_id FROM memories WHERE id > ?{active_filter}",
+                (last_id,),
+            ).fetchone()
+            count = int(summary["count"] or 0) if summary else 0
+            pending = conn.execute(
+                "SELECT MAX(id) AS max_id FROM memories WHERE id > ?",
+                (last_id,),
+            ).fetchone()
+            max_id = int(pending["max_id"] or 0) if pending else 0
+            if max_id == 0:
+                return None, None
+            # Only the three rows shown in the notification need to be read;
+            # a large backlog must not become an unbounded Python list.
+            display_rows = conn.execute(
+                f"SELECT * FROM memories WHERE id > ?{active_filter} ORDER BY id ASC LIMIT 3",
                 (last_id,),
             ).fetchall()
-            if not all_rows:
-                return None, None
-        n_new = len(all_rows)
+            # Inactive rows still advance the cursor after a successful hook
+            # cycle, but they must never be presented as newly stored memory.
+            if count == 0:
+                return None, max_id
+        if not display_rows:
+            # A first-run store can contain only retracted/expired rows. Ack
+            # the high-water mark without emitting a misleading empty post.
+            return None, max_id
+        n_new = count
         noun = "memory" if n_new == 1 else "memories"
         lines = [f"🌙 Luminary — {n_new} {noun} stored"]
-        display_rows = all_rows[:3]
         for r in display_rows:
             content = str(r["content"] or "").replace("\n", " ").strip()
             if len(content) > 120:
                 content = content[:120].rsplit(" ", 1)[0] + "…"
             if content:
                 row_keys = r.keys()
-                imp = float(r["importance"] or 0.0) if "importance" in row_keys else 0.0
+                try:
+                    imp = float(r["importance"] or 0.0) if "importance" in row_keys else 0.0
+                except (TypeError, ValueError):
+                    imp = 0.0
                 tags = str(r["tags"] or "") if "tags" in row_keys else ""
                 is_rule = imp >= 0.85 or "core" in tags or "rule" in tags
                 icon = "📌" if is_rule else "•"
                 lines.append(f"  {icon} {_escape_md(content)}")
         if n_new > 3:
             lines.append(f"  ... (+{n_new - 3} more)")
-        max_shown = max(int(r["id"]) for r in all_rows)
-        return "\n".join(lines), max_shown
+        return "\n".join(lines), max_id
     except Exception:
         logger.exception("activity read failed")
         return None, None
@@ -216,9 +270,10 @@ def _recent_activity(seconds: int = 30, *, commit: bool = True) -> str | None:
     cursor-based rather than wall-clock-based so delayed writer jobs are not
     silently missed.
     """
-    line, max_id = _read_recent_activity()
-    if commit and line and max_id is not None:
-        _set_last_shown_id(max_id)
+    with _cursor_lock():
+        line, max_id = _read_recent_activity()
+        if commit and max_id is not None:
+            _set_last_shown_id(max_id)
     return line
 
 
@@ -226,6 +281,7 @@ def handle(event_type: str, context: dict) -> None:
     """Hook entry point: surface stored-memory activity on agent:end."""
     if event_type != "agent:end":
         return
-    line, max_id = _read_recent_activity()
-    if line and _post(line) and max_id is not None:
-        _set_last_shown_id(max_id)
+    with _cursor_lock():
+        line, max_id = _read_recent_activity()
+        if max_id is not None and (line is None or _post(line)):
+            _set_last_shown_id(max_id)

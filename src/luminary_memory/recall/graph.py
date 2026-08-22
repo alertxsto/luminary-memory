@@ -187,7 +187,26 @@ def graph_recall(
             f"SELECT * FROM memories m WHERE m.id IN ({mid_ph}) AND {scope_where}",
             tuple(rel_scores.keys()) + tuple(scope_params),
         ).fetchall()
-        mem_by_id = {int(r["id"]): r for r in mem_rows}
+        def _row_id(row) -> int | None:
+            if isinstance(row, dict):
+                value = row.get("id")
+            else:
+                try:
+                    value = row["id"]
+                except (IndexError, KeyError, TypeError):
+                    # psycopg's default tuple rows have the table's primary
+                    # key first (SELECT * FROM memories).
+                    value = row[0] if row else None
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        mem_by_id = {
+            memory_id: row
+            for row in mem_rows
+            if (memory_id := _row_id(row)) is not None
+        }
         row_to_mem = getattr(backend, "_row_to_memory", None)
         for mid, score in rel_scores.items():
             row = mem_by_id.get(int(mid))

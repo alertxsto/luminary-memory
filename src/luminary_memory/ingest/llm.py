@@ -5,6 +5,8 @@ import logging
 import re
 from dataclasses import dataclass, field
 
+from luminary_memory.ingest.rules import contains_rule_keyword
+
 logger = logging.getLogger(__name__)
 
 
@@ -222,13 +224,8 @@ class OpenAICompatibleEnricher(LLMEnricher):
             # summary), there is no curated fact at all, so the memory cannot
             # be a rule.
             summary_s = summary if summary and summary.strip() else ""
-            rule_keywords = (
-                s.strip().upper()
-                for s in self.rule_keywords.split(",")
-                if s.strip()
-            )
             importance: float | None = None
-            if summary_s and any(kw in summary_s.upper() for kw in rule_keywords):
+            if summary_s and contains_rule_keyword(summary_s, self.rule_keywords):
                 importance = self.rule_importance
 
             validated_claims: list[dict] = []

@@ -4,6 +4,8 @@ import math
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from luminary_memory.scope import memory_matches_scope, normalize_scope
+
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
 
@@ -52,6 +54,7 @@ def temporal_recall(
     scan = getattr(backend, "temporal_scan", None)
     if scan is not None:
         scored: list[tuple] = []
+        needs_local_filter = bool(normalize_scope(scope)) or not include_global
         try:
             scan_rows = scan(
                 scope=scope,
@@ -59,7 +62,24 @@ def temporal_recall(
                 include_observed=True,
             )
         except TypeError:
+            # Legacy scans are unscoped. Fetch all lightweight rows and defer
+            # top-k selection until after object-level scope filtering; taking
+            # top-k first could permanently hide a tenant's valid memories.
             scan_rows = scan()
+            if needs_local_filter:
+                get_many = getattr(backend, "get_many", None)
+                ids = [row[0] for row in scan_rows]
+                by_id = get_many(ids) if get_many is not None else {}
+                filtered_rows = []
+                for row in scan_rows:
+                    memory = by_id.get(row[0]) if by_id else backend.get(row[0])
+                    if memory is not None and memory_matches_scope(
+                        memory,
+                        scope,
+                        include_global=include_global,
+                    ):
+                        filtered_rows.append(row)
+                scan_rows = filtered_rows
         for row in scan_rows:
             mid, created_at, access_count = row[:3]
             created = _parse_dt(created_at)
@@ -90,8 +110,6 @@ def temporal_recall(
         return out
 
     # Fallback: full objects via backend.all().
-    from luminary_memory.scope import memory_matches_scope
-
     scored = [
         (m, compute_temporal_score(m, now=now, half_life_hours=half_life_hours))
         for m in backend.all()

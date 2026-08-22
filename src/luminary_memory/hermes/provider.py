@@ -8,6 +8,7 @@ runtime the real ABC is used.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import logging
@@ -21,6 +22,8 @@ from agent.memory_provider import MemoryProvider  # present only in hermes runti
 from luminary_memory.api import MemoryClient
 from luminary_memory.config import Settings
 from luminary_memory.hermes.config import _DEFAULTS, load_config, save_config
+from luminary_memory.ingest.rules import contains_rule_keyword
+from luminary_memory.scope import memory_matches_scope
 
 _LUMINARY_GLYPH = "🌙"
 
@@ -60,6 +63,12 @@ def _is_noise_memory(content: str) -> bool:
         return True  # too short to be a useful memory
     low = c.lower()
     return any(marker in low for marker in _NOISE_MARKERS)
+
+
+def _stable_content_hash(content: str) -> str:
+    """Return a process-independent hash for content-level deduplication."""
+    normalized = " ".join(str(content or "").strip().split()).casefold()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 def _apply_min_score(memories, scores, min_score, keep_at_least: int = 1):
     """Drop recall results below a score floor without inventing support."""
@@ -111,16 +120,21 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._writer_thread: threading.Thread | None = None
         self._session_turns: list[str] = []
         self._turn_counter: int = 0
-        self._thread_client: MemoryClient | None = None
-        self._thread_client_owner: str | None = None
+        self._turn_lock = threading.RLock()
+        # Every SQLite-backed client must be closed by the thread that owns
+        # its connection.  A single shared client/owner slot allowed the
+        # writer and prefetch workers to overwrite each other's handle.
+        self._thread_clients: dict[int, MemoryClient] = {}
+        self._thread_clients_lock = threading.Lock()
         self._prefetch_cache: tuple | None = None
         self._prefetch_lock = threading.Lock()
+        self._prefetch_thread_lock = threading.Lock()
         self._prefetch_generation: int = 0
         self._prefetch_thread: threading.Thread | None = None
         self._last_recall_count: int = 0
         self._last_recall_returned: bool = False
         self._injected_ids: set[int] = set()  # memory ids already in context (system prompt + prefetch, anti-dup)
-        self._injected_contents: set[int] = set()  # content hashes already in context (content-level anti-dup)
+        self._injected_contents: set[str] = set()  # content hashes already in context (content-level anti-dup)
 
     # ------------------------------------------------------------------ #
     # Identity & availability
@@ -169,6 +183,18 @@ class LuminaryMemoryProvider(MemoryProvider):
 
         Must not trigger an embedding-model load (that happens on first recall).
         """
+        if (
+            self._client is not None
+            or (self._writer_thread is not None and self._writer_thread.is_alive())
+            or (self._prefetch_thread is not None and self._prefetch_thread.is_alive())
+        ):
+            self.shutdown()
+            if (
+                (self._writer_thread is not None and self._writer_thread.is_alive())
+                or (self._prefetch_thread is not None and self._prefetch_thread.is_alive())
+            ):
+                raise RuntimeError("previous Luminary provider workers did not stop")
+
         hermes_home = kwargs.get("hermes_home") or os.environ.get(
             "HERMES_HOME", os.path.expanduser("~/.hermes")
         )
@@ -179,6 +205,9 @@ class LuminaryMemoryProvider(MemoryProvider):
             session_id, kwargs.get("platform", ""), kwargs.get("agent_identity", ""),
         )
         self._config = load_config(self._hermes_home)
+        # A pre-initialize shutdown may have no writer to consume its sentinel;
+        # start each lifecycle with a fresh queue once all old workers stopped.
+        self._retain_queue = queue.Queue()
         self._session_id = session_id
         self._platform = kwargs.get("platform", "")
         self._agent_identity = kwargs.get("agent_identity", "")
@@ -195,7 +224,36 @@ class LuminaryMemoryProvider(MemoryProvider):
         }
         self._status_callback = kwargs.get("status_callback")
 
+        self._session_turns = []
+        self._turn_counter = 0
+        with self._prefetch_lock:
+            self._prefetch_cache = None
+            self._prefetch_generation += 1
+            self._injected_ids = set()
+            self._injected_contents = set()
+
         db_path = self._resolve_db_path()
+        settings = self._build_settings(db_path)
+        self._client = MemoryClient(
+            settings=settings,
+            enricher=self._build_enricher(),
+            scope=self._scope,
+        )
+        self._shutting_down.clear()
+        self._start_writer()
+        if kwargs.get("status_callback") is None:
+            # Hermes passes a status callback; a no-op keeps the provider safe
+            # when constructed and initialized directly.
+            self._status_callback = self._status_callback
+
+    def _build_settings(self, db_path: str) -> Settings:
+        """Build identical settings for the main and worker clients.
+
+        Keeping this in one place prevents background retain/prefetch from
+        silently using different ranking, lifecycle, core, or LLM policies.
+        Provider safety defaults (strict recall and no destructive rule
+        replacement) remain explicit and are not configurable here.
+        """
         settings = Settings(
             backend=self._config.get("backend", "sqlite"),
             db_path=db_path,
@@ -206,27 +264,36 @@ class LuminaryMemoryProvider(MemoryProvider):
             evidence_required=True,
             rule_auto_replace=False,
         )
-        if self._config.get("ingest_llm"):
-            settings.ingest_llm = True
-        # Persistent-context knobs were removed in v0.2.18 (importance is
-        # retrieval-only now). Core memory and recall tuning knobs remain.
-        defaults = _DEFAULTS
-        for key, attr in (
-            ("core_tag", "core_tag"),
-            ("core_top_n", "core_top_n"),
-            ("core_budget", "core_budget"),
-            ("importance_recall_boost", "importance_recall_boost"),
+        for key in (
+            "recall_min_score",
+            "consolidate_semantic",
+            "importance_auto",
+            "core_tag",
+            "core_top_n",
+            "core_budget",
+            "importance_recall_boost",
+            "rule_keywords",
+            "rule_importance",
+            "scope_include_global",
         ):
-            if key in self._config and self._config.get(key) != defaults.get(key):
-                setattr(settings, attr, self._config[key])
-        
-        self._client = MemoryClient(settings=settings, scope=self._scope)
-        self._shutting_down.clear()
-        self._start_writer()
-        if kwargs.get("status_callback") is None:
-            # Hermes passes a status callback; a no-op keeps the provider safe
-            # when constructed and initialized directly.
-            self._status_callback = self._status_callback
+            if key in self._config:
+                setattr(settings, key, self._config[key])
+        for key in ("llm_base_url", "llm_api_key", "llm_model", "llm_timeout"):
+            if key in self._config:
+                setattr(settings, key, self._config[key])
+        return settings
+
+    def _build_enricher(self):
+        if not self._config.get("ingest_llm"):
+            return None
+        from luminary_memory.ingest.llm import OpenAICompatibleEnricher
+
+        return OpenAICompatibleEnricher(
+            base_url=self._config.get("llm_base_url") or "",
+            api_key=self._config.get("llm_api_key") or "",
+            model=self._config.get("llm_model") or "",
+            timeout=int(self._config.get("llm_timeout", 60)),
+        )
 
     def _resolve_db_path(self) -> str:
         cfg_path = self._config.get("db_path", "") or ""
@@ -257,13 +324,7 @@ class LuminaryMemoryProvider(MemoryProvider):
             item = self._retain_queue.get()
             if item is _SENTINEL:
                 self._retain_queue.task_done()
-                # Close the thread-owned client here (SQLite thread affinity).
-                if self._thread_client is not None:
-                    try:
-                        self._thread_client.close()
-                    except Exception:
-                        logging.getLogger(__name__).exception("thread client close failed")
-                    self._thread_client = None
+                self._close_thread_client()
                 break
             try:
                 fn = item[0]
@@ -276,15 +337,42 @@ class LuminaryMemoryProvider(MemoryProvider):
     def shutdown(self) -> None:
         """Flush queued retains, stop the writer, close the store."""
         self._shutting_down.set()
+        with self._prefetch_lock:
+            # Invalidate any result that finishes during shutdown.  The
+            # worker still gets a chance to close its own SQLite connection.
+            self._prefetch_generation += 1
+            self._prefetch_cache = None
+
+        with self._prefetch_thread_lock:
+            prefetch_thread = self._prefetch_thread
+            if prefetch_thread is not None and prefetch_thread is not threading.current_thread():
+                prefetch_thread.join(timeout=5.0)
+                if prefetch_thread.is_alive():
+                    self._log.warning("prefetch worker did not stop before shutdown")
+
         # Ask the writer thread to close its own client (SQLite objects are
         # thread-affine — closing from the main thread would crash).
-        self._retain_queue.put(_SENTINEL)
-        if self._writer_thread is not None:
-            self._writer_thread.join(timeout=5.0)
-        self._thread_client = None
+        writer_thread = self._writer_thread
+        if writer_thread is not None and writer_thread.is_alive():
+            self._retain_queue.put(_SENTINEL)
+            if writer_thread is not threading.current_thread():
+                writer_thread.join(timeout=5.0)
+                if writer_thread.is_alive():
+                    self._log.warning("retain writer did not stop before shutdown")
+
+        # The caller may have lazily created a thread-local client (for
+        # example via a direct tool/test call).  Only this thread may close it.
+        self._close_thread_client()
         if self._client is not None:
-            self._client.close()
+            try:
+                self._client.close()
+            except Exception:  # noqa: BLE001 -- shutdown must close remaining resources
+                self._log.exception("main client close failed")
             self._client = None
+        if prefetch_thread is None or not prefetch_thread.is_alive():
+            self._prefetch_thread = None
+        if writer_thread is None or not writer_thread.is_alive():
+            self._writer_thread = None
 
     # ------------------------------------------------------------------ #
     # Config
@@ -385,8 +473,8 @@ class LuminaryMemoryProvider(MemoryProvider):
                 low = text.strip().lower()
                 if not low:
                     continue
-                if any(k in low for k in keywords):
-                    h = hash(text.strip())
+                if contains_rule_keyword(text, keywords):
+                    h = _stable_content_hash(text.strip())
                     if h in seen:
                         continue
                     seen.add(h)
@@ -407,27 +495,29 @@ class LuminaryMemoryProvider(MemoryProvider):
 
     def _flush_session_turns(self, session_id: str | None = None) -> None:
         """Flush buffered turns under a session lineage (writer-enqueued)."""
-        if not self._session_turns:
-            return
-        content = "\n".join(self._session_turns)
-        sid = session_id or self._session_id
-        tags = [f"session:{sid}"] if sid else []
-        if self._parent_session_id:
-            tags.append(f"parent:{self._parent_session_id}")
-        if self._platform:
-            tags.append(f"platform:{self._platform}")
-        if self._agent_identity:
-            tags.append(f"agent:{self._agent_identity}")
-        metadata = {
-            "turn_index": None,
-            "message_count": len(self._session_turns),
-            "session_id": sid,
-            "platform": self._platform,
-            "agent_identity": self._agent_identity,
-        }
+        with self._turn_lock:
+            if not self._session_turns:
+                return
+            turns = list(self._session_turns)
+            self._session_turns = []
+            self._turn_counter = 0
+            content = "\n".join(turns)
+            sid = session_id or self._session_id
+            tags = [f"session:{sid}"] if sid else []
+            if self._parent_session_id:
+                tags.append(f"parent:{self._parent_session_id}")
+            if self._platform:
+                tags.append(f"platform:{self._platform}")
+            if self._agent_identity:
+                tags.append(f"agent:{self._agent_identity}")
+            metadata = {
+                "turn_index": None,
+                "message_count": len(turns),
+                "session_id": sid,
+                "platform": self._platform,
+                "agent_identity": self._agent_identity,
+            }
         self._enqueue_retain(content, tags, metadata)
-        self._session_turns = []
-        self._turn_counter = 0
 
     def on_session_end(self, messages) -> None:
         """Flush buffered turns; optionally run LLM store maintenance."""
@@ -449,17 +539,18 @@ class LuminaryMemoryProvider(MemoryProvider):
         """Flush the old session, then rebind to the new one."""
         if not self._client or self._shutting_down.is_set():
             return
-        old_id = self._session_id
-        self._flush_session_turns(old_id)
+        with self._turn_lock:
+            old_id = self._session_id
+            self._flush_session_turns(old_id)
 
-        reset = kwargs.get("reset", False)
-        if reset:
-            self._session_turns = []
-            self._turn_counter = 0
+            reset = kwargs.get("reset", False)
+            if reset:
+                self._session_turns = []
+                self._turn_counter = 0
 
-        if new_session_id:
-            self._session_id = new_session_id
-            self._parent_session_id = kwargs.get("parent_session_id") or self._parent_session_id
+            if new_session_id:
+                self._session_id = new_session_id
+                self._parent_session_id = kwargs.get("parent_session_id") or self._parent_session_id
         with self._prefetch_lock:
             self._prefetch_generation += 1
             self._prefetch_cache = None
@@ -483,35 +574,36 @@ class LuminaryMemoryProvider(MemoryProvider):
         assistant_prefix = self._config.get("retain_assistant_prefix", "Assistant")
         content = f"{user_prefix}: {user}\n{assistant_prefix}: {assistant}"
 
-        self._session_turns.append(content)
-        self._turn_counter += 1
+        with self._turn_lock:
+            self._session_turns.append(content)
+            self._turn_counter += 1
 
-        every_n = int(self._config.get("retain_every_n_turns", 1) or 1)
-        if self._turn_counter % every_n != 0:
-            return  # buffer only
+            every_n = int(self._config.get("retain_every_n_turns", 1) or 1)
+            if self._turn_counter % every_n != 0:
+                return  # buffer only
 
-        batch = "\n".join(self._session_turns)
-        self._session_turns = []
-        self._turn_counter = 0
+            batch = "\n".join(self._session_turns)
+            self._session_turns = []
+            self._turn_counter = 0
 
-        session_id = kwargs.get("session_id") or self._session_id
-        parent_id = kwargs.get("parent_session_id") or self._parent_session_id
+            session_id = kwargs.get("session_id") or self._session_id
+            parent_id = kwargs.get("parent_session_id") or self._parent_session_id
 
-        tags = [f"session:{session_id}"] if session_id else []
-        if parent_id:
-            tags.append(f"parent:{parent_id}")
-        if self._platform:
-            tags.append(f"platform:{self._platform}")
-        if self._agent_identity:
-            tags.append(f"agent:{self._agent_identity}")
+            tags = [f"session:{session_id}"] if session_id else []
+            if parent_id:
+                tags.append(f"parent:{parent_id}")
+            if self._platform:
+                tags.append(f"platform:{self._platform}")
+            if self._agent_identity:
+                tags.append(f"agent:{self._agent_identity}")
 
-        metadata = {
-            "turn_index": kwargs.get("turn_index"),
-            "message_count": kwargs.get("message_count"),
-            "session_id": session_id,
-            "platform": self._platform,
-            "agent_identity": self._agent_identity,
-        }
+            metadata = {
+                "turn_index": kwargs.get("turn_index"),
+                "message_count": kwargs.get("message_count"),
+                "session_id": session_id,
+                "platform": self._platform,
+                "agent_identity": self._agent_identity,
+            }
 
         self._enqueue_retain(batch, tags, metadata)
 
@@ -583,40 +675,48 @@ class LuminaryMemoryProvider(MemoryProvider):
         except Exception:  # writer must never die
             logging.getLogger(__name__).exception("retain ingest failed")
 
-    def _writer_client(self) -> MemoryClient | None:
-        """Return a client owned by the calling (writer) thread."""
-        thread_name = threading.current_thread().name
-        if self._thread_client is not None and self._thread_client_owner == thread_name:
-            return self._thread_client
-        if self._hermes_home:
-            db_path = self._resolve_db_path()
-            settings = Settings(
-                backend=self._config.get("backend", "sqlite"),
-                db_path=db_path,
-                token_budget=int(self._config.get("token_budget", 2048)),
-                ingest_llm=bool(self._config.get("ingest_llm", False)),
-                strict_recall=True,
-                evidence_required=True,
-                rule_auto_replace=False,
-            )
-            enricher = None
-            if self._config.get("ingest_llm"):
-                from luminary_memory.ingest.llm import OpenAICompatibleEnricher
+    def _close_thread_client(self) -> None:
+        """Close and forget the client owned by the current OS thread."""
+        thread_id = threading.get_ident()
+        with self._thread_clients_lock:
+            client = self._thread_clients.pop(thread_id, None)
+        if client is None:
+            return
+        try:
+            client.close()
+        except Exception:
+            logging.getLogger(__name__).exception("thread client close failed")
 
-                enricher = OpenAICompatibleEnricher(
-                    base_url=self._config.get("llm_base_url") or "",
-                    api_key=self._config.get("llm_api_key") or "",
-                    model=self._config.get("llm_model") or "",
-                    timeout=int(self._config.get("llm_timeout", 60)),
-                )
-            client = MemoryClient(settings=settings, enricher=enricher, scope=self._scope)
-            if getattr(client, "engine", None) is not None:
-                # Reuse the shared engine instance (single model load).
-                client.engine = self._client.engine if self._client else client.engine
-            self._thread_client = client
-            self._thread_client_owner = thread_name
-            return client
-        return None
+    def _writer_client(self) -> MemoryClient | None:
+        """Return a client owned exclusively by the calling thread.
+
+        The method name is kept for compatibility with existing provider
+        callers; prefetch workers use the same safe per-thread registry.
+        """
+        thread_id = threading.get_ident()
+        with self._thread_clients_lock:
+            existing = self._thread_clients.get(thread_id)
+        if existing is not None:
+            return existing
+        if not self._hermes_home:
+            return None
+
+        db_path = self._resolve_db_path()
+        client = MemoryClient(
+            settings=self._build_settings(db_path),
+            enricher=self._build_enricher(),
+            scope=self._scope,
+        )
+        if getattr(client, "engine", None) is not None:
+            # Reuse the shared engine instance (single model load).
+            client.engine = self._client.engine if self._client else client.engine
+        with self._thread_clients_lock:
+            # A second caller cannot normally use the same thread, but avoid
+            # leaking a client if a future hook races this creation.
+            previous = self._thread_clients.setdefault(thread_id, client)
+        if previous is not client:
+            client.close()
+        return previous
 
     def _emit_retain_indicator(self) -> None:
         if not self._config.get("retain_indicator", True):
@@ -661,6 +761,92 @@ class LuminaryMemoryProvider(MemoryProvider):
             return str(getattr(self._client.settings, "core_tag", "core") or "core")
         return str(self._config.get("core_tag", "core") or "core")
 
+    def _select_core_memories(self):
+        """Select exactly the core rows that can be injected this turn.
+
+        Core deduplication must use the same scope, active-status, top-N, and
+        character-budget rules as prompt construction. Otherwise a row can be
+        marked as injected even though it was omitted from the prompt.
+        """
+        if self._client is None:
+            return []
+        tag = self._core_tag()
+        top_n = max(0, int(getattr(self._client.settings, "core_top_n", 12) or 0))
+        budget = max(0, int(getattr(self._client.settings, "core_budget", 8000) or 0))
+        if top_n <= 0 or budget <= 0:
+            return []
+        by_tag = getattr(self._client.backend, "by_tag_top", None)
+        if by_tag is not None:
+            try:
+                candidates = by_tag(
+                    tag,
+                    top_n,
+                    scope=getattr(self._client, "scope", None),
+                    include_global=bool(getattr(self._client.settings, "scope_include_global", True)),
+                )
+            except TypeError:
+                candidates = [
+                    m
+                    for m in (self._client.list(limit=0) or [])
+                    if tag in (m.tags or [])
+                    and memory_matches_scope(
+                        m,
+                        self._client.scope,
+                        include_global=bool(
+                            getattr(self._client.settings, "scope_include_global", True)
+                        ),
+                    )
+                    and getattr(m, "status", "active") == "active"
+                ]
+                candidates.sort(
+                    key=lambda m: (
+                        float(getattr(m, "importance", 0.0) or 0.0),
+                        int(getattr(m, "access_count", 0) or 0),
+                        int(getattr(m, "id", 0) or 0),
+                    ),
+                    reverse=True,
+                )
+                candidates = candidates[:top_n]
+        else:
+            candidates = [
+                m for m in (self._client.list(limit=0) or [])
+                if tag in (m.tags or [])
+                and memory_matches_scope(
+                    m,
+                    self._client.scope,
+                    include_global=bool(
+                        getattr(self._client.settings, "scope_include_global", True)
+                    ),
+                )
+                and getattr(m, "status", "active") == "active"
+            ]
+            candidates.sort(key=lambda m: (m.importance, m.access_count, m.id or 0), reverse=True)
+            candidates = candidates[:top_n]
+
+        candidates = [
+            m
+            for m in candidates
+            if memory_matches_scope(
+                m,
+                self._client.scope,
+                include_global=bool(getattr(self._client.settings, "scope_include_global", True)),
+            )
+            and getattr(m, "status", "active") == "active"
+        ]
+
+        picked = []
+        total = 0
+        for memory in candidates:
+            content = str(getattr(memory, "content", "") or "").strip()
+            if not content:
+                continue
+            if total + len(content) > budget:
+                # A large top-ranked rule must not hide smaller valid rules.
+                continue
+            picked.append(memory)
+            total += len(content)
+        return picked
+
     def _core_identifiers(self):
         """Return (set of core ids, set of core content hashes).
 
@@ -672,25 +858,10 @@ class LuminaryMemoryProvider(MemoryProvider):
         ids, hashes = set(), set()
         if self._client is None:
             return ids, hashes
-        tag = self._core_tag()
-        top_n = int(getattr(self._client.settings, "core_top_n", 12) or 12)
-        by_tag = getattr(self._client.backend, "by_tag_top", None)
-        if by_tag is not None:
-            try:
-                mems = by_tag(
-                    tag,
-                    top_n,
-                    scope=getattr(self._client, "scope", None),
-                    include_global=bool(getattr(self._client.settings, "scope_include_global", True)),
-                )
-            except TypeError:
-                mems = by_tag(tag, top_n)
-        else:
-            mems = []
-        for m in mems:
+        for m in self._select_core_memories():
             content = str(getattr(m, "content", "") or "")
             if content:
-                hashes.add(hash(content))
+                hashes.add(_stable_content_hash(content))
             if getattr(m, "id", None) is not None:
                 ids.add(m.id)
         return ids, hashes
@@ -709,39 +880,18 @@ class LuminaryMemoryProvider(MemoryProvider):
         if not self._client:
             return ""
         try:
-            tag = self._core_tag()
-            top_n = int(getattr(self._client.settings, "core_top_n", 12))
-            budget = int(getattr(self._client.settings, "core_budget", 8000))
-            by_tag = getattr(self._client.backend, "by_tag_top", None)
-            if by_tag is not None:
-                try:
-                    mems = by_tag(
-                        tag,
-                        top_n,
-                        scope=getattr(self._client, "scope", None),
-                        include_global=bool(getattr(self._client.settings, "scope_include_global", True)),
-                    )
-                except TypeError:
-                    mems = by_tag(tag, top_n)
-            else:
-                mems = [m for m in (self._client.list(limit=0) or []) if tag in (m.tags or [])]
-                mems.sort(key=lambda m: (m.importance, m.access_count), reverse=True)
-                mems = mems[:top_n]
+            mems = self._select_core_memories()
             picked: list[str] = []
             picked_ids: set[int] = set()
-            picked_hashes: set[int] = set()
-            total = 0
+            picked_hashes: set[str] = set()
             for m in mems:
                 content = str(getattr(m, "content", "") or "").strip()
                 if not content:
                     continue
-                if total + len(content) > budget:
-                    break
                 picked.append(f"- {content}")
-                picked_hashes.add(hash(content))
+                picked_hashes.add(_stable_content_hash(content))
                 if m.id is not None:
                     picked_ids.add(m.id)
-                total += len(content)
             with self._prefetch_lock:
                 # Core memories are also injected ids, so recall skips them
                 # (no duplicate between the core block and query recall).
@@ -791,7 +941,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                 skipped_dup += 1
                 continue
             content = str(getattr(m, "content", "") or "")
-            if hash(content) in injected_contents:
+            if _stable_content_hash(content) in injected_contents:
                 skipped_dup += 1
                 continue
             lines.append(f"- {m.content}")
@@ -850,14 +1000,32 @@ class LuminaryMemoryProvider(MemoryProvider):
                 )
             except Exception:
                 logging.getLogger(__name__).exception("prefetch recall failed")
+            finally:
+                # The prefetch thread owns its SQLite connection and must
+                # close it before the thread exits.
+                self._close_thread_client()
 
-        # Join any in-flight prefetch first so a fast double-call never leaks
-        # a thread or lets an older worker overwrite a newer cache.
-        if self._prefetch_thread is not None and self._prefetch_thread.is_alive():
-            self._prefetch_thread.join(timeout=3.0)
-        t = threading.Thread(target=_worker, name="luminary-prefetch", daemon=True)
-        t.start()
-        self._prefetch_thread = t
+        # Serialize queueing so concurrent hook callers cannot overwrite the
+        # thread handle and leave an older worker unjoined at shutdown.
+        with self._prefetch_thread_lock:
+            if self._shutting_down.is_set():
+                return
+            # Join any in-flight prefetch first so a fast double-call never
+            # leaks a thread or lets an older worker overwrite a newer cache.
+            existing = self._prefetch_thread
+            if existing is not None and existing.is_alive():
+                existing.join(timeout=3.0)
+                if existing.is_alive():
+                    # Never replace the handle while the old worker is still
+                    # alive.  Doing so would make shutdown unable to join it
+                    # and could leave an orphan thread holding a DB client.
+                    self._log.warning(
+                        "prefetch worker still running; keeping current request queued"
+                    )
+                    return
+            t = threading.Thread(target=_worker, name="luminary-prefetch", daemon=True)
+            self._prefetch_thread = t
+            t.start()
 
     def prefetch(self, query: str, session_id: str) -> str:
         """Return context for the current turn: core rules + query recall.
@@ -1081,12 +1249,23 @@ class LuminaryMemoryProvider(MemoryProvider):
             for m, s in zip(mems, scores):
                 content = str(getattr(m, "content", "") or "")
                 m_id = getattr(m, "id", None)
-                c_hash = hash(content)
+                c_hash = _stable_content_hash(content)
                 if (m_id is not None and m_id in core_ids) or c_hash in seen:
                     continue
                 seen.add(c_hash)
                 kept_m.append(m)
                 kept_s.append(s)
+            raw_provenance = getattr(result, "provenance", [])
+            provenance_by_id = {
+                item.get("memory_id"): item
+                for item in raw_provenance
+                if isinstance(item, dict) and item.get("memory_id") is not None
+            }
+            kept_provenance = [
+                provenance_by_id[m.id]
+                for m in kept_m
+                if m.id in provenance_by_id
+            ]
             payload = {
                 "status": getattr(result, "status", "ok"),
                 "reason": getattr(result, "reason", None),
@@ -1105,7 +1284,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                     for m in kept_m
                 ],
                 "scores": kept_s,
-                "provenance": getattr(result, "provenance", []),
+                "provenance": kept_provenance,
             }
             return json.dumps(payload)
         except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
@@ -1154,12 +1333,21 @@ class LuminaryMemoryProvider(MemoryProvider):
             )
             if mid is None:
                 return json.dumps({"result": "Memory rejected by whitelist."})
-            # Pin importance high so it ranks top in the core block and is
-            # exempt from pruning (>= pin_threshold).
+            # An exact duplicate may have been ingested earlier without the
+            # core tag. Promote that existing row instead of assuming ingest
+            # applied the requested tag on the duplicate path.
             m = self._client.get(mid)
-            if m is not None and float(m.importance or 0) < 0.9:
-                m.importance = 0.9
-                self._client.update(m)
+            pin_importance = float(getattr(self._client.settings, "rule_importance", 0.9) or 0.9)
+            if m is not None:
+                changed = False
+                if tag not in (m.tags or []):
+                    m.tags = list(dict.fromkeys((m.tags or []) + [tag]))
+                    changed = True
+                if float(m.importance or 0) < pin_importance:
+                    m.importance = pin_importance
+                    changed = True
+                if changed:
+                    self._client.update(m)
             return json.dumps({"result": f"Core memory stored (id={mid})."})
         except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
             return self._tool_error(f"core_add failed: {exc}")
@@ -1189,9 +1377,64 @@ class LuminaryMemoryProvider(MemoryProvider):
             tag = self._core_tag()
             by_tag = getattr(self._client.backend, "by_tag_top", None)
             if by_tag is not None:
-                mems = by_tag(tag, limit)
+                try:
+                    mems = by_tag(
+                        tag,
+                        limit,
+                        scope=getattr(self._client, "scope", None),
+                        include_global=bool(
+                            getattr(self._client.settings, "scope_include_global", True)
+                        ),
+                    )
+                except TypeError:
+                    mems = [
+                        m
+                        for m in (self._client.list(limit=0) or [])
+                        if tag in (m.tags or [])
+                        and memory_matches_scope(
+                            m,
+                            self._client.scope,
+                            include_global=bool(
+                                getattr(self._client.settings, "scope_include_global", True)
+                            ),
+                        )
+                        and getattr(m, "status", "active") == "active"
+                    ]
+                    mems.sort(
+                        key=lambda m: (
+                            float(getattr(m, "importance", 0.0) or 0.0),
+                            int(getattr(m, "access_count", 0) or 0),
+                            int(getattr(m, "id", 0) or 0),
+                        ),
+                        reverse=True,
+                    )
+                    mems = mems[:limit]
             else:
-                mems = [m for m in (self._client.list(limit=0) or []) if tag in (m.tags or [])][:limit]
+                mems = [
+                    m
+                    for m in (self._client.list(limit=0) or [])
+                    if tag in (m.tags or [])
+                    and memory_matches_scope(
+                        m,
+                        self._client.scope,
+                        include_global=bool(
+                            getattr(self._client.settings, "scope_include_global", True)
+                        ),
+                    )
+                    and getattr(m, "status", "active") == "active"
+                ][:limit]
+            mems = [
+                m
+                for m in mems
+                if memory_matches_scope(
+                    m,
+                    self._client.scope,
+                    include_global=bool(
+                        getattr(self._client.settings, "scope_include_global", True)
+                    ),
+                )
+                and getattr(m, "status", "active") == "active"
+            ][:limit]
             payload = [
                 {"id": m.id, "content": m.content, "importance": m.importance} for m in mems
             ]

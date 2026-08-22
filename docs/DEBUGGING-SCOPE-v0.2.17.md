@@ -15,7 +15,7 @@ for the current architecture.
 |---|---|---|---|
 | 01 | LLM gateway | Direct `choices` and wrapped `data.choices` both parse | Shipped; one transient retry |
 | 02 | Context assembly | Core and recall do not duplicate IDs/content | Shipped; importance-only persistent context removed in v0.2.18 |
-| 03 | Telegram hook | `agent:end` activity delivery is truthful and retryable | Shipped; cursor advances only after `ok:true` |
+| 03 | Telegram hook | `agent:end` activity delivery is truthful and retryable | Shipped; active posts require `ok:true`, inactive-only ranges are acked silently |
 | 04 | Session end | Queued writes commit before maintenance reads | Shipped; queue join before `auto_maintain` |
 | 05 | Embeddings | Degenerate/missing vectors fail closed | Shipped; lexical/Jaccard fallback |
 | 06 | Writer queue | SQLite connections stay thread-affine | Shipped; dedicated writer client and sentinel shutdown |
@@ -56,15 +56,18 @@ enabled curation pass produced no durable summary.
 ## Hook contract
 
 `hermes/hooks/luminary-activity/HOOK.yaml` registers `agent:end`. The handler
-reads pending IDs from the shared SQLite store, escapes Telegram Markdown,
-supports Forum Topic IDs, posts at most three details plus an overflow count,
-and commits its delivery cursor only after Telegram reports success.
+reads pending IDs from the shared SQLite store, excludes inactive rows from the
+notification, escapes Telegram Markdown, supports Forum Topic IDs, posts at
+most three details plus an overflow count, and commits an active notification
+cursor only after Telegram reports `ok:true`. A range containing only
+inactive rows is acknowledged without a post.
 
 ```text
 agent:end
   -> read rows after cursor
   -> format factual write activity
   -> sendMessage
+  -> active rows? sendMessage : acknowledge inactive range
   -> ok=true ? advance cursor : retry later
 ```
 
@@ -84,7 +87,7 @@ ruff check .
 python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-gold.json
 ```
 
-The current workspace record is `406 passed, 3 skipped`, clean Ruff, and a
-controlled 12-case gold suite with zero cross-scope leakage. See
-[`IMPLEMENTATION-AUDIT.md`](IMPLEMENTATION-AUDIT.md) for the full evidence,
-output examples, and open validation work.
+The current workspace record is `448 passed, 3 skipped`, 83% full-source
+coverage, and a controlled 12-case gold suite with zero cross-scope leakage;
+`ruff check` is clean. The local audit note contains the full evidence, output
+examples, and open validation work.

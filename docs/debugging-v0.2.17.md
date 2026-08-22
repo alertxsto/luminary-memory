@@ -1,8 +1,9 @@
 # Gateway, Hermes, and Telegram Debugging Guide
 
 This guide preserves the v0.2.17 gateway investigation and records the
-post-v0.2.18 runtime behavior. For the complete current implementation map,
-see [`IMPLEMENTATION-AUDIT.md`](IMPLEMENTATION-AUDIT.md).
+post-v0.2.18 runtime behavior. The detailed current implementation audit is
+kept as a local-only note because planning and audit files under `docs/` are
+intentionally excluded from source.
 
 ## 1. Gateway envelope failure and fix
 
@@ -63,7 +64,7 @@ sequenceDiagram
     Hook->>DB: read IDs greater than state.json cursor
     Hook->>Telegram: sendMessage (escaped Markdown + optional topic)
     Telegram-->>Hook: {"ok": true} or failure
-    Hook->>Hook: advance cursor only on ok=true
+    Hook->>Hook: active post? advance only on ok=true; inactive-only range acked
 ```
 
 The hook reports persisted writes only. It does not claim that a memory was
@@ -80,8 +81,9 @@ facts use `•`.
 4. Forum topics use `LUMINARY_HOOK_THREAD_ID` or
    `TELEGRAM_HOME_CHANNEL_THREAD_ID`.
 5. `state.json` is writable.
-6. Telegram returns `{"ok": true}`; `ok:false`, HTTP errors, and network
-   errors leave the cursor unchanged for retry.
+6. Telegram returns `{"ok": true}`; `ok:false`, malformed bodies, HTTP
+   errors, and network errors leave active rows pending for retry. Inactive-only
+   ranges are acknowledged without a message.
 
 ### Expected output
 
@@ -149,7 +151,8 @@ ruff check .
 python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-gold.json
 ```
 
-The current repository verification record is `406 passed, 3 skipped`, clean
-Ruff, and a controlled gold run with recall@10 `0.95`, MRR `1.00`, abstention
-accuracy `1.00`, evidence support precision `1.00`, and zero cross-scope
-leakage. These are regression numbers, not a matched Mem0/Hindsight claim.
+The current repository verification record is `448 passed, 3 skipped`, 83%
+full-source coverage, and clean Ruff. The controlled gold run reports
+recall@10 `0.95`, MRR `1.00`, abstention accuracy `1.00`, evidence support
+precision `1.00`, and zero cross-scope leakage. These are regression numbers,
+not a matched Mem0/Hindsight claim.

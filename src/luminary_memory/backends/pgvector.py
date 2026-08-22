@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from typing import Any
 
 from luminary_memory.backends.base import MemoryBackend
@@ -9,6 +10,25 @@ from luminary_memory.scope import scope_sql
 from luminary_memory.types import Memory
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_float(value, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if math.isfinite(parsed) else default
+
+
+def _safe_unit_float(value, default: float) -> float:
+    return max(0.0, min(1.0, _safe_float(value, default)))
+
+
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
 
 
 def _json_load(value, default):
@@ -273,19 +293,36 @@ class PGVectorBackend(MemoryBackend):
                 emb = json.loads(emb)
             except json.JSONDecodeError:
                 emb = None
+        if isinstance(emb, (list, tuple)):
+            try:
+                emb = [float(value) for value in emb]
+            except (TypeError, ValueError):
+                emb = None
+            if emb is not None and (
+                not emb or not all(math.isfinite(value) for value in emb)
+            ):
+                emb = None
+        else:
+            emb = None
+        metadata = _json_load(d.get("metadata"), {})
+        tags = _json_load(d.get("tags"), [])
+        if not isinstance(metadata, dict):
+            metadata = {}
+        if not isinstance(tags, list):
+            tags = []
         return Memory(
             id=int(d["id"]) if d.get("id") is not None else None,
             content=str(d.get("content") or ""),
-            metadata=_json_load(d.get("metadata"), {}),
+            metadata=metadata,
             source=d.get("source"),
-            tags=_json_load(d.get("tags"), []),
-            importance=float(d.get("importance") or 0.5),
+            tags=[str(tag) for tag in tags],
+            importance=_safe_unit_float(d.get("importance"), 0.5),
             ttl_seconds=d.get("ttl_seconds"),
             created_at=str(d.get("created_at") or ""),
             updated_at=str(d.get("updated_at") or ""),
             last_accessed_at=str(d["last_accessed_at"]) if d.get("last_accessed_at") else None,
-            access_count=int(d.get("access_count") or 0),
-            embedding=list(emb) if isinstance(emb, (list, tuple)) else None,
+            access_count=_safe_int(d.get("access_count")),
+            embedding=emb,
             snippet=None,
             user_id=d.get("user_id"),
             session_id=d.get("session_id"),
@@ -295,7 +332,7 @@ class PGVectorBackend(MemoryBackend):
             valid_from=str(d["valid_from"]) if d.get("valid_from") else None,
             valid_to=str(d["valid_to"]) if d.get("valid_to") else None,
             status=str(d.get("status") or "active"),
-            confidence=float(d.get("confidence") if d.get("confidence") is not None else 1.0),
+            confidence=_safe_unit_float(d.get("confidence"), 1.0),
             evidence_quote=d.get("evidence_quote"),
             source_id=d.get("source_id"),
             claim_key=d.get("claim_key"),
@@ -454,46 +491,46 @@ class PGVectorBackend(MemoryBackend):
         quote = str(claim.get("evidence_quote") or "").strip()
         if not subject or not predicate or not object_value or not quote:
             return
-        cur = self.conn.cursor()
-        cur.execute(
-            "INSERT INTO claims "
-            "(memory_id, subject, predicate, object, polarity, status, confidence, evidence_quote, "
-            "source_episode_id, user_id, session_id, workspace_id, agent_id, observed_at, valid_from, valid_to) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-            "RETURNING id",
-            (
-                memory_id,
-                subject,
-                predicate,
-                object_value,
-                str(claim.get("polarity") or "positive"),
-                str(claim.get("status") or "active"),
-                float(claim.get("confidence") if claim.get("confidence") is not None else 1.0),
-                quote,
-                claim.get("source_episode_id"),
-                scope.get("user_id"),
-                scope.get("session_id"),
-                scope.get("workspace_id"),
-                scope.get("agent_id"),
-                claim.get("observed_at"),
-                claim.get("valid_from"),
-                claim.get("valid_to"),
-            ),
-        )
-        row = cur.fetchone()
-        claim_id = row[0] if row else None
-        if claim_id is not None:
+        confidence = _safe_unit_float(claim.get("confidence"), 1.0)
+        try:
+            cur = self.conn.cursor()
             cur.execute(
-                "INSERT INTO claim_evidence(claim_id, quote, source_episode_id, confidence) "
-                "VALUES (%s, %s, %s, %s)",
+                "INSERT INTO claims "
+                "(memory_id, subject, predicate, object, polarity, status, confidence, evidence_quote, "
+                "source_episode_id, user_id, session_id, workspace_id, agent_id, observed_at, valid_from, valid_to) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "RETURNING id",
                 (
-                    claim_id,
+                    memory_id,
+                    subject,
+                    predicate,
+                    object_value,
+                    str(claim.get("polarity") or "positive"),
+                    str(claim.get("status") or "active"),
+                    confidence,
                     quote,
                     claim.get("source_episode_id"),
-                    float(claim.get("confidence") if claim.get("confidence") is not None else 1.0),
+                    scope.get("user_id"),
+                    scope.get("session_id"),
+                    scope.get("workspace_id"),
+                    scope.get("agent_id"),
+                    claim.get("observed_at"),
+                    claim.get("valid_from"),
+                    claim.get("valid_to"),
                 ),
             )
-        self.conn.commit()
+            row = cur.fetchone()
+            claim_id = row[0] if row else None
+            if claim_id is not None:
+                cur.execute(
+                    "INSERT INTO claim_evidence(claim_id, quote, source_episode_id, confidence) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (claim_id, quote, claim.get("source_episode_id"), confidence),
+                )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def sync_claim_status(
         self,
@@ -560,6 +597,23 @@ class PGVectorBackend(MemoryBackend):
         # Relations reference memories via FK; delete them first (manual cascade).
         cur.execute("DELETE FROM relations WHERE memory_id = %s", (id,))
         cur.execute("DELETE FROM memories WHERE id = %s", (id,))
+        self.conn.commit()
+
+    def rehome_memory_references(self, source_id: int, target_id: int) -> None:
+        """Preserve evidence/claims/graph edges when a duplicate is removed."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "UPDATE memory_evidence SET memory_id = %s WHERE memory_id = %s",
+            (target_id, source_id),
+        )
+        cur.execute(
+            "UPDATE claims SET memory_id = %s WHERE memory_id = %s",
+            (target_id, source_id),
+        )
+        cur.execute(
+            "UPDATE relations SET memory_id = %s WHERE memory_id = %s",
+            (target_id, source_id),
+        )
         self.conn.commit()
 
     def all(self) -> list[Memory]:

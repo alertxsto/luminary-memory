@@ -24,9 +24,10 @@
   `scan_embeddings_matrix`. Writes are batched (`touch_memories`,
   `update_importances`, `add_many`, `delete_many`).
 - Best for single-user, edge, and stores under ~100k memories (vector search
-  is a linear scan). WAL mode is not currently enabled; each thread uses its
-  own connection, so concurrent readers/writers do not block on the same
-  in-process connection.
+  is a linear scan). Each thread uses its own connection and the backend
+  enables SQLite WAL with a busy timeout on writable file stores, so Hermes'
+  background reader/writer paths can coexist. WAL setup is best-effort for
+  in-memory, read-only, or otherwise restricted paths.
 - Accuracy filters (`scope`, `status`, validity windows, and tags) are applied
   in backend queries where supported and defensively again in the orchestrator
   before fusion/fallback. Scope-aware indexes cover ownership, status, claim

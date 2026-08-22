@@ -45,3 +45,7 @@ A lightweight, self-hosted memory layer for AI agents.
 - [Benchmark protocol and results](../benchmarks/README.md)
 - [v0.2.17 Debugging & Integration Guide](debugging-v0.2.17.md)
 - [v0.2.17 Debugging Scope & Investigation Log](DEBUGGING-SCOPE-v0.2.17.md)
+
+The detailed implementation audit and current roadmap are maintained as
+local-only notes under `docs/` and are intentionally excluded from source via
+the repository's `docs/*` ignore rule.

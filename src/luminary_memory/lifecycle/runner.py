@@ -20,6 +20,7 @@ def run_lifecycle(
     settings: Settings | None = None,
     semantic: bool | None = None,
     scope: dict | None = None,
+    include_global: bool = True,
 ) -> dict[str, int]:
     min_importance = float(settings.prune_min_importance) if settings else 0.2
     consolidate_threshold = float(
@@ -46,7 +47,12 @@ def run_lifecycle(
     for memory in backend.all():
         if not getattr(memory, "needs_reindex", False):
             continue
-        if not memory_matches_scope(memory, scope, active_only=False):
+        if not memory_matches_scope(
+            memory,
+            scope,
+            include_global=include_global,
+            active_only=False,
+        ):
             continue
         try:
             index_memory_entities(backend, memory)
@@ -64,7 +70,16 @@ def run_lifecycle(
         from luminary_memory.lifecycle.importance import estimate_importance
         from luminary_memory.scope import memory_matches_scope
 
-        memories = [m for m in backend.all() if memory_matches_scope(m, scope, active_only=True)]
+        memories = [
+            m
+            for m in backend.all()
+            if memory_matches_scope(
+                m,
+                scope,
+                include_global=include_global,
+                active_only=True,
+            )
+        ]
         max_access = max((int(m.access_count or 0) for m in memories), default=1)
         changed: list[tuple[float, int]] = []
         for m in memories:
@@ -86,9 +101,33 @@ def run_lifecycle(
             reestimated = len(changed)
     start = time.monotonic()
     result = {
-        "cleanup": int(cleanup_expired(backend, scope=scope)),
-        "consolidate": int(consolidate(backend, threshold=consolidate_threshold, semantic=semantic, pin_threshold=pin_threshold, scope=scope)),
-        "prune": int(prune(backend, min_importance=min_importance, pin_threshold=pin_threshold, max_count=max_count, scope=scope)),
+        "cleanup": int(
+            cleanup_expired(
+                backend,
+                scope=scope,
+                include_global=include_global,
+            )
+        ),
+        "consolidate": int(
+            consolidate(
+                backend,
+                threshold=consolidate_threshold,
+                semantic=semantic,
+                pin_threshold=pin_threshold,
+                scope=scope,
+                include_global=include_global,
+            )
+        ),
+        "prune": int(
+            prune(
+                backend,
+                min_importance=min_importance,
+                pin_threshold=pin_threshold,
+                max_count=max_count,
+                scope=scope,
+                include_global=include_global,
+            )
+        ),
         "reestimated": reestimated,
         "reindexed": reindexed,
     }

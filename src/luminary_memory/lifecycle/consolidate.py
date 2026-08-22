@@ -49,6 +49,7 @@ def consolidate(
     semantic_threshold: float = 0.85,
     pin_threshold: float = 0.9,
     scope: dict | None = None,
+    include_global: bool = True,
 ) -> int:
     """Merge near-duplicate memories.
 
@@ -61,7 +62,16 @@ def consolidate(
     from luminary_memory.recall.graph import index_memory_entities
     from luminary_memory.scope import memory_matches_scope
 
-    memories = [m for m in backend.all() if memory_matches_scope(m, scope, active_only=True)]
+    memories = [
+        m
+        for m in backend.all()
+        if memory_matches_scope(
+            m,
+            scope,
+            include_global=include_global,
+            active_only=True,
+        )
+    ]
     merged = 0
     visited: set[int] = set()
 
@@ -94,6 +104,26 @@ def consolidate(
                     visited.add(c.id)  # type: ignore[arg-type]
                 continue
         master = max(cluster, key=lambda x: len(x.content))
+        duplicates = [c for c in cluster if c.id != master.id]
+        rehome = getattr(backend, "rehome_memory_references", None)
+        if callable(rehome):
+            rehome_failed = False
+            for duplicate in duplicates:
+                try:
+                    rehome(duplicate.id, master.id)
+                except Exception:
+                    rehome_failed = True
+                    logger.warning(
+                        "could not rehome references from %s to %s; keeping duplicate",
+                        duplicate.id,
+                        master.id,
+                        exc_info=True,
+                    )
+            if rehome_failed:
+                # Do not hard-delete a row while its evidence/claim lineage
+                # may still point at it. A later lifecycle pass can retry.
+                visited.update(c.id for c in cluster if c.id is not None)
+                continue
         total_access = sum(c.access_count for c in cluster)
         merged_tags: list[str] = []
         seen: set[str] = set()
@@ -123,7 +153,7 @@ def consolidate(
                 backend.update(master)
             except Exception:
                 logger.debug("could not mark consolidated memory for reindex", exc_info=True)
-        for c in cluster:
+        for c in duplicates:
             if c.id != master.id:
                 try:
                     backend.record_event("consolidate_delete", c.id, before={"content": c.content})

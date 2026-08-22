@@ -1,3 +1,7 @@
+import sqlite3
+
+import pytest
+
 from luminary_memory.backends.sqlite import SQLiteBackend
 from luminary_memory.types import Memory
 
@@ -114,6 +118,38 @@ def test_delete_many_batches(tmp_path):
     assert b.get(ids[3]) is not None
 
 
+def test_claim_and_claim_evidence_insert_roll_back_together(tmp_path):
+    b = _mk(tmp_path)
+    memory_id = b.add(Memory(content="claim transaction source"))
+    b.conn.execute(
+        """
+        CREATE TRIGGER fail_claim_evidence
+        BEFORE INSERT ON claim_evidence
+        BEGIN
+            SELECT RAISE(ABORT, 'forced claim evidence failure');
+        END
+        """
+    )
+    b.conn.commit()
+
+    claim = {
+        "subject": "project:luminary",
+        "predicate": "deploy_target",
+        "object": "staging",
+        "evidence_quote": "deploy target is staging",
+    }
+    with pytest.raises(sqlite3.IntegrityError, match="forced claim evidence failure"):
+        b.add_claim(memory_id, claim)
+    assert b.conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0] == 0
+
+    b.conn.execute("DROP TRIGGER fail_claim_evidence")
+    b.conn.commit()
+    b.add_claim(memory_id, claim)
+    assert b.conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0] == 1
+    assert b.conn.execute("SELECT COUNT(*) FROM claim_evidence").fetchone()[0] == 1
+    b.close()
+
+
 def test_update_importances_bulk(tmp_path):
     b = _mk(tmp_path)
     ids = [b.add(Memory(content=f"fact {i}", importance=0.3)) for i in range(3)]
@@ -147,6 +183,42 @@ def test_scan_embeddings_ignores_corrupt_and_mixed_dimensions(tmp_path):
     ids, matrix = b.scan_embeddings_matrix()
     assert ids == [good_id]
     assert matrix.shape == (1, 3)
+
+
+def test_corrupt_legacy_row_degrades_to_safe_defaults(tmp_path):
+    b = _mk(tmp_path)
+    mid = b.add(Memory(content="repairable row", embedding=[1.0, 0.0]))
+    b.conn.execute(
+        "UPDATE memories SET metadata='[]', tags='{}', importance='NaN', "
+        "confidence='broken', access_count='broken', embedding=? WHERE id=?",
+        (b"x", mid),
+    )
+    b.conn.commit()
+
+    memory = b.get(mid)
+    assert memory is not None
+    assert memory.metadata == {}
+    assert memory.tags == []
+    assert memory.importance == 0.5
+    assert memory.confidence == 1.0
+    assert memory.access_count == 0
+    assert memory.embedding is None
+    assert b.all()[0].embedding is None
+
+
+def test_large_batch_helpers_chunk_sqlite_parameters(tmp_path):
+    b = _mk(tmp_path)
+    memories = [Memory(content=f"chunked memory {i}", importance=0.3) for i in range(1200)]
+    ids = b.add_many(memories)
+    assert len(b.get_many(ids)) == 1200
+
+    b.touch_memories(ids)
+    b.update_importances([(0.4, mid) for mid in ids])
+    assert b.get(ids[-1]).access_count == 1
+    assert b.get(ids[0]).importance == 0.4
+
+    b.delete_many(ids)
+    assert b.count() == 0
 
 
 def test_by_tag_top_returns_core_memories_by_importance(tmp_path):

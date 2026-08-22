@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,17 +19,24 @@ EXPORT_VERSION = 1
 
 
 def _mem_to_dict(m) -> dict:
+    try:
+        importance = float(m.importance)
+    except (TypeError, ValueError):
+        importance = 0.5
+    if not math.isfinite(importance):
+        importance = 0.5
+    importance = max(0.0, min(1.0, importance))
     return {
         "content": m.content,
         "tags": list(m.tags or []),
         "metadata": dict(m.metadata or {}),
         "source": m.source,
-        "importance": float(m.importance),
+        "importance": importance,
         "ttl_seconds": m.ttl_seconds,
         "created_at": m.created_at,
         "updated_at": m.updated_at,
         "last_accessed_at": m.last_accessed_at,
-        "access_count": int(m.access_count),
+        "access_count": max(0, int(m.access_count or 0)),
         "embedding": list(m.embedding) if m.embedding is not None else None,
         "user_id": m.user_id,
         "session_id": m.session_id,
@@ -77,7 +85,7 @@ def export_memories(
     }
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(payload, indent=2))
+    p.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return {"count": len(memories), "path": str(p)}
 
 
@@ -91,15 +99,27 @@ def import_memories(
     include_global: bool = True,
 ) -> dict:
     p = Path(path)
-    payload = json.loads(p.read_text())
+    payload = json.loads(p.read_text(encoding="utf-8"))
 
     # Normalize: versioned wrapper (dict) vs bare list.
     if isinstance(payload, dict):
-        memories_data = payload.get("memories") or []
+        if payload.get("format") not in (None, EXPORT_FORMAT):
+            raise ValueError(f"unsupported export format: {payload.get('format')!r}")
+        version = payload.get("version")
+        if version is not None:
+            try:
+                version = int(version)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("export version must be an integer") from exc
+            if version > EXPORT_VERSION:
+                raise ValueError(f"unsupported export version: {version}")
+        memories_data = payload.get("memories", [])
     elif isinstance(payload, list):
         memories_data = payload
     else:
-        memories_data = []
+        raise TypeError("memory export must be a JSON object or list")
+    if not isinstance(memories_data, list):
+        raise TypeError("export 'memories' must be a list")
 
     # Build Memory objects; optionally recompute embeddings when absent.
     from luminary_memory.types import Memory
@@ -108,46 +128,91 @@ def import_memories(
         normalized = " ".join((content or "").strip().split()).casefold()
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
+    def _embedding(value) -> list[float] | None:
+        if not isinstance(value, (list, tuple)) or not value:
+            return None
+        try:
+            vector = [float(item) for item in value]
+        except (TypeError, ValueError):
+            return None
+        return vector if all(math.isfinite(item) for item in vector) else None
+
     memories: list[Memory] = []
     normalized_scope = normalize_scope(scope)
+    valid_statuses = {"candidate", "active", "conflicted", "superseded", "expired", "deleted"}
     for d in memories_data:
+        if not isinstance(d, dict):
+            raise TypeError("each exported memory must be an object")
+        if not str(d.get("content") or "").strip():
+            raise ValueError("exported memory content cannot be empty")
         emb = d.get("embedding")
         if emb is None and recompute_embeddings and engine is not None:
             try:
                 emb = engine.embed(d.get("content") or "")
             except Exception:  # noqa: BLE001
                 emb = None
-        content = str(d.get("content") or "")
+        content = str(d.get("content") or "").strip()
+        status = str(d.get("status") or "active").lower()
+        if status not in valid_statuses:
+            raise ValueError(f"invalid exported memory status: {status!r}")
+        try:
+            importance = float(d.get("importance") if d.get("importance") is not None else 0.5)
+            confidence = float(d.get("confidence") if d.get("confidence") is not None else 1.0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("exported importance/confidence must be numeric") from exc
+        if not math.isfinite(importance) or not math.isfinite(confidence):
+            raise ValueError("exported importance/confidence must be finite")
+        importance = max(0.0, min(1.0, importance))
         raw_quote = d.get("evidence_quote")
         quote = str(raw_quote).strip() if raw_quote else content
         if quote and quote not in content:
             quote = content
+        raw_tags = d.get("tags")
+        tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, (list, tuple, set)) else []
+        raw_metadata = d.get("metadata")
+        metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        try:
+            access_count = max(0, int(d.get("access_count") or 0))
+        except (TypeError, ValueError):
+            access_count = 0
+        raw_ttl = d.get("ttl_seconds")
+        if raw_ttl is None or raw_ttl == "":
+            ttl_seconds = None
+        else:
+            try:
+                ttl_seconds = max(0, int(raw_ttl))
+            except (TypeError, ValueError):
+                ttl_seconds = None
+        computed_hash = _hash(content)
+        supplied_hash = str(d.get("content_hash") or "").strip().lower()
         m = Memory(
             content=content,
-            tags=list(d.get("tags") or []),
-            metadata=dict(d.get("metadata") or {}),
+            tags=tags,
+            metadata=metadata,
             source=d.get("source"),
-            importance=float(d.get("importance") if d.get("importance") is not None else 0.5),
-            ttl_seconds=d.get("ttl_seconds"),
-            created_at=d.get("created_at") or "",
-            updated_at=d.get("updated_at") or "",
-            last_accessed_at=d.get("last_accessed_at"),
-            access_count=int(d.get("access_count") or 0),
-            embedding=list(emb) if isinstance(emb, (list, tuple)) else None,
+            importance=importance,
+            ttl_seconds=ttl_seconds,
+            created_at=str(d.get("created_at") or ""),
+            updated_at=str(d.get("updated_at") or ""),
+            last_accessed_at=(str(d["last_accessed_at"]) if d.get("last_accessed_at") else None),
+            access_count=access_count,
+            embedding=_embedding(emb),
             user_id=d.get("user_id"),
             session_id=d.get("session_id"),
             workspace_id=d.get("workspace_id"),
             agent_id=d.get("agent_id"),
-            observed_at=d.get("observed_at"),
-            valid_from=d.get("valid_from"),
-            valid_to=d.get("valid_to"),
-            status=str(d.get("status") or "active"),
-            confidence=float(d.get("confidence") if d.get("confidence") is not None else 1.0),
+            observed_at=(str(d["observed_at"]) if d.get("observed_at") else None),
+            valid_from=(str(d["valid_from"]) if d.get("valid_from") else None),
+            valid_to=(str(d["valid_to"]) if d.get("valid_to") else None),
+            status=status,
+            confidence=max(0.0, min(1.0, confidence)),
             evidence_quote=quote,
             source_id=d.get("source_id") or d.get("source"),
             claim_key=d.get("claim_key"),
             supersedes_id=d.get("supersedes_id"),
-            content_hash=d.get("content_hash") or _hash(d.get("content") or ""),
+            # A stale/tampered export hash must not break exact-dedup after
+            # import; the content is the source of truth.
+            content_hash=computed_hash if supplied_hash != computed_hash else supplied_hash,
             needs_reindex=bool(d.get("needs_reindex", False)),
         )
         if normalized_scope:
@@ -181,14 +246,14 @@ def import_memories(
                 continue
             c = getattr(existing, "content", None)
             if c:
-                existing_contents.add(c.strip().lower())
+                existing_contents.add(_hash(c))
     except Exception:  # noqa: BLE001 -- dedup is best-effort
         existing_contents = set()
 
     deduped: list[Memory] = []
     skipped_dups = 0
     for m in memories:
-        key = (m.content or "").strip().lower()
+        key = _hash(m.content)
         if key and key in existing_contents:
             skipped_dups += 1
             continue
@@ -204,14 +269,15 @@ def import_memories(
         ids = add_many(deduped)
     else:
         ids = [backend.add(m) for m in deduped]
-    try:
-        from luminary_memory.recall.graph import index_memory_entities
+    from luminary_memory.recall.graph import index_memory_entities
 
-        for m, mid in zip(deduped, ids):
-            m.id = mid
+    secondary_failures = 0
+    for m, mid in zip(deduped, ids):
+        m.id = mid
+        try:
             backend.record_episode(
                 f"memory:{mid}",
-                str(m.metadata.get("evidence_quote") or m.content),
+                str(m.metadata.get("raw_text") or m.content),
                 source=m.source,
                 metadata=m.metadata,
                 user_id=m.user_id,
@@ -225,7 +291,10 @@ def import_memories(
                     continue
                 claim_row = dict(claim)
                 claim_quote = str(claim_row.get("evidence_quote") or "").strip()
-                if not claim_quote or claim_quote not in m.content:
+                if not claim_quote or (
+                    claim_quote not in m.content
+                    and claim_quote not in str(m.evidence_quote or "")
+                ):
                     continue
                 claim_row["source_episode_id"] = f"memory:{mid}"
                 backend.add_claim(
@@ -247,9 +316,17 @@ def import_memories(
                     extractor="import",
                     confidence=m.confidence,
                 )
-    except Exception:
-        logger.warning("import index/evidence rebuild was incomplete", exc_info=True)
+        except Exception:
+            secondary_failures += 1
+            m.needs_reindex = True
+            try:
+                backend.update(m)
+            except Exception:
+                logger.debug("could not mark imported memory %s for reindex", mid, exc_info=True)
+            logger.warning("import index/evidence rebuild incomplete for memory %s", mid, exc_info=True)
     result: dict = {"imported": len(deduped)}
     if skipped_dups:
         result["skipped_duplicates"] = skipped_dups
+    if secondary_failures:
+        result["needs_reindex"] = secondary_failures
     return result

@@ -23,7 +23,7 @@ def _load_handler(tmp_path, **env_overrides):
         "CREATE TABLE IF NOT EXISTS memories (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT, "
         "created_at TEXT, updated_at TEXT, last_accessed_at TEXT, access_count INTEGER, "
         "importance REAL DEFAULT 0.5, source TEXT, tags TEXT DEFAULT '[]', metadata TEXT DEFAULT '{}', "
-        "ttl_seconds INTEGER, embedding BLOB)"
+        "ttl_seconds INTEGER, embedding BLOB, status TEXT DEFAULT 'active')"
     )
     conn.commit()
     conn.close()
@@ -182,6 +182,17 @@ def test_post_treats_telegram_ok_false_as_delivery_failure(tmp_path):
         assert h._post("retriable activity") is False
 
 
+def test_post_treats_malformed_telegram_response_as_delivery_failure(tmp_path):
+    h = _load_handler(tmp_path)
+
+    with patch("urllib.request.urlopen") as mock_open:
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"upstream proxy error"
+        mock_open.return_value.__enter__.return_value = mock_resp
+
+        assert h._post("must be retried") is False
+
+
 def test_post_swallows_network_error(tmp_path):
     h = _load_handler(tmp_path)
 
@@ -304,3 +315,43 @@ def test_recent_activity_handles_batch_overflow(tmp_path):
     assert "4 memories stored" in res
     assert "(+1 more)" in res
     assert h._last_shown_id() == 5
+
+
+def test_recent_activity_ignores_inactive_rows_but_advances_cursor_after_ack(tmp_path):
+    h = _load_handler(tmp_path)
+    h._set_last_shown_id(1)
+    conn = sqlite3.connect(h.DB_PATH)
+    conn.executemany(
+        "INSERT INTO memories (id, content, status) VALUES (?, ?, ?)",
+        [(2, "retracted secret", "deleted"), (3, "active fact", "active")],
+    )
+    conn.commit()
+    conn.close()
+
+    line, max_id = h._read_recent_activity()
+    assert line is not None
+    assert "1 memory stored" in line
+    assert "active fact" in line
+    assert "retracted secret" not in line
+    assert max_id == 3
+
+    with patch.object(h, "_post", return_value=True):
+        h.handle("agent:end", {})
+    assert h._last_shown_id() == 3
+
+
+def test_recent_activity_acknowledges_only_inactive_backlog_without_post(tmp_path):
+    h = _load_handler(tmp_path)
+    h._set_last_shown_id(1)
+    conn = sqlite3.connect(h.DB_PATH)
+    conn.execute(
+        "INSERT INTO memories (id, content, status) VALUES (?, ?, ?)",
+        (2, "retracted secret", "deleted"),
+    )
+    conn.commit()
+    conn.close()
+
+    with patch.object(h, "_post") as mock_post:
+        h.handle("agent:end", {})
+        mock_post.assert_not_called()
+    assert h._last_shown_id() == 2

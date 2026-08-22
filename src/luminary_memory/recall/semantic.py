@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+from luminary_memory.scope import memory_matches_scope, normalize_scope
+
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
 
@@ -18,7 +20,10 @@ def semantic_recall(
     scope: dict | None = None,
     include_global: bool = True,
 ) -> list[tuple]:
+    if limit is not None and int(limit) == 0:
+        return []
     query_vec = engine.embed(_expand_query(backend, query, scope=scope, include_global=include_global))
+    needs_local_filter = bool(normalize_scope(scope)) or not include_global
     try:
         raw = backend.vector_search(
             query_vec,
@@ -27,8 +32,21 @@ def semantic_recall(
             include_global=include_global,
         )
     except TypeError:
-        raw = backend.vector_search(query_vec, limit=limit)
-    return [(m, float(score), "semantic") for m, score in raw]
+        # A legacy vector backend may only know about query + limit. Do not
+        # let its unscoped top-k hide valid in-scope memories; over-fetch and
+        # apply the same scope predicate used by the native backends.
+        fallback_limit = None if needs_local_filter else limit
+        try:
+            raw = backend.vector_search(query_vec, limit=fallback_limit)
+        except TypeError:
+            raw = backend.vector_search(query_vec, fallback_limit)
+    rows = [
+        (m, float(score), "semantic")
+        for m, score in raw
+        if not needs_local_filter
+        or memory_matches_scope(m, scope, include_global=include_global)
+    ]
+    return rows if limit is None else rows[: max(0, int(limit))]
 
 
 def _expand_query(
@@ -131,7 +149,26 @@ def _expand_with_rules(
                 include_global=include_global,
             )
         except TypeError:
-            rules = top_by(top_n=8, min_importance=0.8)
+            # The old signature has no scope parameters. Scan/filter locally
+            # instead of letting another tenant's durable rule influence the
+            # query expansion.
+            rules = [
+                memory
+                for memory in backend.all()
+                if float(getattr(memory, "importance", 0.0) or 0.0) >= 0.8
+                and memory_matches_scope(
+                    memory,
+                    scope,
+                    include_global=include_global,
+                )
+            ]
+            rules.sort(
+                key=lambda memory: (
+                    -float(getattr(memory, "importance", 0.0) or 0.0),
+                    -int(getattr(memory, "access_count", 0) or 0),
+                )
+            )
+            rules = rules[:8]
         q_set = set(words)
         for rule in rules:
             r_words = [w for w in str(getattr(rule, "content", "") or "").lower().split() if len(w) > 2]

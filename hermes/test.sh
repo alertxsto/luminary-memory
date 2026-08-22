@@ -6,8 +6,8 @@
 # runtime smoke test in one command. Use before every push.
 #
 # Usage:
-#   bash hermes/test.sh              # full: tests + lint + runtime smoke
-#   bash hermes/test.sh --quick      # tests + lint only (skip runtime smoke)
+#   bash hermes/test.sh              # full: tests + coverage + lint + runtime smoke
+#   bash hermes/test.sh --quick      # tests + coverage + lint only
 #   bash hermes/test.sh --hermes     # Hermes runtime smoke test only
 #   bash hermes/test.sh --help
 # ============================================================
@@ -26,7 +26,7 @@ for arg in "$@"; do
     --help|-h)
       echo "Usage: bash hermes/test.sh [--quick | --hermes]"
       echo "  (default)  full: pytest + ruff + coverage + hermes runtime smoke"
-      echo "  --quick    pytest + ruff only"
+      echo "  --quick    pytest + coverage + ruff only"
       echo "  --hermes   hermes runtime smoke test only"
       exit 0 ;;
     *) echo "unknown flag: $arg (see --help)"; exit 1 ;;
@@ -40,17 +40,22 @@ echo "============================================="
 
 if [[ "$MODE" == "full" || "$MODE" == "quick" ]]; then
   echo ""
-  echo "── 1/3 pytest (full suite) ──"
-  "$PYBIN" -m pytest tests/ --tb=short
+  echo "── 1/4 pytest + coverage (full suite) ──"
+  "$PYBIN" -m coverage erase
+  "$PYBIN" -m coverage run --source=src/luminary_memory -m pytest tests/ --tb=short
 
   echo ""
-  echo "── 2/3 ruff check ──"
-  "$PYBIN" -m ruff check src tests
+  echo "── 2/4 ruff check ──"
+  "$PYBIN" -m ruff check src tests hermes/hooks
+
+  echo ""
+  echo "── 3/4 coverage gate ──"
+  "$PYBIN" -m coverage report --fail-under=83
 fi
 
 if [[ "$MODE" == "full" || "$MODE" == "hermes" ]]; then
   echo ""
-  echo "── 3/3 Hermes runtime smoke test ──"
+  echo "── 4/4 Hermes runtime smoke test ──"
   "$PYBIN" - "$REPO_DIR" <<'PY'
 import sys, tempfile, os
 sys.path.insert(0, sys.argv[1])
@@ -83,12 +88,12 @@ assert "Core memory stored" in json.loads(r)["result"], r
 # prefetch includes core, no dup, query unrelated
 p._config["recall_sync"] = True
 block = p.prefetch("riset teknologi xyz", session_id="smoke")
-assert "Core memory (auto-loaded every session)" in block, "core block missing"
+assert "Core memory, auto-loaded every session" in block, "core block missing"
 assert "markdown table" in block, "core rule missing"
 assert block.count("markdown table") == 1, f"dup: {block.count('markdown table')}"
 # system prompt includes core
 sp = p.system_prompt_block()
-assert "Core memory (auto-loaded every session)" in sp, "system prompt missing core"
+assert "Core memory, auto-loaded every session" in sp, "system prompt missing core"
 # core_list / core_remove
 d = json.loads(p.handle_tool_call("luminary_core_list", {}))
 assert len(d["core"]) == 1, d
