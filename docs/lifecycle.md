@@ -1,5 +1,9 @@
 # Lifecycle
 
+Lifecycle is deterministic and scope-aware. It maintains the store without
+turning an unresolved conflict or a provenance record into an accidental
+deletion.
+
 Two maintenance layers keep the store lean: deterministic passes
 (`run_lifecycle()`) and LLM-driven curation (`run_maintenance()`).
 

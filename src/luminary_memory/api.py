@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import logging
-from datetime import UTC
+import math
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from luminary_memory.backends import get_backend
@@ -10,9 +12,90 @@ from luminary_memory.config import Settings
 from luminary_memory.embeddings.fastembed import FastembedEngine
 from luminary_memory.ingest.llm import LLMEnricher, NoopEnricher
 from luminary_memory.ingest.whitelist import WhitelistFilter
+from luminary_memory.scope import memory_matches_scope, normalize_scope
 from luminary_memory.types import Memory, RecallResult
 
 logger = logging.getLogger(__name__)
+
+_QUERY_ALIASES = (
+    ("go live", "deploy"),
+    ("go-live", "deploy"),
+    ("deployment", "deploy"),
+    ("destination", "target"),
+    ("release destination", "deploy target"),
+    ("display theme", "dark mode"),
+    ("programming language", "compiler"),
+    ("model variant", "model"),
+    ("before release", "test suite"),
+)
+
+
+def _expand_query_aliases(query: str) -> str:
+    expanded = str(query or "")
+    low = expanded.casefold()
+    additions: list[str] = []
+    for phrase, alias in _QUERY_ALIASES:
+        if phrase in low and alias.casefold() not in low:
+            additions.append(alias)
+    return f"{expanded} {' '.join(additions)}".strip()
+
+
+def _content_hash(content: str) -> str:
+    normalized = " ".join((content or "").strip().split()).casefold()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _snapshot(memory: Memory | None) -> dict | None:
+    if memory is None:
+        return None
+    return {
+        "id": memory.id,
+        "content": memory.content,
+        "metadata": memory.metadata,
+        "source": memory.source,
+        "tags": memory.tags,
+        "importance": memory.importance,
+        "user_id": memory.user_id,
+        "session_id": memory.session_id,
+        "workspace_id": memory.workspace_id,
+        "agent_id": memory.agent_id,
+        "observed_at": memory.observed_at,
+        "valid_from": memory.valid_from,
+        "valid_to": memory.valid_to,
+        "status": memory.status,
+        "confidence": memory.confidence,
+        "evidence_quote": memory.evidence_quote,
+        "source_id": memory.source_id,
+        "claim_key": memory.claim_key,
+        "supersedes_id": memory.supersedes_id,
+        "content_hash": memory.content_hash,
+    }
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _clean_embedding(value) -> list[float] | None:
+    """Reject malformed vectors before they poison a backend/index."""
+    if value is None:
+        return None
+    try:
+        vector = [float(item) for item in value]
+    except (TypeError, ValueError):
+        return None
+    if not vector or not all(math.isfinite(item) for item in vector):
+        return None
+    return vector
+
+
+def _embed_safely(engine, text: str) -> list[float] | None:
+    """Return a valid vector when the embedder works; keep keyword recall alive otherwise."""
+    try:
+        return _clean_embedding(engine.embed(text))
+    except Exception:
+        logger.warning("embedding failed for memory (stored without vector)", exc_info=True)
+        return None
 
 
 def _try_index_graph(backend, memory: Memory) -> None:
@@ -20,8 +103,16 @@ def _try_index_graph(backend, memory: Memory) -> None:
 
     try:
         index_memory_entities(backend, memory)
+        if getattr(memory, "needs_reindex", False):
+            memory.needs_reindex = False
+            backend.update(memory)
     except Exception:  # noqa: BLE001 -- graph indexing is best-effort; never abort ingest
         logger.warning("graph indexing failed for memory %s (non-fatal)", memory.id)
+        try:
+            memory.needs_reindex = True
+            backend.update(memory)
+        except Exception:
+            logger.debug("could not mark memory %s for graph reindex", memory.id, exc_info=True)
 
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
@@ -36,6 +127,11 @@ class MemoryClient:
         enricher: LLMEnricher | None = None,
         engine: FastembedEngine | None = None,
         backend: MemoryBackend | None = None,
+        scope: dict | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        workspace_id: str | None = None,
+        agent_id: str | None = None,
     ):
         self.settings = settings or Settings()
         if db_path is not None:
@@ -46,9 +142,138 @@ class MemoryClient:
         self.backend = backend or get_backend(self.settings)
         self.whitelist = WhitelistFilter(self.settings.ingest_whitelist)
         self.engine = engine or FastembedEngine(model_name=self.settings.embedding_model)
+        requested_scope = dict(scope or {})
+        requested_scope.update(
+            {
+                key: value
+                for key, value in {
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "workspace_id": workspace_id,
+                    "agent_id": agent_id,
+                }.items()
+                if value is not None
+            }
+        )
+        self.scope = normalize_scope(requested_scope)
         # Never leave enricher None: ingest() calls .enrich() unconditionally.
         # Without a custom enricher, fall back to NoopEnricher (safe passthrough).
         self.enricher = enricher or NoopEnricher()
+
+    def _effective_scope(self, **values) -> dict[str, str]:
+        scope = dict(self.scope)
+        scope.update({k: str(v) for k, v in values.items() if v is not None and str(v).strip()})
+        return normalize_scope(scope)
+
+    def _record_event(
+        self,
+        event_type: str,
+        memory_id: int | None,
+        before: Memory | None = None,
+        after: Memory | None = None,
+        actor: str | None = "memory-client",
+    ) -> None:
+        try:
+            self.backend.record_event(
+                event_type,
+                memory_id,
+                before=_snapshot(before),
+                after=_snapshot(after),
+                actor=actor,
+            )
+        except Exception:
+            logger.warning("memory event recording failed for %s", memory_id, exc_info=True)
+
+    def _record_evidence(self, memory: Memory, extractor: str = "direct") -> None:
+        quote = (memory.evidence_quote or memory.content or "").strip()
+        if not quote or memory.id is None:
+            return
+        try:
+            self.backend.add_evidence(
+                memory.id,
+                quote,
+                source_id=memory.source_id or memory.source,
+                observed_at=memory.observed_at,
+                extractor=extractor,
+                confidence=float(
+                    memory.confidence if memory.confidence is not None else 1.0
+                ),
+            )
+        except Exception:
+            logger.warning("evidence recording failed for %s", memory.id, exc_info=True)
+
+    def _sync_claim_status(
+        self,
+        memory_id: int | None,
+        status: str,
+        valid_to: str | None = None,
+    ) -> None:
+        if memory_id is None:
+            return
+        sync = getattr(self.backend, "sync_claim_status", None)
+        if not callable(sync):
+            return
+        try:
+            sync(memory_id, status, valid_to=valid_to)
+        except Exception:
+            logger.warning("claim status sync failed for %s", memory_id, exc_info=True)
+
+    def _record_episode_and_claims(
+        self,
+        memory: Memory,
+        source_text: str,
+        claims: list[dict] | None = None,
+    ) -> None:
+        """Persist immutable source context plus validated atomic claims."""
+        if memory.id is None:
+            return
+        episode_id = f"memory:{memory.id}"
+        try:
+            self.backend.record_episode(
+                episode_id,
+                source_text,
+                source=memory.source,
+                metadata=memory.metadata,
+                user_id=memory.user_id,
+                session_id=memory.session_id,
+                workspace_id=memory.workspace_id,
+                agent_id=memory.agent_id,
+                observed_at=memory.observed_at,
+            )
+            for claim in claims or []:
+                claim_row = dict(claim)
+                claim_row["source_episode_id"] = episode_id
+                claim_row.setdefault("observed_at", memory.observed_at)
+                claim_row.setdefault("valid_from", memory.valid_from)
+                claim_row.setdefault("valid_to", memory.valid_to)
+                claim_row.setdefault("status", memory.status)
+                self.backend.add_claim(
+                    memory.id,
+                    claim_row,
+                    user_id=memory.user_id,
+                    session_id=memory.session_id,
+                    workspace_id=memory.workspace_id,
+                    agent_id=memory.agent_id,
+                )
+        except Exception:
+            logger.warning("episode/claim ledger write failed for %s", memory.id, exc_info=True)
+
+    def _find_exact_duplicate(self, content_hash: str, scope: dict[str, str]) -> Memory | None:
+        finder = getattr(self.backend, "find_by_hash", None)
+        if callable(finder):
+            try:
+                found = finder(content_hash, scope=scope)
+                if found is not None:
+                    return found
+            except Exception:
+                logger.debug("backend hash lookup failed", exc_info=True)
+        for existing in self.backend.all():
+            existing_hash = existing.content_hash or _content_hash(existing.content)
+            if existing_hash == content_hash and memory_matches_scope(
+                existing, scope, include_global=False
+            ):
+                return existing
+        return None
 
     def ingest(
         self,
@@ -58,16 +283,41 @@ class MemoryClient:
         metadata: dict | None = None,
         enrich: bool = True,
         importance: float | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        workspace_id: str | None = None,
+        agent_id: str | None = None,
+        observed_at: str | None = None,
+        valid_from: str | None = None,
+        valid_to: str | None = None,
+        status: str = "active",
+        confidence: float | None = None,
+        evidence_quote: str | None = None,
+        source_id: str | None = None,
+        claim_key: str | None = None,
+        supersedes_id: int | None = None,
     ) -> int | None:
+        text = str(text or "").strip()
+        if not text:
+            return None
         if not self.whitelist.accepts(text):
             return None
 
         content, summary, entities, extra_tags = text, None, [], []
         importance_hint: float | None = importance
+        enriched_claims: list[dict] = []
         if enrich and self.enricher is not None:
             enriched = self.enricher.enrich(text)
+            if not bool(getattr(enriched, "worth_saving", True)):
+                return None
             content, summary, entities, extra_tags = (
                 enriched.content, enriched.summary, enriched.entities, enriched.tags,
+            )
+            raw_claims = getattr(enriched, "claims", []) or []
+            enriched_claims = (
+                [dict(claim) for claim in raw_claims if isinstance(claim, dict)]
+                if isinstance(raw_claims, list)
+                else []
             )
             if importance_hint is None:
                 importance_hint = getattr(enriched, "importance", None)
@@ -77,6 +327,53 @@ class MemoryClient:
             meta["summary"] = summary
         if entities:
             meta["entities"] = entities
+        if enriched_claims:
+            meta["claims"] = enriched_claims
+
+        effective_scope = self._effective_scope(
+            user_id=user_id,
+            session_id=session_id,
+            workspace_id=workspace_id,
+            agent_id=agent_id,
+        )
+        now = _utc_now()
+        observed = observed_at or meta.get("observed_at") or now
+        quote = evidence_quote or meta.get("evidence_quote") or content
+        # An extractor-provided quote is evidence only when it is grounded in
+        # the original source.  Invalid quotes are discarded rather than
+        # presented as provenance.
+        if quote and quote not in text and quote not in content:
+            quote = content
+        source_identifier = source_id or meta.get("source_id") or source
+        canonical_claim_key = claim_key or meta.get("claim_key")
+        if enriched_claims:
+            first_claim = enriched_claims[0]
+            if canonical_claim_key is None:
+                canonical_claim_key = "|".join(
+                    str(first_claim.get(field) or "").strip().casefold()
+                    for field in ("subject", "predicate", "polarity")
+                )
+            if evidence_quote is None and first_claim.get("evidence_quote"):
+                quote = str(first_claim["evidence_quote"])
+            if confidence is None and first_claim.get("confidence") is not None:
+                confidence = first_claim.get("confidence")
+            valid_from = valid_from or first_claim.get("valid_from")
+            valid_to = valid_to or first_claim.get("valid_to")
+        content = str(content or "").strip()
+        if not content:
+            return None
+        if quote and quote not in text and quote not in content:
+            quote = content
+        try:
+            confidence_value = float(
+                confidence if confidence is not None else meta.get("confidence", 1.0)
+            )
+        except (TypeError, ValueError):
+            confidence_value = 0.0
+        confidence_value = max(0.0, min(1.0, confidence_value))
+        normalized_status = str(status or "active").lower()
+        if normalized_status not in {"candidate", "active", "conflicted", "superseded", "expired", "deleted"}:
+            raise ValueError(f"invalid memory status: {status!r}")
 
         m = Memory(
             content=content,
@@ -84,7 +381,21 @@ class MemoryClient:
             source=source,
             tags=list(dict.fromkeys((tags or []) + extra_tags)),
             ttl_seconds=self.settings.ttl_default_seconds,
-            embedding=self.engine.embed(content),
+            embedding=_embed_safely(self.engine, content),
+            user_id=effective_scope.get("user_id"),
+            session_id=effective_scope.get("session_id"),
+            workspace_id=effective_scope.get("workspace_id"),
+            agent_id=effective_scope.get("agent_id"),
+            observed_at=observed,
+            valid_from=valid_from or meta.get("valid_from"),
+            valid_to=valid_to or meta.get("valid_to"),
+            status=normalized_status,
+            confidence=confidence_value,
+            evidence_quote=quote,
+            source_id=source_identifier,
+            claim_key=canonical_claim_key,
+            supersedes_id=supersedes_id,
+            content_hash=_content_hash(content),
         )
         if importance_hint is not None:
             # Enricher flagged this as a durable rule/fact: honor the hint
@@ -96,11 +407,58 @@ class MemoryClient:
 
             m.importance = estimate_importance(m)
 
+        # Exact duplicates are suppressed before any semantic replacement.
+        # This is scope-aware and leaves an audit event so health diagnostics
+        # can still report repeated write attempts.
+        duplicate = self._find_exact_duplicate(m.content_hash, effective_scope)
+        if duplicate is not None:
+            self._record_event("duplicate_suppressed", duplicate.id, before=duplicate, after=m)
+            return duplicate.id
+
+        # Explicit claim keys enable safe versioning.  A new value without an
+        # explicit supersession is retained as a conflict instead of erasing
+        # the prior claim.
+        if canonical_claim_key:
+            finder = getattr(self.backend, "find_by_claim_key", None)
+            existing_claims = []
+            if callable(finder):
+                try:
+                    existing_claims = finder(canonical_claim_key, scope=effective_scope)
+                except Exception:  # noqa: BLE001
+                    existing_claims = []
+            for existing in existing_claims:
+                if existing.status not in {"active", "conflicted"}:
+                    continue
+                if supersedes_id is not None and existing.id == supersedes_id:
+                    existing_before = self.backend.get(existing.id)
+                    existing.status = "superseded"
+                    existing.valid_to = existing.valid_to or now
+                    self.backend.update(existing)
+                    self._sync_claim_status(existing.id, "superseded", existing.valid_to)
+                    self._record_event("supersede", existing.id, before=existing_before, after=existing)
+                elif existing.content_hash != m.content_hash and supersedes_id is not None:
+                    existing_before = self.backend.get(existing.id)
+                    existing.status = "superseded"
+                    existing.valid_to = existing.valid_to or now
+                    self.backend.update(existing)
+                    self._sync_claim_status(existing.id, "superseded", existing.valid_to)
+                    self._record_event(
+                        "supersede_chain", existing.id, before=existing_before, after=existing
+                    )
+                elif existing.content_hash != m.content_hash:
+                    m.status = "conflicted"
+                    if existing.status == "active":
+                        existing_before = self.backend.get(existing.id)
+                        existing.status = "conflicted"
+                        self.backend.update(existing)
+                        self._sync_claim_status(existing.id, "conflicted")
+                        self._record_event("conflict", existing.id, before=existing_before, after=existing)
+
         # Anti-contradiction auto-replace: if a similar memory already exists
         # (embedding cosine >= replace_threshold), replace it instead of
-        # adding a duplicate/contradicting entry. Rules are the main case,
-        # but we also catch near-duplicate facts so the telegram table rule
-        # (and friends) never stack as conflicting rows.
+        # adding a duplicate.  The mutation is now event-sourced and
+        # scope-aware; callers that need true claim history should use
+        # ``claim_key`` + ``supersedes_id`` instead.
         is_rule = any(
             kw.strip().upper() in content.upper()
             for kw in (self.settings.rule_keywords or "").split(",")
@@ -116,6 +474,9 @@ class MemoryClient:
 
         mid = self.backend.add(m)
         m.id = mid
+        self._record_episode_and_claims(m, text, enriched_claims)
+        self._record_event("ingest", mid, after=m)
+        self._record_evidence(m, extractor="enricher" if enriched_claims else "direct")
         _try_index_graph(self.backend, m)
         return mid
 
@@ -126,57 +487,62 @@ class MemoryClient:
         similar exists. Similarity uses embedding cosine against existing
         memories above ``rule_auto_replace_threshold``.
 
-        The cosine scan is vectorized (single numpy matmul) so rule ingests
-        stay fast on large stores — a Python-loop per-memory scan costs
-        ~500 ms at 5k memories; the matmul is ~10 ms.
+        This path is deliberately scope-aware.  Embedding similarity is only
+        a candidate signal; the previous row and the new row are retained in
+        the append-only event log so an update cannot erase the evidence trail.
         """
         from luminary_memory.recall.dedup import cosine_similarity
 
         try:
-            new_vec = new_memory.embedding or self.engine.embed(content)
-            # Vectorized scan over stored embeddings (no full Memory objects).
-            # scan_embeddings_matrix returns (ids, N×D float32 matrix); the
-            # fallbacks keep pgvector/other backends working.
-            ids: list[int] = []
-            mat = None
-            matrix = getattr(self.backend, "scan_embeddings_matrix", None)
-            if matrix is not None:
-                ids, mat = matrix()
-            elif getattr(self.backend, "scan_embeddings", None) is not None:
-                ids, vecs = self.backend.scan_embeddings()
-                if vecs:
-                    import numpy as np
-
-                    mat = np.vstack([np.asarray(v, dtype=np.float32) for v in vecs])
-            if ids and mat is not None and mat.size:
-                import numpy as np
-
-                q = np.asarray(new_vec, dtype=np.float32)
-                qn = float(np.linalg.norm(q))
-                if qn == 0.0:
-                    return None
-                sims = (mat @ q) / (np.linalg.norm(mat, axis=1) * qn + 1e-12)
-                best_i = int(np.argmax(sims))
-                best_score = float(sims[best_i])
-                best_id = int(ids[best_i])
-            else:
-                best_id = None
-                best_score = 0.0
-                for existing in self.backend.all():
-                    if existing.embedding is None or existing.id is None:
-                        continue
-                    score = cosine_similarity(new_vec, existing.embedding)
-                    if score > best_score:
-                        best_score = score
-                        best_id = existing.id
+            new_vec = new_memory.embedding or _embed_safely(self.engine, content)
+            if not new_vec:
+                return None
+            best_id = None
+            best_score = 0.0
+            for existing in self.backend.all():
+                if existing.embedding is None or existing.id is None:
+                    continue
+                if not memory_matches_scope(
+                    existing,
+                    {
+                        key: value
+                        for key, value in {
+                            "user_id": new_memory.user_id,
+                            "session_id": new_memory.session_id,
+                            "workspace_id": new_memory.workspace_id,
+                            "agent_id": new_memory.agent_id,
+                        }.items()
+                        if value is not None
+                    },
+                    include_global=False,
+                ):
+                    continue
+                score = cosine_similarity(new_vec, existing.embedding)
+                if score > best_score:
+                    best_score = score
+                    best_id = existing.id
             threshold = float(self.settings.rule_auto_replace_threshold)
             if best_id is not None and best_score >= threshold:
                 existing = self.backend.get(best_id)
                 if existing is not None:
+                    before = self.backend.get(best_id)
                     existing.content = content
                     existing.importance = max(existing.importance, new_memory.importance)
                     existing.embedding = new_vec
+                    existing.metadata = dict(new_memory.metadata)
+                    existing.tags = list(new_memory.tags)
+                    existing.source = new_memory.source
+                    existing.updated_at = _utc_now()
+                    existing.observed_at = new_memory.observed_at
+                    existing.evidence_quote = new_memory.evidence_quote
+                    existing.source_id = new_memory.source_id
+                    existing.content_hash = new_memory.content_hash
+                    existing.confidence = new_memory.confidence
+                    existing.needs_reindex = False
                     self.backend.update(existing)
+                    self._record_event("rule_replace", best_id, before=before, after=existing)
+                    self._record_evidence(existing, extractor="rule-replace")
+                    _try_index_graph(self.backend, existing)
                     return best_id
             return None
         except Exception:  # noqa: BLE001 -- best-effort replace
@@ -187,6 +553,22 @@ class MemoryClient:
         texts: list[str],
         tags: list[list[str] | None] | None = None,
         source: str | None = None,
+        metadata: list[dict | None] | None = None,
+        enrich: bool = True,
+        importance: float | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        workspace_id: str | None = None,
+        agent_id: str | None = None,
+        observed_at: str | None = None,
+        valid_from: str | None = None,
+        valid_to: str | None = None,
+        status: str = "active",
+        confidence: float | None = None,
+        evidence_quote: str | None = None,
+        source_id: str | None = None,
+        claim_key: str | None = None,
+        supersedes_id: int | None = None,
     ) -> list[int | None]:
         """Batch ingest mirroring :meth:`ingest` per item.
 
@@ -200,30 +582,82 @@ class MemoryClient:
         n = len(texts)
         if tags is not None and len(tags) != n:
             raise ValueError("tags length must match texts length")
+        if metadata is not None and len(metadata) != n:
+            raise ValueError("metadata length must match texts length")
         tag_lists: list[list[str] | None] = list(tags) if tags is not None else [None] * n
+        metadata_list: list[dict | None] = list(metadata) if metadata is not None else [None] * n
+        normalized_status = str(status or "active").lower()
+        if normalized_status not in {"candidate", "active", "conflicted", "superseded", "expired", "deleted"}:
+            raise ValueError(f"invalid memory status: {status!r}")
 
         # Enrich per item, track which survive whitelist.
-        prepared: list[tuple[int, str, list[str], dict]] = []  # (orig_idx, content, tags, metadata)
+        prepared: list[tuple[int, str, list[str], dict, dict]] = []
         result: list[int | None] = [None] * n
         enriched_contents: list[str] = []
         enriched_idx_map: list[int] = []  # position in enriched_contents -> orig idx
 
         for i, raw_text in enumerate(texts):
+            raw_text = str(raw_text or "").strip()
             if not self.whitelist.accepts(raw_text):
                 continue
             content, summary, entities, extra_tags = raw_text, None, [], []
-            if self.enricher is not None:
+            enriched_claims: list[dict] = []
+            if enrich and self.enricher is not None:
                 enriched = self.enricher.enrich(raw_text)
+                if not bool(getattr(enriched, "worth_saving", True)):
+                    continue
                 content, summary, entities, extra_tags = (
                     enriched.content, enriched.summary, enriched.entities, enriched.tags,
                 )
-            metadata: dict = {}
+            content = str(content or "").strip()
+            if not content:
+                continue
+            raw_metadata = metadata_list[i]
+            if raw_metadata is not None and not isinstance(raw_metadata, dict):
+                raise ValueError("each metadata item must be a dict or None")
+            item_metadata: dict = dict(raw_metadata or {})
             if summary:
-                metadata["summary"] = summary
+                item_metadata["summary"] = summary
             if entities:
-                metadata["entities"] = entities
+                item_metadata["entities"] = entities
+            if enrich and self.enricher is not None:
+                raw_claims = getattr(enriched, "claims", []) or []
+                if isinstance(raw_claims, list):
+                    enriched_claims = [dict(claim) for claim in raw_claims if isinstance(claim, dict)]
+            if enriched_claims:
+                item_metadata["claims"] = enriched_claims
+                first_claim = enriched_claims[0]
+                if claim_key is None and not item_metadata.get("claim_key"):
+                    parts = [
+                        str(first_claim.get(field) or "").strip().casefold()
+                        for field in ("subject", "predicate", "polarity")
+                    ]
+                    if all(parts):
+                        item_metadata["claim_key"] = "|".join(parts)
+                if (
+                    confidence is None
+                    and item_metadata.get("confidence") is None
+                    and first_claim.get("confidence") is not None
+                ):
+                    item_metadata["confidence"] = first_claim.get("confidence")
+                if valid_from is None and item_metadata.get("valid_from") is None:
+                    item_metadata["valid_from"] = first_claim.get("valid_from")
+                if valid_to is None and item_metadata.get("valid_to") is None:
+                    item_metadata["valid_to"] = first_claim.get("valid_to")
+                if evidence_quote is None and not item_metadata.get("evidence_quote"):
+                    item_metadata["evidence_quote"] = first_claim.get("evidence_quote")
+            item_quote = str(item_metadata.get("evidence_quote") or evidence_quote or raw_text)
+            if item_quote not in raw_text and item_quote not in str(content or ""):
+                item_quote = str(content or raw_text)
+            item_metadata["evidence_quote"] = item_quote
+            effective_scope = self._effective_scope(
+                user_id=user_id,
+                session_id=session_id,
+                workspace_id=workspace_id,
+                agent_id=agent_id,
+            )
             merged_tags = list(dict.fromkeys((tag_lists[i] or []) + extra_tags))
-            prepared.append((i, content, merged_tags, metadata))
+            prepared.append((i, content, merged_tags, item_metadata, effective_scope))
             enriched_contents.append(content)
             enriched_idx_map.append(i)
 
@@ -239,7 +673,9 @@ class MemoryClient:
             else:
                 embeddings = [self.engine.embed(t) for t in enriched_contents]
         except Exception:  # noqa: BLE001 -- embedding failure falls back per-item
-            embeddings = [self.engine.embed(t) for t in enriched_contents]
+            embeddings = [_embed_safely(self.engine, t) for t in enriched_contents]
+        if len(embeddings) != len(prepared):
+            embeddings = [_embed_safely(self.engine, t) for t in enriched_contents]
 
         # Build memories for surviving items — reuse ingest() semantics per
         # item: importance hint + auto-estimate + rule auto-replace. Each item
@@ -249,13 +685,12 @@ class MemoryClient:
         result: list[int | None]
         memories: list[Memory] = []
         mem_orig_idx: list[int] = []
-        importance_by_idx: dict[int, float] = {}
-        for (orig_idx, content, merged_tags, metadata), emb in zip(prepared, embeddings):
-            importance_hint: float | None = None
+        for (orig_idx, content, merged_tags, item_metadata, effective_scope), emb in zip(prepared, embeddings):
+            importance_hint: float | None = importance
             # Re-run enricher importance hint for this item's content (rule
             # keywords check is cheap and we already have the enriched text).
-            if self.enricher is not None and hasattr(self.enricher, "rule_keywords"):
-                hint_text = f"{metadata.get('summary') or ''} {content}".upper()
+            if importance_hint is None and enrich and self.enricher is not None and hasattr(self.enricher, "rule_keywords"):
+                hint_text = f"{item_metadata.get('summary') or ''} {content}".upper()
                 rule_keywords = (
                     s.strip().upper()
                     for s in str(self.enricher.rule_keywords).split(",")
@@ -263,13 +698,34 @@ class MemoryClient:
                 )
                 if any(kw in hint_text for kw in rule_keywords):
                     importance_hint = float(self.enricher.rule_importance)  # type: ignore[attr-defined]
+            try:
+                confidence_value = float(
+                    confidence if confidence is not None else item_metadata.get("confidence", 1.0)
+                )
+            except (TypeError, ValueError):
+                confidence_value = 0.0
+            confidence_value = max(0.0, min(1.0, confidence_value))
             m = Memory(
                 content=content,
-                metadata=metadata,
+                metadata=item_metadata,
                 source=source,
                 tags=merged_tags,
                 ttl_seconds=self.settings.ttl_default_seconds,
-                embedding=emb,
+                embedding=_clean_embedding(emb),
+                user_id=effective_scope.get("user_id"),
+                session_id=effective_scope.get("session_id"),
+                workspace_id=effective_scope.get("workspace_id"),
+                agent_id=effective_scope.get("agent_id"),
+                observed_at=observed_at or item_metadata.get("observed_at") or _utc_now(),
+                valid_from=valid_from or item_metadata.get("valid_from"),
+                valid_to=valid_to or item_metadata.get("valid_to"),
+                status=normalized_status,
+                confidence=confidence_value,
+                evidence_quote=item_metadata.get("evidence_quote") or content,
+                source_id=source_id or item_metadata.get("source_id") or source,
+                claim_key=claim_key or item_metadata.get("claim_key"),
+                supersedes_id=supersedes_id,
+                content_hash=_content_hash(content),
             )
             if importance_hint is not None:
                 m.importance = float(importance_hint)
@@ -277,7 +733,6 @@ class MemoryClient:
                 from luminary_memory.lifecycle.importance import estimate_importance
 
                 m.importance = estimate_importance(m)
-            importance_by_idx[orig_idx] = float(m.importance)
             memories.append(m)
             mem_orig_idx.append(orig_idx)
 
@@ -285,6 +740,55 @@ class MemoryClient:
         to_insert: list[Memory] = []
         to_insert_idx: list[int] = []
         for mem, orig_idx in zip(memories, mem_orig_idx):
+            duplicate = self._find_exact_duplicate(mem.content_hash, {
+                key: value
+                for key, value in {
+                    "user_id": mem.user_id,
+                    "session_id": mem.session_id,
+                    "workspace_id": mem.workspace_id,
+                    "agent_id": mem.agent_id,
+                }.items()
+                if value is not None
+            })
+            if duplicate is not None:
+                self._record_event("duplicate_suppressed", duplicate.id, before=duplicate, after=mem)
+                result[orig_idx] = duplicate.id
+                continue
+            if mem.claim_key:
+                finder = getattr(self.backend, "find_by_claim_key", None)
+                mem_scope = {
+                    key: value
+                    for key, value in {
+                        "user_id": mem.user_id,
+                        "session_id": mem.session_id,
+                        "workspace_id": mem.workspace_id,
+                        "agent_id": mem.agent_id,
+                    }.items()
+                    if value is not None
+                }
+                try:
+                    existing_claims = finder(mem.claim_key, scope=mem_scope) if finder else []
+                except Exception:
+                    logger.debug("batch claim lookup failed", exc_info=True)
+                    existing_claims = []
+                for existing in existing_claims:
+                    if existing.status not in {"active", "conflicted"}:
+                        continue
+                    if mem.supersedes_id is not None:
+                        before = self.backend.get(existing.id)
+                        existing.status = "superseded"
+                        existing.valid_to = existing.valid_to or _utc_now()
+                        self.backend.update(existing)
+                        self._sync_claim_status(existing.id, "superseded", existing.valid_to)
+                        self._record_event("supersede", existing.id, before=before, after=existing)
+                    elif existing.content_hash != mem.content_hash:
+                        mem.status = "conflicted"
+                        if existing.status == "active":
+                            before = self.backend.get(existing.id)
+                            existing.status = "conflicted"
+                            self.backend.update(existing)
+                            self._sync_claim_status(existing.id, "conflicted")
+                            self._record_event("conflict", existing.id, before=before, after=existing)
             content = mem.content
             is_rule = any(
                 kw.strip().upper() in content.upper()
@@ -306,25 +810,174 @@ class MemoryClient:
             ids = self.backend.add_many(to_insert)  # type: ignore[attr-defined]
             for mem, mid, orig_idx in zip(to_insert, ids, to_insert_idx):
                 mem.id = mid
+                self._record_event("ingest", mid, after=mem)
+                self._record_episode_and_claims(
+                    mem,
+                    str(mem.metadata.get("evidence_quote") or mem.content),
+                    list(mem.metadata.get("claims") or []),
+                )
+                self._record_evidence(mem, extractor="batch")
                 _try_index_graph(self.backend, mem)
                 result[orig_idx] = mid
         return result
 
-    def get(self, id: int) -> Memory | None:
-        return self.backend.get(id)
+    def get(self, id: int, scope: dict | None = None) -> Memory | None:
+        memory = self.backend.get(id)
+        effective_scope = normalize_scope(scope or self.scope)
+        if memory is not None and effective_scope and not memory_matches_scope(
+            memory,
+            effective_scope,
+            include_global=bool(getattr(self.settings, "scope_include_global", True)),
+            active_only=False,
+        ):
+            return None
+        return memory
+
+    def supersede(
+        self,
+        memory_id: int,
+        content: str,
+        *,
+        evidence_quote: str | None = None,
+        observed_at: str | None = None,
+        valid_from: str | None = None,
+        valid_to: str | None = None,
+        source: str | None = None,
+        source_id: str | None = None,
+        metadata: dict | None = None,
+        tags: list[str] | None = None,
+    ) -> int | None:
+        """Create a new version of a claim while preserving the old row."""
+        previous = self.get(memory_id)
+        if previous is None:
+            raise ValueError(f"memory {memory_id} does not exist in this scope")
+        if not previous.claim_key:
+            raise ValueError("supersede requires the previous memory to have a claim_key")
+        return self.ingest(
+            content,
+            tags=list(tags if tags is not None else previous.tags),
+            source=source if source is not None else previous.source,
+            metadata=dict(metadata or previous.metadata),
+            enrich=False,
+            importance=previous.importance,
+            user_id=previous.user_id,
+            session_id=previous.session_id,
+            workspace_id=previous.workspace_id,
+            agent_id=previous.agent_id,
+            observed_at=observed_at,
+            valid_from=valid_from,
+            valid_to=valid_to,
+            evidence_quote=evidence_quote or content,
+            source_id=source_id or previous.source_id,
+            claim_key=previous.claim_key,
+            supersedes_id=memory_id,
+        )
+
+    def resolve_conflict(
+        self,
+        memory_id: int,
+        *,
+        status: str = "active",
+        evidence_quote: str | None = None,
+        source_id: str | None = None,
+    ) -> None:
+        """Explicitly resolve a conflicted claim; never silently merge it."""
+        if status not in {"active", "conflicted", "superseded", "expired"}:
+            raise ValueError("invalid conflict resolution status")
+        memory = self.get(memory_id)
+        if memory is None:
+            raise ValueError(f"memory {memory_id} does not exist in this scope")
+        before = self.backend.get(memory_id)
+        memory.status = status
+        if evidence_quote:
+            memory.evidence_quote = evidence_quote
+        if source_id:
+            memory.source_id = source_id
+        self.update(memory)
+        self._sync_claim_status(memory_id, status)
+        self._record_event("resolve_conflict", memory_id, before=before, after=memory)
+
+    def retract(self, memory_id: int, *, reason: str | None = None) -> None:
+        """Soft-delete a claim while retaining the row and audit history."""
+        memory = self.get(memory_id)
+        if memory is None:
+            raise ValueError(f"memory {memory_id} does not exist in this scope")
+        before = self.backend.get(memory_id)
+        memory.status = "deleted"
+        if reason:
+            memory.metadata = dict(memory.metadata or {})
+            memory.metadata["retraction_reason"] = reason
+        self.update(memory)
+        self._record_event("retract", memory_id, before=before, after=memory)
 
     def update(self, memory: Memory) -> None:
-        """Update an existing memory in place (auto-bumps ``updated_at``)."""
-        from datetime import UTC, datetime
-
-        memory.updated_at = datetime.now(UTC).isoformat()
+        """Update a memory and keep every derived index/provenance in sync."""
+        if memory.id is None:
+            raise ValueError("cannot update a memory without an id")
+        before = self.backend.get(memory.id)
+        if before is None:
+            raise ValueError(f"memory {memory.id} does not exist")
+        if self.scope and not memory_matches_scope(
+            before,
+            self.scope,
+            include_global=bool(getattr(self.settings, "scope_include_global", True)),
+            active_only=False,
+        ):
+            raise PermissionError("memory is outside the client's scope")
+        changed_content = before.content != memory.content
+        if changed_content:
+            memory.content = str(memory.content or "").strip()
+            if not memory.content:
+                raise ValueError("memory content cannot be empty")
+            memory.embedding = _embed_safely(self.engine, memory.content)
+            memory.content_hash = _content_hash(memory.content)
+            quote = str(memory.evidence_quote or "").strip()
+            memory.evidence_quote = quote if quote and quote in memory.content else memory.content
+            memory.needs_reindex = False
+            # Updating a row in place must not leave old structured claims
+            # attached to new content. Callers that need a new claim lineage
+            # should use supersede(); ordinary updates retire the old claim
+            # rows and clear the stale canonical key.
+            self._sync_claim_status(memory.id, "superseded", _utc_now())
+            if memory.claim_key == before.claim_key:
+                memory.claim_key = None
+                memory.metadata = dict(memory.metadata or {})
+                memory.metadata.pop("claims", None)
+        memory.updated_at = _utc_now()
+        memory.status = memory.status or "active"
+        if memory.status in {"deleted", "expired", "superseded"}:
+            self._sync_claim_status(memory.id, memory.status, _utc_now())
+        memory.confidence = max(
+            0.0,
+            min(1.0, float(memory.confidence if memory.confidence is not None else 1.0)),
+        )
+        self._record_event("update", memory.id, before=before, after=memory)
         self.backend.update(memory)
+        self._record_evidence(memory, extractor="update")
+        if changed_content or before.tags != memory.tags:
+            _try_index_graph(self.backend, memory)
 
     def delete(self, id: int) -> None:
-        """Delete a memory by id."""
+        """Delete a memory, recording the pre-delete snapshot first."""
+        before = self.backend.get(id)
+        if before is None:
+            return
+        if self.scope and not memory_matches_scope(
+            before,
+            self.scope,
+            include_global=bool(getattr(self.settings, "scope_include_global", True)),
+            active_only=False,
+        ):
+            raise PermissionError("memory is outside the client's scope")
+        self._record_event("delete", id, before=before)
         self.backend.delete(id)
 
-    def list(self, limit: int = 100, offset: int = 0) -> list[Memory]:
+    def list(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        scope: dict | None = None,
+    ) -> list[Memory]:
         """List memories, most recent first (SQL-level pagination when supported).
 
         ``limit=0`` means unlimited (return all). Negative limits raise ``ValueError``.
@@ -336,18 +989,39 @@ class MemoryClient:
         if o < 0:
             raise ValueError("offset must be >= 0")
         eff_limit: int | None = None if n == 0 else n
+        effective_scope = normalize_scope(scope or self.scope)
         recent = getattr(self.backend, "recent", None)
         if recent is not None:
-            return recent(limit=eff_limit, offset=o)
+            try:
+                return recent(
+                    limit=eff_limit,
+                    offset=o,
+                    scope=effective_scope,
+                    include_global=bool(getattr(self.settings, "scope_include_global", True)),
+                )
+            except TypeError:
+                return recent(limit=eff_limit, offset=o)
         # fallback for backends without SQL pagination
         from luminary_memory.recall.temporal import _parse_dt
 
-        all_mem = self.backend.all()
+        all_mem = [
+            m for m in self.backend.all()
+            if memory_matches_scope(
+                m,
+                effective_scope,
+                include_global=bool(getattr(self.settings, "scope_include_global", True)),
+            )
+        ]
         all_mem.sort(key=lambda m: (_parse_dt(m.created_at or ""), -(m.id or 0)), reverse=True)
         sliced = all_mem[o:]
         return sliced if eff_limit is None else sliced[:eff_limit]
 
-    def search(self, query: str, limit: int = 10) -> list[tuple[Memory, float]]:
+    def search(
+        self,
+        query: str,
+        limit: int = 10,
+        scope: dict | None = None,
+    ) -> list[tuple[Memory, float]]:
         """Direct keyword (FTS) search without the full recall pipeline.
 
         ``limit=0`` means unlimited; negative limits raise ``ValueError``.
@@ -359,7 +1033,17 @@ class MemoryClient:
         if not (query or "").strip():
             return []
         try:
-            return self.backend.keyword_search(query, limit=eff)
+            return self.backend.keyword_search(
+                query,
+                limit=eff,
+                scope=normalize_scope(scope or self.scope),
+                include_global=bool(getattr(self.settings, "scope_include_global", True)),
+            )
+        except TypeError:
+            try:
+                return self.backend.keyword_search(query, limit=eff)
+            except Exception:  # noqa: BLE001
+                return []
         except Exception:  # noqa: BLE001
             return []
 
@@ -367,7 +1051,7 @@ class MemoryClient:
         """Store statistics: count, oldest/newest, avg importance, tags."""
         import statistics
 
-        all_mem = self.backend.all()
+        all_mem = self.list(limit=0)
         n = len(all_mem)
         if not n:
             return {
@@ -394,12 +1078,14 @@ class MemoryClient:
         }
 
     def count(self) -> int:
+        if self.scope:
+            return len(self.list(limit=0))
         return self.backend.count()
 
     def run_lifecycle(self, semantic: bool | None = None) -> dict[str, int]:
         from luminary_memory.lifecycle.runner import run_lifecycle
 
-        return run_lifecycle(self.backend, self.settings, semantic=semantic)
+        return run_lifecycle(self.backend, self.settings, semantic=semantic, scope=self.scope)
 
     def _reestimate_accessed_importance(self, ids: list[int]) -> int:
         """Re-estimate importance for *ids* right after a recall access bump.
@@ -510,6 +1196,19 @@ class MemoryClient:
             seen += 1
             if seen >= 500:  # safety cap (matches effective list limit)
                 break
+        # Exact duplicates are now suppressed at write time.  Count the
+        # suppressed attempts as pollution pressure too, otherwise the new
+        # safe dedup path would make health look perfect after a duplicate
+        # storm simply because only one row survived.
+        try:
+            conn = getattr(self.backend, "conn", None)
+            if conn is not None:
+                suppressed = conn.execute(
+                    "SELECT COUNT(*) FROM memory_events WHERE event_type = 'duplicate_suppressed'"
+                ).fetchone()[0]
+                dup_count += min(total, int(suppressed or 0))
+        except Exception:
+            logger.debug("duplicate event count unavailable for backend", exc_info=True)
         dup_rate = dup_count / total
         dup_health = max(0.0, 100.0 * (1.0 - dup_rate * 5))  # 20% dupes → 0
 
@@ -542,8 +1241,17 @@ class MemoryClient:
             conn = getattr(self.backend, "conn", None)
             rel_count = 0
             if conn is not None:
+                from luminary_memory.scope import scope_sql
+
+                scope_where, scope_params = scope_sql(
+                    self.scope,
+                    alias="m",
+                    include_global=bool(getattr(self.settings, "scope_include_global", True)),
+                )
                 rel_count = conn.execute(
-                    "SELECT COUNT(DISTINCT source_memory_id) FROM relations"
+                    "SELECT COUNT(DISTINCT r.memory_id) FROM relations r "
+                    f"JOIN memories m ON m.id = r.memory_id WHERE {scope_where}",
+                    scope_params,
                 ).fetchone()[0]
             density_rate = rel_count / total
         except Exception:  # noqa: BLE001 -- backends without graph tables
@@ -600,7 +1308,7 @@ class MemoryClient:
         if not isinstance(actions, list):
             return {"reviewed": len(memories), "deleted": 0, "updated": 0, "error": "bad LLM response"}
 
-        deleted = updated = 0
+        deleted = updated = skipped = 0
         by_id = {m.id: m for m in memories}
         for act in actions:
             if not isinstance(act, dict):
@@ -609,36 +1317,72 @@ class MemoryClient:
             if mid not in by_id:
                 continue
             action = act.get("action")
+            if action not in {"delete", "update"}:
+                continue
+            current = by_id[mid]
+            raw_evidence = act.get("evidence_quote")
+            evidence_quote = str(raw_evidence).strip() if raw_evidence else None
+            source_id = str(act.get("source_id")).strip() if act.get("source_id") else None
+            new_content = act.get("content")
+            grounded_evidence = bool(
+                evidence_quote
+                and (
+                    evidence_quote in current.content
+                    or (isinstance(new_content, str) and evidence_quote in new_content)
+                )
+            )
+            if getattr(self.settings, "evidence_required", False):
+                is_core = any(tag in {"core", "rule"} for tag in (current.tags or []))
+                if not (grounded_evidence or source_id) or (is_core and not bool(act.get("confirmed", False))):
+                    skipped += 1
+                    continue
             if action == "delete":
                 try:
                     self.delete(int(mid))
                     deleted += 1
                 except Exception:  # noqa: BLE001, S110
                     pass
-            elif action == "update":
-                new_content = act.get("content")
-                if isinstance(new_content, str) and new_content.strip():
-                    try:
-                        m = by_id[mid]
-                        m.content = new_content.strip()
-                        self.update(m)
-                        updated += 1
-                    except Exception:  # noqa: BLE001, S110
-                        pass
-        return {"reviewed": len(memories), "deleted": deleted, "updated": updated}
+            elif action == "update" and isinstance(new_content, str) and new_content.strip():
+                try:
+                    m = current
+                    m.content = new_content.strip()
+                    if grounded_evidence:
+                        m.evidence_quote = evidence_quote
+                    if source_id:
+                        m.source_id = source_id
+                    self.update(m)
+                    updated += 1
+                except Exception:  # noqa: BLE001, S110
+                    pass
+        result = {"reviewed": len(memories), "deleted": deleted, "updated": updated}
+        if getattr(self.settings, "evidence_required", False):
+            result["skipped"] = skipped
+        return result
 
     def export(self, path, include_embeddings: bool = True) -> dict:
         """Export all memories to *path* (versioned JSON)."""
         from luminary_memory.export import export_memories
 
-        return export_memories(self.backend, path, include_embeddings=include_embeddings)
+        return export_memories(
+            self.backend,
+            path,
+            include_embeddings=include_embeddings,
+            scope=self.scope,
+            include_global=bool(getattr(self.settings, "scope_include_global", True)),
+        )
 
     def import_memories(self, path) -> dict:
         """Import memories from *path* (recomputes embeddings when absent)."""
         from luminary_memory.export import import_memories
 
         try:
-            return import_memories(self.backend, path, engine=self.engine)
+            return import_memories(
+                self.backend,
+                path,
+                engine=self.engine,
+                scope=self.scope,
+                include_global=bool(getattr(self.settings, "scope_include_global", True)),
+            )
         except Exception:
             logger.exception("import_memories failed for %s", path)
             raise
@@ -656,13 +1400,24 @@ class MemoryClient:
         if conn is None:
             return {"entities": entities, "relations": relations}
         try:
+            from luminary_memory.scope import scope_sql
+
+            graph_limit = max(0, int(limit))
+            scope_where, scope_params = scope_sql(
+                self.scope,
+                alias="m",
+                include_global=bool(getattr(self.settings, "scope_include_global", True)),
+                active_only=True,
+            )
             rows = conn.execute(
                 "SELECT e.name, COUNT(DISTINCT r.source_id) + COUNT(DISTINCT r.target_id) AS degree, "
                 "COUNT(DISTINCT r.memory_id) AS memories "
                 "FROM entities e "
                 "LEFT JOIN relations r ON r.source_id = e.id OR r.target_id = e.id "
+                f"LEFT JOIN memories m ON m.id = r.memory_id AND {scope_where} "
+                "WHERE r.id IS NULL OR m.id IS NOT NULL "
                 "GROUP BY e.id ORDER BY degree DESC LIMIT ?",
-                (int(limit),),
+                (*scope_params, graph_limit),
             ).fetchall()
             for r in rows:
                 entities.append({
@@ -673,9 +1428,10 @@ class MemoryClient:
                 "FROM relations r "
                 "JOIN entities s ON s.id = r.source_id "
                 "JOIN entities t ON t.id = r.target_id "
+                f"JOIN memories m ON m.id = r.memory_id AND {scope_where} "
                 "GROUP BY r.source_id, r.target_id "
                 "ORDER BY weight DESC LIMIT ?",
-                (int(limit),),
+                (*scope_params, graph_limit),
             ).fetchall()
             for r in rel_rows:
                 relations.append({"source": r[0], "target": r[1], "weight": float(r[2] or 0.0)})
@@ -693,18 +1449,39 @@ class MemoryClient:
         limit: int = 10,
         token_budget: int | None = None,
         tags: list[str] | None = None,
+        tag_mode: str = "any",
+        scope: dict | None = None,
+        strict: bool | None = None,
+        include_conflicted: bool = False,
     ) -> RecallResult:
+        query = str(query or "").strip()
         n_limit = int(limit)
         if n_limit < 0:
             raise ValueError("limit must be >= 0 (0 means unlimited)")
-        if n_limit == 0:
-            n_limit = None  # unlimited — backends treat None as "no limit"
+        output_limit: int | None = None if n_limit == 0 else n_limit
         from luminary_memory.recall.dedup import dedup_jaccard
         from luminary_memory.recall.fusion import reciprocal_rank_fusion
         from luminary_memory.recall.graph import graph_recall
         from luminary_memory.recall.keyword import keyword_recall
         from luminary_memory.recall.semantic import semantic_recall
         from luminary_memory.recall.temporal import temporal_recall
+
+        effective_scope = normalize_scope(scope or self.scope)
+        include_global = bool(getattr(self.settings, "scope_include_global", True))
+        strict_policy = bool(
+            getattr(self.settings, "strict_recall", False) if strict is None else strict
+        )
+        if tag_mode not in {"any", "all", "strict"}:
+            raise ValueError("tag_mode must be one of: any, all, strict")
+        if not query:
+            return RecallResult(
+                memories=[],
+                scores=[],
+                strategies_hit={},
+                status="abstain" if strict_policy else "empty",
+                reason="empty_query",
+            )
+        query_for_retrieval = _expand_query_aliases(query)
 
         budget = token_budget if token_budget is not None else self.settings.token_budget
         rrf_k = self.settings.rrf_k
@@ -713,17 +1490,53 @@ class MemoryClient:
         use_planner = bool(getattr(self.settings, "query_planner", True))
         planner_threshold = float(getattr(self.settings, "query_planner_keyword_threshold", 0.9))
 
-        eff = n_limit
+        eff = output_limit
         temporal_limit = (eff * 2) if eff is not None else None
         enabled = None
 
         strategies: list[list[tuple]] = []
         # Order matters for planner temporal guard: keyword first.
         strat_fns = [
-            ("semantic", lambda: semantic_recall(self.backend, self.engine, query, limit=eff)),
-            ("keyword", lambda: keyword_recall(self.backend, query, limit=eff)),
-            ("temporal", lambda: temporal_recall(self.backend, limit=temporal_limit)),
-            ("graph", lambda: graph_recall(self.backend, query, limit=eff)),
+            (
+                "semantic",
+                lambda: semantic_recall(
+                    self.backend,
+                    self.engine,
+                    query_for_retrieval,
+                    limit=eff,
+                    scope=effective_scope,
+                    include_global=include_global,
+                ),
+            ),
+            (
+                "keyword",
+                lambda: keyword_recall(
+                    self.backend,
+                    query_for_retrieval,
+                    limit=eff,
+                    scope=effective_scope,
+                    include_global=include_global,
+                ),
+            ),
+            (
+                "temporal",
+                lambda: temporal_recall(
+                    self.backend,
+                    limit=temporal_limit,
+                    scope=effective_scope,
+                    include_global=include_global,
+                ),
+            ),
+            (
+                "graph",
+                lambda: graph_recall(
+                    self.backend,
+                    query_for_retrieval,
+                    limit=eff,
+                    scope=effective_scope,
+                    include_global=include_global,
+                ),
+            ),
         ]
 
         # If planner is enabled, compute which strategies are active.
@@ -736,11 +1549,11 @@ class MemoryClient:
             # Run keyword in isolation
             kw_rows: list[tuple] = []
             try:
-                kw_rows = strat_map["keyword"] = keyword_recall(self.backend, query, limit=eff)
+                kw_rows = strat_map["keyword"] = strat_fns[1][1]()
             except Exception:  # noqa: BLE001
                 kw_rows = strat_map["keyword"] = []
             top_kw = float(kw_rows[0][1]) if kw_rows else None
-            enabled = _plan(query, keyword_top_score=top_kw, planner=True,
+            enabled = _plan(query_for_retrieval, keyword_top_score=top_kw, planner=True,
                             keyword_threshold=planner_threshold)
             # Run remaining strategies, skipping those disabled by planner
             for name, fn in strat_fns:
@@ -763,7 +1576,118 @@ class MemoryClient:
                 except Exception:  # noqa: BLE001
                     strategies.append([])
 
+        # Scope/tag/status filtering happens before fusion and before any
+        # fallback.  This is intentionally duplicated defensively for custom
+        # backends whose search methods do not yet understand scope.
+        allowed_ids: set[int] | None = None
+        if tags:
+            by_tags = getattr(self.backend, "by_tags", None)
+            if callable(by_tags):
+                try:
+                    allowed_ids = by_tags(
+                        list(tags),
+                        match="all" if tag_mode in {"all", "strict"} else "any",
+                        scope=effective_scope,
+                        include_global=include_global,
+                    )
+                except TypeError:
+                    allowed_ids = by_tags(list(tags))
+            else:
+                wanted = set(tags)
+                allowed_ids = {
+                    m.id
+                    for m in self.backend.all()
+                    if m.id is not None
+                    and memory_matches_scope(m, effective_scope, include_global=include_global)
+                    and (wanted <= set(m.tags or []) if tag_mode in {"all", "strict"} else wanted & set(m.tags or []))
+                }
+
+        def _is_current(memory: Memory) -> bool:
+            if memory.status != "active" and not (include_conflicted and memory.status == "conflicted"):
+                return False
+            if not memory_matches_scope(
+                memory,
+                effective_scope,
+                include_global=include_global,
+                active_only=False,
+            ):
+                return False
+            if allowed_ids is not None and memory.id not in allowed_ids:
+                return False
+            now = datetime.now(UTC)
+            if memory.valid_from:
+                try:
+                    valid_from = datetime.fromisoformat(memory.valid_from)
+                    if valid_from.tzinfo is None:
+                        valid_from = valid_from.replace(tzinfo=UTC)
+                    if valid_from.astimezone(UTC) > now:
+                        return False
+                except ValueError:
+                    pass
+            if memory.valid_to:
+                try:
+                    valid_to = datetime.fromisoformat(memory.valid_to)
+                    if valid_to.tzinfo is None:
+                        valid_to = valid_to.replace(tzinfo=UTC)
+                    if valid_to.astimezone(UTC) < now:
+                        return False
+                except ValueError:
+                    pass
+            return True
+
+        def _hydrate(memories: list[Memory]) -> list[Memory]:
+            """Turn lean backend fallback rows into complete public objects."""
+            ids = [memory.id for memory in memories if memory.id is not None]
+            get_many = getattr(self.backend, "get_many", None)
+            if not ids or get_many is None:
+                return memories
+            try:
+                full = get_many(ids)
+            except Exception:
+                logger.debug("could not hydrate fallback memories", exc_info=True)
+                return memories
+            return [full.get(memory.id, memory) for memory in memories]
+
+        filtered_strategies: list[list[tuple]] = []
+        for strat in strategies:
+            filtered_strategies.append([
+                row for row in strat if row and _is_current(row[0])
+            ])
+        strategies = filtered_strategies
+
+        # Conflict rows are intentionally excluded from normal candidate
+        # generation. An explicit diagnostic request may include them, but
+        # only after scope/tag/time checks and a direct lexical support check;
+        # this prevents unresolved claims from becoming silent answers.
+        if include_conflicted:
+            import re
+
+            query_terms = set(
+                re.findall(r"[a-z0-9][a-z0-9_./:+#@=-]*", query_for_retrieval.casefold())
+            )
+            existing_ids = {
+                memory.id
+                for strategy in strategies
+                for row in strategy
+                for memory in [row[0]]
+                if memory.id is not None
+            }
+            extras: list[tuple] = []
+            for memory in self.backend.all():
+                if memory.id in existing_ids or memory.status != "conflicted":
+                    continue
+                if not _is_current(memory) or not query_terms:
+                    continue
+                content_terms = set(
+                    re.findall(r"[a-z0-9][a-z0-9_./:+#@=-]*", memory.content.casefold())
+                )
+                overlap = len(query_terms & content_terms) / len(query_terms)
+                if overlap > 0:
+                    extras.append((memory, overlap, "keyword"))
+            strategies[1].extend(extras)
+
         id_to_mem: dict[int, Memory] = {}
+        raw_scores: dict[int, dict[str, float]] = {}
         strategies_hit: dict[str, int] = {}
         ranked_lists: list[list[int]] = []
         for strat in strategies:
@@ -773,6 +1697,8 @@ class MemoryClient:
                     continue
                 strategies_hit[label] = strategies_hit.get(label, 0) + 1
                 id_to_mem[m.id] = m
+                per_strategy = raw_scores.setdefault(m.id, {})
+                per_strategy[label] = max(float(score), per_strategy.get(label, float("-inf")))
 
         fused = reciprocal_rank_fusion(
             ranked_lists,
@@ -797,31 +1723,157 @@ class MemoryClient:
                 ]
                 scored.sort(key=lambda x: -x[1])
 
-        # Tag-scoped filter: restrict to allowed id set before fusion-derived dedup.
-        if tags:
-            by_tags = getattr(self.backend, "by_tags", None)
-            if callable(by_tags):
-                allowed = by_tags(list(tags))
-                scored = [(m, s) for m, s in scored if m.id in allowed]
-
         if not scored:
+            if strict_policy:
+                return RecallResult(
+                    memories=[],
+                    scores=[],
+                    strategies_hit=strategies_hit,
+                    status="abstain",
+                    reason="no_supported_candidate",
+                )
             imp_min = float(getattr(self.settings, "prune_min_importance", 0.2) or 0.2)
-            important = self.backend.top_by_importance(top_n=(eff or 5), min_importance=imp_min)
+            top_by = getattr(self.backend, "top_by_importance", None)
+            try:
+                important = top_by(
+                    top_n=(eff or 5),
+                    min_importance=imp_min,
+                    scope=effective_scope,
+                    include_global=include_global,
+                ) if top_by is not None else []
+            except TypeError:
+                important = top_by(top_n=(eff or 5), min_importance=imp_min) if top_by else []
+            important = _hydrate(important)
+            important = [m for m in important if _is_current(m)]
             if important:
                 return RecallResult(
                     memories=important,
                     scores=[float(getattr(m, "importance", 0.5) or 0.5) * 0.1 for m in important],
                     strategies_hit={**strategies_hit, "importance_fallback": len(important)},
+                    status="fallback",
+                    reason="importance_fallback",
                 )
-            fallback = temporal_recall(self.backend, limit=eff or 5)
+            fallback = temporal_recall(
+                self.backend,
+                limit=eff or 5,
+                scope=effective_scope,
+                include_global=include_global,
+            )
+            fallback = [row for row in fallback if _is_current(row[0])]
             fallback_pairs: list[tuple] = [(m, s * 0.1) for m, s, _label in fallback]
             if fallback_pairs:
                 return RecallResult(
                     memories=[m for m, _s in fallback_pairs],
                     scores=[s for _m, s in fallback_pairs],
                     strategies_hit={**strategies_hit, "temporal_fallback": len(fallback_pairs)},
+                    status="fallback",
+                    reason="temporal_fallback",
                 )
-            return RecallResult(memories=[], scores=[], strategies_hit=strategies_hit)
+            return RecallResult(memories=[], scores=[], strategies_hit=strategies_hit, status="empty")
+
+        def _token_set(value: str) -> set[str]:
+            import re
+
+            stop = {
+                "a", "an", "and", "are", "as", "at", "be", "does", "for", "from",
+                "how", "i", "is", "it", "of", "on", "or", "the", "to", "use", "was",
+                "what", "when", "where", "which", "who", "will", "with", "you", "your",
+                "go", "live", "now", "current", "used", "something", "else", "variant",
+                "judging", "happen", "deployment", "destination",
+            }
+            tokens = re.findall(r"[a-z0-9][a-z0-9_./:+#@=-]*", (value or "").casefold())
+            return {token for token in tokens if token not in stop and len(token) >= 2}
+
+        query_tokens = _token_set(query_for_retrieval)
+
+        def _signal_confidence(memory: Memory) -> float:
+            signals = raw_scores.get(memory.id or -1, {})
+            semantic_score = float(signals.get("semantic", 0.0))
+            # Constant/degenerate vectors are common in test doubles and do
+            # not constitute semantic evidence.
+            emb = memory.embedding or []
+            if len(emb) < 16 or (emb and len({round(float(v), 7) for v in emb[:16]}) <= 1):
+                semantic_score = 0.0
+            semantic_score = max(0.0, min(1.0, semantic_score))
+            keyword_score = max(0.0, min(1.0, float(signals.get("keyword", 0.0))))
+            lexical = 0.0
+            content_tokens = _token_set(memory.content)
+            if query_tokens:
+                lexical = len(query_tokens & content_tokens) / len(query_tokens)
+            identifier_tokens = {
+                token for token in query_tokens if any(char in token for char in "+-/:.@=#")
+            }
+            identifier_hit = any(
+                token in memory.content.casefold() for token in identifier_tokens
+            )
+            # One generic-token FTS hit is not enough to support a fact. Treat
+            # keyword/semantic signals as strong only with meaningful lexical
+            # coverage, unless dense similarity is very high. This is the
+            # abstention guard for "office WiFi password" when the store only
+            # knows an office coffee machine.
+            if lexical < 0.5:
+                keyword_score = 0.0
+                if semantic_score < 0.78:
+                    semantic_score = 0.0
+            if identifier_hit:
+                lexical = max(lexical, 0.85)
+            strategy_bonus = min(1.0, max(0, len(signals) - 1) / 2.0)
+            support = max(semantic_score, keyword_score, lexical)
+            base = (
+                0.75 * (support * support)
+                + 0.10 * strategy_bonus
+                + 0.15 * float(
+                    memory.confidence if memory.confidence is not None else 1.0
+                )
+            )
+            return max(0.0, min(1.0, base))
+
+        confidence_by_id = {m.id: _signal_confidence(m) for m, _ in scored if m.id is not None}
+        scored.sort(key=lambda pair: confidence_by_id.get(pair[0].id, 0.0), reverse=True)
+        top_confidence = confidence_by_id.get(scored[0][0].id, 0.0) if scored else 0.0
+        if strict_policy:
+            min_conf = float(getattr(self.settings, "abstention_min_confidence", 0.34))
+            min_margin = float(getattr(self.settings, "abstention_min_margin", 0.04))
+            candidate_floor = max(min_conf, top_confidence * 0.55)
+            scored = [
+                (memory, score)
+                for memory, score in scored
+                if confidence_by_id.get(memory.id, 0.0) >= candidate_floor
+            ]
+            if not scored:
+                return RecallResult(
+                    memories=[],
+                    scores=[],
+                    strategies_hit=strategies_hit,
+                    status="abstain",
+                    reason="low_confidence_or_ambiguous",
+                    confidence=top_confidence,
+                )
+            scored.sort(key=lambda pair: confidence_by_id.get(pair[0].id, 0.0), reverse=True)
+            top_confidence = confidence_by_id.get(scored[0][0].id, 0.0)
+            second_confidence = confidence_by_id.get(scored[1][0].id, 0.0) if len(scored) > 1 else 0.0
+            if top_confidence < min_conf or (
+                top_confidence < 0.6 and top_confidence - second_confidence < min_margin
+            ):
+                return RecallResult(
+                    memories=[],
+                    scores=[],
+                    strategies_hit=strategies_hit,
+                    status="abstain",
+                    reason="low_confidence_or_ambiguous",
+                    confidence=top_confidence,
+                )
+            if getattr(self.settings, "evidence_required", False):
+                scored = [(m, s) for m, s in scored if (m.evidence_quote or m.source or m.source_id)]
+                if not scored:
+                    return RecallResult(
+                        memories=[],
+                        scores=[],
+                        strategies_hit=strategies_hit,
+                        status="abstain",
+                        reason="missing_evidence",
+                        confidence=top_confidence,
+                    )
 
         # Adaptive relevance cutoff (cliff detection): walk the fused scores
         # from the top and cut at the first steep drop (>= cliff_threshold,
@@ -830,13 +1882,14 @@ class MemoryClient:
         # instead of always padding to the limit with weak matches, while a
         # dense relevant store keeps everything above the cliff (no
         # over-filtering).
-        if scored and n_limit is not None:
+        if scored and output_limit is not None:
             from itertools import pairwise
 
             keep = [scored[0]]
             for prev, cur in pairwise(scored):
-                prev_s = prev[1]
-                if prev_s > 0 and (prev_s - cur[1]) / prev_s >= cliff_threshold:
+                prev_s = confidence_by_id.get(prev[0].id, prev[1])
+                cur_s = confidence_by_id.get(cur[0].id, cur[1])
+                if prev_s > 0 and (prev_s - cur_s) / prev_s >= cliff_threshold:
                     break
                 keep.append(cur)
             scored = keep
@@ -856,14 +1909,12 @@ class MemoryClient:
             pass
 
         id_to_fused = dict(fused)
-        final_scores = [float(id_to_fused.get(m.id, 0.0)) for m in memories_ordered]
-
-        from datetime import UTC, datetime
+        final_scores = [float(confidence_by_id.get(m.id, id_to_fused.get(m.id, 0.0))) for m in memories_ordered]
 
         # Mark recalled memories as accessed (batched — one UPDATE statement
         # instead of N per-row updates per turn).
         touch = getattr(self.backend, "touch_memories", None)
-        touched_ids = [m.id for m in memories_ordered[:n_limit] if m.id is not None]
+        touched_ids = [m.id for m in memories_ordered[:output_limit] if m.id is not None]
         if touch is not None and touched_ids:
             try:
                 touch(touched_ids)
@@ -880,14 +1931,32 @@ class MemoryClient:
                 except Exception:  # noqa: BLE001, S110 -- best-effort, never break recall
                     pass
         else:
-            for m in memories_ordered[:n_limit]:
+            for m in memories_ordered[:output_limit]:
                 m.access_count += 1
                 m.last_accessed_at = datetime.now(UTC).isoformat()
                 self.backend.update(m)
 
         trimmed = {k: v for k, v in strategies_hit.items() if v}
+        selected = memories_ordered[:output_limit]
+        provenance = [
+            {
+                "memory_id": m.id,
+                "source": m.source,
+                "source_id": m.source_id,
+                "evidence_quote": m.evidence_quote,
+                "observed_at": m.observed_at,
+                "valid_from": m.valid_from,
+                "valid_to": m.valid_to,
+                "confidence": float(confidence_by_id.get(m.id, m.confidence)),
+                "status": m.status,
+            }
+            for m in selected
+        ]
         return RecallResult(
-            memories=memories_ordered[:n_limit],
-            scores=final_scores[:n_limit],
+            memories=selected,
+            scores=final_scores[:output_limit],
             strategies_hit=trimmed,
+            status="ok",
+            confidence=top_confidence,
+            provenance=provenance,
         )

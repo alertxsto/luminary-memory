@@ -74,7 +74,7 @@ Controls how stored memories are matched and ranked against a query.
 | `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | `0.85` | Near-duplicates (token-overlap Jaccard ≥ this) are removed before ranking. Lower = more aggressive dedup. |
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` | Hard cap on total tokens injected by a recall, so memory never overflows the agent context. |
 | `importance_recall_boost` | `LUMINARY_IMPORTANCE_RECALL_BOOST` | `1.0` | Ranking multiplier applied to memories at importance ≥ 0.8, so durable rules surface before chit-chat in recall. |
-| `recall_min_score` | `LUMINARY_RECALL_MIN_SCORE` | `0.0` | Score floor for recall results; memory below this is dropped (0 = off). Never empties recall (keeps top-1). |
+| `recall_min_score` | `LUMINARY_RECALL_MIN_SCORE` | `0.0` | Score floor for recall results; memory below this is dropped (0 = off). Provider/CLI may return an empty result when no evidence survives. |
 | `query_planner` | `LUMINARY_QUERY_PLANNER` | `true` | Route the query among strategies (skip semantic if low confidence, etc.). |
 | `query_planner_keyword_threshold` | `LUMINARY_QUERY_PLANNER_KEYWORD_THRESHOLD` | `0.9` | Score above which a keyword match is trusted so the planner skips semantic/graph passes. |
 
@@ -86,6 +86,39 @@ Controls how stored memories are matched and ranked against a query.
 > memory into the system prompt as rules that could override a live user
 > instruction. Durable rules that must always be present belong in **core
 > memory** (below).
+
+## Accuracy and isolation safety
+
+| Field | Env var | Default | Meaning |
+|-------|-----------|---------|---------|
+| `strict_recall` | `LUMINARY_STRICT_RECALL` | `false` for legacy library clients | Enables abstention when support is weak or ambiguous. Hermes and CLI enable it explicitly. |
+| `scope_include_global` | `LUMINARY_SCOPE_INCLUDE_GLOBAL` | `true` | Allows intentionally global rows to remain visible to a scoped caller; set `false` for strict tenant isolation. |
+| `abstention_min_confidence` | `LUMINARY_ABSTENTION_MIN_CONFIDENCE` | `0.34` | Minimum conservative confidence for strict recall. |
+| `abstention_min_margin` | `LUMINARY_ABSTENTION_MIN_MARGIN` | `0.04` | Minimum top-vs-second margin for ambiguous strict results. |
+| `evidence_required` | `LUMINARY_EVIDENCE_REQUIRED` | `false` for legacy library clients | Requires evidence/source provenance for strict results and maintenance mutations. Hermes and CLI enable it explicitly. |
+
+Provider and CLI also disable destructive semantic rule replacement. Direct
+library clients retain the historical default for compatibility; use
+`rule_auto_replace=False` when correctness is more important than legacy
+behavior.
+
+## Runtime scope identity
+
+Scope is an API/provider concern rather than a `Settings` field. The library
+accepts a `scope` mapping or explicit ownership arguments on ingest; the CLI
+reads these environment variables for the current process:
+
+| Environment variable | Memory field |
+|---|---|
+| `LUMINARY_USER_ID` | `user_id` |
+| `LUMINARY_WORKSPACE_ID` | `workspace_id` |
+| `LUMINARY_AGENT_ID` | `agent_id` |
+| `LUMINARY_SESSION_ID` | `session_id` |
+
+Each configured identity is applied before semantic, keyword, graph, temporal,
+tag, and fallback candidate generation. `scope_include_global=true` keeps
+legacy rows with `NULL` ownership visible during migration; set it to `false`
+for strict tenant isolation.
 
 ## Core memory (DB-backed, auto-loaded system prompt)
 
@@ -133,7 +166,7 @@ Turn a surfaced instruction into a pinned, non-contradictory rule.
 |-------|---------|---------|---------|
 | `rule_keywords` | `LUMINARY_RULE_KEYWORDS` | `NEVER,ALWAYS,MUST,...` | Comma-separated imperative markers that indicate a rule (`NEVER`, `ALWAYS`, `MUST`, `FORBIDDEN`, ...). |
 | `rule_importance` | `LUMINARY_RULE_IMPORTANCE` | `0.9` | Importance assigned to a detected rule (≥ 0.9 = pinned, exempt from prune/consolidate). |
-| `rule_auto_replace` | `LUMINARY_RULE_AUTO_REPLACE` | `true` | Replace an existing rule semantically similar to a new one instead of stacking conflicting rows. |
+| `rule_auto_replace` | `LUMINARY_RULE_AUTO_REPLACE` | `true` (legacy library default) | Replace an existing rule semantically similar to a new one instead of stacking conflicting rows. Hermes/CLI set this to `false` so claim conflicts remain auditable. |
 | `rule_auto_replace_threshold` | `LUMINARY_RULE_AUTO_REPLACE_THRESHOLD` | `0.85` | Embedding-cosine similarity at which a new rule replaces the old one. |
 
 **Note on rule detection scope:** with `ingest_llm` enabled, rule keywords are
@@ -175,9 +208,9 @@ forward-compatible. This is what the dashboard (`Settings → Memory`) and
 | `core_tag` | `core` | Tag marking DB-backed core memories. | ✅ |
 | `core_top_n` | `12` | Max core memories injected into the system prompt. | ✅ |
 | `core_budget` | `8000` | Max characters of core memory injected. | ✅ |
-| `extract_on_session_end` | `false` | Run extraction at session end. | ✅ |
+| `extract_on_session_end` | `false` | Compatibility/dashboard flag reserved for session-end extraction integrations; normal provider retention is already flushed at session end. | ✅ |
 | `importance_recall_boost` | `1.0` | Ranking multiplier for memories at importance ≥ 0.8 — durable rules surface first in recall. | ✅ |
-| `recall_min_score` | `0.0` | Score floor for recall results (0 = off, keeps top-1). | ✅ |
+| `recall_min_score` | `0.0` | Score floor for recall results (0 = off; weak results may be empty). | ✅ |
 
 ---
 

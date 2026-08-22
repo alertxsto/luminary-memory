@@ -134,6 +134,21 @@ def test_scan_embeddings_matrix_shape(tmp_path):
     assert mat.dtype.name == "float32"
 
 
+def test_scan_embeddings_ignores_corrupt_and_mixed_dimensions(tmp_path):
+    b = _mk(tmp_path)
+    good_id = b.add(Memory(content="good", embedding=[1.0, 0.0, 0.0]))
+    b.add(Memory(content="old model", embedding=[1.0, 0.0]))
+    b.conn.execute(
+        "INSERT INTO memories (content, embedding) VALUES (?, ?)",
+        ("corrupt", b"not-a-float32-vector"),
+    )
+    b.conn.commit()
+
+    ids, matrix = b.scan_embeddings_matrix()
+    assert ids == [good_id]
+    assert matrix.shape == (1, 3)
+
+
 def test_by_tag_top_returns_core_memories_by_importance(tmp_path):
     b = _mk(tmp_path)
     b.add(Memory(content="rule tabel wajib", tags=["core"], importance=0.9))

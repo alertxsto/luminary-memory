@@ -27,6 +27,10 @@
   is a linear scan). WAL mode is not currently enabled; each thread uses its
   own connection, so concurrent readers/writers do not block on the same
   in-process connection.
+- Accuracy filters (`scope`, `status`, validity windows, and tags) are applied
+  in backend queries where supported and defensively again in the orchestrator
+  before fusion/fallback. Scope-aware indexes cover ownership, status, claim
+  keys, and content hashes.
 
 ## pgvector
 
@@ -34,6 +38,8 @@
 - Keyword search via `ILIKE` with `ESCAPE` handling.
 - Vector search via the `<=>` cosine distance operator (HNSW-ready).
 - Best for scale and concurrent access.
+- The same ownership, status, evidence, claim, and supersession fields are
+  stored so switching backends does not change the public accuracy contract.
 - Integration tests run against a real Postgres service in CI
   (`.github/workflows/ci.yml`); run them locally with `LUMINARY_PG_DSN`
   (see [CONTRIBUTING.md](../CONTRIBUTING.md)).

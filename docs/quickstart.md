@@ -21,10 +21,16 @@ from luminary_memory import MemoryClient
 client = MemoryClient(db_path="memory.db")
 
 # 1. store a fact
-client.ingest("The deploy target is the staging cluster", tags=["deploy"])
+memory_id = client.ingest(
+    "The deploy target is the staging cluster",
+    tags=["deploy"],
+    source="quickstart",
+    evidence_quote="The deploy target is the staging cluster",
+)
 
 # 2. recall context
 result = client.recall("where do we deploy?", limit=5)
+print(result.status, result.confidence)
 for memory, score in zip(result.memories, result.scores):
     print(f"{score:.3f}  {memory.content}")
 
@@ -49,6 +55,7 @@ client.close()
 ```bash
 luminary-memory add "The deploy target is the staging cluster" --tags deploy
 luminary-memory recall "where do we deploy?" --json
+luminary-memory activity --limit 5
 luminary-memory stats
 luminary-memory health
 ```
@@ -95,8 +102,24 @@ pip install "luminary-memory[hermes]"
 ```
 
 Any OpenAI-compatible endpoint works. `auto_maintain` reviews the store at
-session end, keeping current facts, updating changed ones, deleting stale or
-duplicate memories.
+session end, keeping current facts and updating/deleting stale or duplicate
+memories. If the provider's curation call fails or produces no durable summary,
+the turn is dropped instead of saving a raw transcript.
+
+## Accuracy-first provider defaults
+
+Hermes and the CLI enable strict recall, require evidence/provenance, and
+disable destructive rule replacement. An unrelated query therefore returns an
+explicit abstention instead of a plausible-looking top result:
+
+```json
+{
+  "status": "abstain",
+  "reason": "no_supported_candidate",
+  "memories": [],
+  "provenance": []
+}
+```
 
 ## Configuration
 
@@ -113,5 +136,14 @@ All settings accept a `LUMINARY_*` env var:
 | `rule_auto_replace` | `LUMINARY_RULE_AUTO_REPLACE` | `true` |
 | `rule_auto_replace_threshold` | `LUMINARY_RULE_AUTO_REPLACE_THRESHOLD` | `0.85` |
 | `rule_importance` | `LUMINARY_RULE_IMPORTANCE` | `0.9` |
+
+Scope can be supplied without putting identity values in shell history:
+
+```bash
+export LUMINARY_USER_ID=u1
+export LUMINARY_WORKSPACE_ID=luminary
+export LUMINARY_AGENT_ID=coding-agent
+export LUMINARY_SESSION_ID=session-42
+```
 
 See the [README](../README.md) for the full table.

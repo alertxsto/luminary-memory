@@ -15,7 +15,8 @@ metadata:
 **luminary-memory** is a self-hosted memory layer that plugs into Hermes as a
 first-class memory provider. It gives agents durable cross-session memory:
 auto-recall relevant context every turn, auto-save completed turns, and
-explicit tools for on-demand memory access, all local, zero LLM tokens.
+explicit tools for on-demand memory access. Retrieval is local and uses zero
+LLM tokens; optional write-time curation/maintenance can use an LLM.
 
 **What your agent remembers is what it becomes.**
 
@@ -35,7 +36,7 @@ explicit tools for on-demand memory access, all local, zero LLM tokens.
 | Path | When | Trigger |
 |------|------|---------|
 | **Auto-recall** | Every turn | `memory.provider: luminary`, background recall injected into context (🌙 indicator) |
-| **Auto-retain** | After each turn | provider saves `User: ... / Assistant: ...` to the store |
+| **Auto-retain** | After each turn | provider queues a scoped write; optional curation stores a concise summary |
 | **Explicit tools** | On demand | `luminary_recall` / `luminary_ingest` / `luminary_list` |
 
 ## Agent Usage, Explicit Tools
@@ -139,7 +140,7 @@ Core content comes **only** from the DB (`by_tag_top`), never from recall. Core
 is injected as a reference that is subordinate to the user's current explicit
 instruction.
 
-**Adaptive memory (v0.2.15):** three behaviors keep the store "smart":
+**Adaptive memory (v0.2.15+):** three behaviors keep the store "smart":
 - **Importance on recall** — a memory that keeps getting recalled is
   re-estimated immediately, so it ranks higher in the next turn's query recall;
   pinned rules (≥ 0.9) never downgrade.
@@ -155,6 +156,10 @@ acknowledgements are dropped, and kept turns are stored as concise factual
 summaries (e.g. `"Deploy target is the staging cluster."`) instead of raw
 `User: ... / Assistant: ...` transcripts. Without it (default), turns are
 stored verbatim with zero LLM cost.
+
+If curation is enabled in the Hermes provider but the enricher fails or returns
+no durable summary, that turn is dropped rather than stored as a raw transcript.
+This keeps the provider's write path conservative.
 
 Example, save less often, no indicators:
 
@@ -174,6 +179,18 @@ Example, save less often, no indicators:
 | `LUMINARY_EMBEDDING_MODEL` | ONNX model (default `BAAI/bge-small-en-v1.5`) |
 | `LUMINARY_HOOK_CHAT_ID` | Chat for the activity hook (defaults to home channel) |
 | `LUMINARY_DB_PATH` | Override store location (hook) |
+
+## Scope and accuracy behavior
+
+Hermes binds provider writes/reads to the available user, workspace, agent, and
+session identity. Scope is applied before candidate generation and fallback.
+Provider recall is strict and evidence-required: weak or ambiguous queries may
+return an abstention instead of an unrelated memory. Results expose status,
+confidence, evidence quote, source, and provenance.
+
+The `luminary-activity` Telegram hook is write-only activity telemetry: it
+reports committed rows after `agent:end`, escapes Markdown, supports topic
+threads, and retries pending IDs when Telegram delivery fails.
 
 ## Transparency Log
 
@@ -236,7 +253,7 @@ bash ~/.hermes/scripts/restart-bots.sh
 ### Manual
 
 ```bash
-pip install "luminary-memory[hermes]>=0.2.15"
+pip install "luminary-memory[hermes]>=0.2.18"
 # config.yaml → memory: provider: luminary
 mkdir -p ~/.hermes/hooks/luminary-activity
 cp hermes/hooks/luminary-activity/*.py hermes/hooks/luminary-activity/HOOK.yaml ~/.hermes/hooks/luminary-activity/

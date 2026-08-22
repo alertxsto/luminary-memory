@@ -1,7 +1,8 @@
 # Benchmark Results — luminary-memory
 
-> Reproducible numbers for the Hermes memory provider.
-> Harness: `benchmarks/run_benchmarks.py` · Synthetic dataset, deterministic fake embedding engine (pipeline latency only, 0 LLM tokens).
+> Historical pipeline-smoke numbers plus the current controlled gold-set run.
+> These results do not by themselves establish superiority over Mem0,
+> Hindsight, or another provider.
 
 ## Latest run (2026-08-18, v0.2.15)
 
@@ -14,9 +15,8 @@ python benchmarks/run_benchmarks.py --n 5000 --backend sqlite --report /tmp/benc
 | Memories | 5,000 |
 | Ingest (5k, batch) | 2.1 s (~2,400 mem/s) |
 | Recall e2e p50 | **76.9 ms** (p95 76.9, mean 78.2) |
-| Quality — MRR | **1.0** on all queries |
-| Quality — recall@5 / recall@10 | 0.25 / 0.5 (see table below) |
-| Persistent context build (per turn) | **4 ms** (measured, warm) |
+| Quality | See the independent gold-set run below |
+| Legacy persistent-context build (historical) | **4 ms** (measured, warm) |
 | Rule auto-replace scan (vectorized) | **31 ms** (measured, warm) |
 | Temporal recall (limit 20) | **28 ms** (measured, warm) |
 
@@ -39,7 +39,11 @@ Measured by `run_benchmarks.py` (fake engine, pipeline only — no ONNX load):
 For reference, the same workload at 1k memories: e2e recall **8.7 ms** p50,
 ingest 0.4 s.
 
-## Quality (recall@k / MRR against keyword-top-20 relevance)
+## Historical synthetic quality (circular legacy proxy)
+
+The following table is retained for historical comparability only. Its labels
+were derived from keyword results on the same implementation, so it must not be
+read as an independent accuracy score.
 
 | Query | recall@5 | recall@10 | MRR |
 |-------|----------|-----------|-----|
@@ -52,18 +56,45 @@ because the synthetic dataset is 5k near-identical rows (`id:N` noise), so the
 top-20 keyword-relevant set is large and sparse — the numbers are not
 representative of a real store.
 
-## Per-turn bookkeeping (Hermes provider, measured at 5k)
+## Historical per-turn bookkeeping (legacy Hermes provider, measured at 5k)
 
 | Operation | Measured | Why it matters |
 |-----------|----------|----------------|
-| Persistent context (top-8 by importance) | **4 ms** | Runs every turn; lean scan reads only id/content/importance/access_count, no embedding decode |
+| Legacy persistent context (top-8 by importance) | **4 ms** | Historical only; the v0.2.18 provider no longer injects this tier |
 | Rule auto-replace scan | **31 ms** | One matmul over stored embeddings instead of N Python cosines |
 | Access bookkeeping (`touch_memories`) | batched | One `UPDATE ... WHERE id IN (...)` instead of N writes |
 | Temporal recall | **28 ms** | Batch top-id fetch (`get_many`), no N+1 |
 
+## Independent gold-set run
+
+Command:
+
+```bash
+python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-gold.json
+```
+
+The gold arm uses `benchmarks/gold_micro.jsonl`, which contains fixed relevant
+claims and no-answer cases authored outside the retriever. The latest controlled
+run reported:
+
+| Metric | Result |
+|--------|--------|
+| Gold cases | 12 (10 answer, 2 no-answer) |
+| Recall@10 | 0.95 |
+| MRR | 1.00 |
+| Precision@10 | 1.00 |
+| Abstention accuracy | 1.00 |
+| Unsupported answer rate | 0.00 |
+| Evidence support precision | 1.00 |
+| Cross-scope leakage | 0 |
+
+This is a regression signal for the controlled fixture, not a competitor
+ranking. The next accuracy milestone is a matched LongMemEval/competitor
+adapter with identical embedding, extraction, context, and answer settings.
+
 ## Accuracy is preserved
 
-Every optimization in v0.2.12 (vectorized auto-replace, lean persistent-context
+Every optimization in v0.2.12 (vectorized auto-replace, lean legacy persistent-context
 scan, batched access/lifecycle/temporal) was verified against the
 pre-optimization baseline: the quality metrics (recall@5, recall@10, MRR) are
 **identical** for the same store and queries. Speed did not cost accuracy.
@@ -81,27 +112,17 @@ pre-optimization baseline: the quality metrics (recall@5, recall@10, MRR) are
 9. **`temporal_scan()`** — temporal recall fetches only `(id, created_at, access_count)`, no JSON/embedding parse.
 10. **Relation cap (8/memory) + indexes** — dense graph (280k rows) → sparse (80k), storage 3.5× smaller.
 
-## Competitive positioning
+## Comparison caveat
 
-Third-party figures from [Hamza Shabbir's 2026 benchmark](https://hamzashabbir.dev/article/agent-memory-mem0-vs-letta-vs-zep-vs-langmem-benchmark-2026)
-(same workload, same machine, LLM-based extraction for all four) and [NiteAgent 2026 comparison](https://niteagent.com/blog/ai-agent-memory-comparison-2026/).
+Latency and cost smoke numbers are useful engineering signals, but they are not
+accuracy evidence. Third-party comparison figures use different datasets,
+models, prompts, and extraction policies, so they are not apples-to-apples.
+Luminary should only claim a quality lead after a reproducible matched run.
 
-| Tool | Recall latency | LLM tokens / turn | Memory / infra | Self-host |
-|------|---------------|-------------------|----------------|-----------|
-| **luminary-memory** | **~77 ms @ 5k** | **0** | SQLite + local ONNX | ✅ native |
-| Mem0 | ~120 ms | ~280 | Qdrant + LLM API | ⚠️ graph paywalled ($249/mo) |
-| LangMem | ~140 ms | ~240 | LangGraph SDK | ✅ library |
-| Zep | ~310 ms | ~620 | Temporal graph + GraphDB | ⚠️ GraphDB needed |
-| Letta | ~520 ms | ~900 | Agent runtime (heavy) | ✅ OSS |
-
-### Why luminary wins on cost
-
-- **Zero LLM tokens per turn** — fact extraction is local (whitelist + ONNX embeddings), unlike every competitor above which calls an LLM on every `add()`.
-- **No vector DB / GraphDB dependency** — SQLite FTS5 + local ONNX; optional pgvector for scale.
-- **Graph included, not paywalled** — co-occurrence entity graph is free and local (Mem0 gates graph behind $249/mo Pro).
-
-### Honest caveats
+### Current caveats
 
 - Latency above is pipeline-only (deterministic fake embedding). With real `fastembed` ONNX models, end-to-end recall at 5k is higher (the ONNX model load is a one-time cost on first recall; embedding compute adds ~30-50 ms per query). Numbers above isolate the retrieval pipeline.
-- Competitor numbers are third-party and use LLM extraction, so their token/latency figures are not directly apples-to-apples — that is exactly the point: they *require* an LLM, luminary does not.
-- Hindsight `local_embedded` reference arm is documented but optional (multi-hundred-MB install) — see `benchmarks/README.md`.
+- Competitor numbers are not included as evidence here because they are not
+  measured under the same protocol.
+- Hindsight `local_embedded` reference arm is documented but optional; it is a
+  resource comparison, not an accuracy verdict.

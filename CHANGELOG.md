@@ -14,6 +14,10 @@
   explicit subordinate label so a live instruction always wins.
 - **Docs & skill** synced to the new importance model; skill version bumped to
   `2.1.0`.
+- **Accuracy-first provider path** — Hermes and the CLI now force strict
+  recall, evidence-required results, and non-destructive rule handling. Scope,
+  validity, status, confidence, content hashes, evidence quotes, claim
+  history, and append-only audit events are preserved through ingest/recall.
 
 ### Added
 
@@ -23,6 +27,13 @@
   instruction (`hapus`, `delete`, `remove`, `stop`, `disable`, ...) suppresses
   the recall block so the agent follows the instruction instead of re-anchoring
   on the stored topic.
+- **Scoped claim/evidence schema** — ownership fields, episodes, claims,
+  claim evidence, memory evidence, conflict/supersession status, and
+  `needs_reindex` repair state are migrated idempotently for existing SQLite
+  stores and represented in pgvector.
+- **Independent gold regression arm** — the benchmark now reports abstention,
+  unsupported-answer, evidence-support, and cross-scope metrics from a fixed
+  fixture instead of presenting circular synthetic labels as accuracy proof.
 
 ### Removed
 
@@ -58,7 +69,9 @@
     automatically if subprocess environment variables are missing, and routes to
     `TELEGRAM_HOME_CHANNEL_THREAD_ID` forum topics.
 - **LLM enricher transient error retry** — 1x defensive retry on transient network
-  glitches with exponential backoff before falling back to raw turn text.
+  glitches with exponential backoff. When provider curation is enabled but no
+  durable summary is produced, Hermes drops the turn instead of storing a raw
+  transcript as a false fact.
 
 ### Tests
 

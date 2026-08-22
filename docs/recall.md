@@ -26,7 +26,11 @@ turn's context.
 
 ## Four strategies
 
-`recall(query)` runs four complementary strategies in parallel and fuses them. No single query style dominates.
+`recall(query)` evaluates up to four complementary strategies and fuses them.
+Scope, status, tag, and validity filters run before fusion and before fallback;
+the query planner may skip a low-value strategy after inspecting the keyword
+signal. Strict provider/CLI paths can abstain when evidence is weak or
+ambiguous.
 
 ### 1. Semantic
 
@@ -74,14 +78,36 @@ match exists, and graph is skipped when the query has no entity tokens.
 
 Short queries ("deploy?") produce weak embeddings. Before semantic search,
 the query is expanded with co-occurring entity names from the knowledge
-graph, so relevant memories rank higher (`_expand_query`, best-effort , 
-falls back to the raw query on any error).
+graph, so relevant memories rank higher (`_expand_query`, best-effort, falls
+back to the raw query on any error).
 
 When the graph yields nothing, **rule-aware expansion (v0.2.15)** kicks in:
 if the query touches the topic of a durable rule (high-importance memory), up
 to two of its keywords are appended so the rule surfaces in semantic recall
 even when the query uses different words. Both expansions keep the original
-query tokens, so recall quality can never get worse than baseline.
+query tokens, so recall quality can never get worse than baseline. Static
+aliases also cover common deployment and database terms without requiring an
+external taxonomy service.
+
+## Strict results, evidence, and conflicts
+
+Hermes and the CLI enable `strict_recall=true` and `evidence_required=true`.
+They return a structured status rather than forcing a top-1 answer:
+
+```json
+{
+  "status": "abstain",
+  "reason": "low_confidence_or_ambiguous",
+  "confidence": 0.18,
+  "memories": [],
+  "provenance": []
+}
+```
+
+Normal results include `evidence_quote`, `source_id`, validity fields, and
+strategy provenance. Conflicted claims are hidden from ordinary recall;
+`include_conflicted=True` is a diagnostic view only. Use `supersede()` or an
+explicit versioned claim to resolve an update without deleting its history.
 
 
 ## Adaptive importance (v0.2.15)
@@ -130,12 +156,13 @@ Results are truncated to a token budget (`LUMINARY_TOKEN_BUDGET`, default 4096) 
 
 ## Performance
 
-Recall runs four strategies in parallel and fuses them. On a 5k-memory store
-(SQLite, local CPU embeddings):
+The latency figures below are historical pipeline-smoke measurements on a
+5k-memory SQLite store. They are not independent accuracy scores; use the
+[gold benchmark](../benchmarks/README.md) for correctness metrics.
 
 | Stage | Typical latency |
 |-------|-----------------|
-| End-to-end recall | ~70–95 ms (p50), deterministic quality (MRR 1.0 on synthetic) |
+| End-to-end recall | ~70–95 ms (p50), synthetic pipeline smoke |
 | Semantic (vectorized cosine matmul) | ~35–50 ms |
 | Keyword (FTS5 BM25) | ~2–5 ms |
 | Temporal (batched fetch) | ~16–20 ms |

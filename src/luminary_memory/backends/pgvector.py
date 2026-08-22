@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from luminary_memory.backends.base import MemoryBackend
+from luminary_memory.scope import scope_sql
 from luminary_memory.types import Memory
 
 logger = logging.getLogger(__name__)
@@ -84,10 +85,62 @@ class PGVectorBackend(MemoryBackend):
                 updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
                 last_accessed_at TIMESTAMPTZ,
                 access_count    INTEGER NOT NULL DEFAULT 0,
-                embedding       vector({self.embedding_dim})
+                embedding       vector({self.embedding_dim}),
+                user_id         TEXT,
+                session_id      TEXT,
+                workspace_id    TEXT,
+                agent_id        TEXT,
+                observed_at     TIMESTAMPTZ,
+                valid_from      TIMESTAMPTZ,
+                valid_to        TIMESTAMPTZ,
+                status          TEXT NOT NULL DEFAULT 'active',
+                confidence      DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+                evidence_quote  TEXT,
+                source_id       TEXT,
+                claim_key       TEXT,
+                supersedes_id   INTEGER,
+                content_hash    TEXT,
+                needs_reindex   BOOLEAN NOT NULL DEFAULT FALSE
             )
             """
         )
+        # Older deployments may have the original compact memories table.
+        # Evolve its base columns before adding the accuracy/lifecycle fields.
+        for column, definition in (
+            ("metadata", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+            ("source", "TEXT"),
+            ("tags", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+            ("importance", "DOUBLE PRECISION NOT NULL DEFAULT 0.5"),
+            ("ttl_seconds", "INTEGER"),
+            ("created_at", "TIMESTAMPTZ NOT NULL DEFAULT now()"),
+            ("updated_at", "TIMESTAMPTZ NOT NULL DEFAULT now()"),
+            ("last_accessed_at", "TIMESTAMPTZ"),
+            ("access_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("embedding", f"vector({self.embedding_dim})"),
+        ):
+            cur.execute(f"ALTER TABLE memories ADD COLUMN IF NOT EXISTS {column} {definition}")
+        for column, definition in (
+            ("user_id", "TEXT"),
+            ("session_id", "TEXT"),
+            ("workspace_id", "TEXT"),
+            ("agent_id", "TEXT"),
+            ("observed_at", "TIMESTAMPTZ"),
+            ("valid_from", "TIMESTAMPTZ"),
+            ("valid_to", "TIMESTAMPTZ"),
+            ("status", "TEXT NOT NULL DEFAULT 'active'"),
+            ("confidence", "DOUBLE PRECISION NOT NULL DEFAULT 1.0"),
+            ("evidence_quote", "TEXT"),
+            ("source_id", "TEXT"),
+            ("claim_key", "TEXT"),
+            ("supersedes_id", "INTEGER"),
+            ("content_hash", "TEXT"),
+            ("needs_reindex", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ):
+            cur.execute(f"ALTER TABLE memories ADD COLUMN IF NOT EXISTS {column} {definition}")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(user_id, workspace_id, agent_id, session_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_memories_claim ON memories(user_id, workspace_id, claim_key, status)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_memories_hash ON memories(user_id, workspace_id, content_hash)")
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS entities (
@@ -109,6 +162,95 @@ class PGVectorBackend(MemoryBackend):
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_evidence (
+                id BIGSERIAL PRIMARY KEY,
+                memory_id INTEGER REFERENCES memories(id) ON DELETE SET NULL,
+                quote TEXT NOT NULL,
+                source_id TEXT,
+                observed_at TIMESTAMPTZ,
+                extractor TEXT,
+                confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_events (
+                id BIGSERIAL PRIMARY KEY,
+                memory_id INTEGER,
+                event_type TEXT NOT NULL,
+                before_json JSONB,
+                after_json JSONB,
+                actor TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS episodes (
+                id TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                source TEXT,
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                user_id TEXT,
+                session_id TEXT,
+                workspace_id TEXT,
+                agent_id TEXT,
+                observed_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodes_scope "
+            "ON episodes(user_id, workspace_id, agent_id, session_id)"
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS claims (
+                id BIGSERIAL PRIMARY KEY,
+                memory_id INTEGER REFERENCES memories(id) ON DELETE SET NULL,
+                subject TEXT NOT NULL,
+                predicate TEXT NOT NULL,
+                object TEXT NOT NULL,
+                polarity TEXT NOT NULL DEFAULT 'positive',
+                status TEXT NOT NULL DEFAULT 'active',
+                confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+                evidence_quote TEXT,
+                source_episode_id TEXT,
+                user_id TEXT,
+                session_id TEXT,
+                workspace_id TEXT,
+                agent_id TEXT,
+                observed_at TIMESTAMPTZ,
+                valid_from TIMESTAMPTZ,
+                valid_to TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_claims_key "
+            "ON claims(user_id, workspace_id, subject, predicate, status)"
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS claim_evidence (
+                id BIGSERIAL PRIMARY KEY,
+                claim_id BIGINT REFERENCES claims(id) ON DELETE SET NULL,
+                quote TEXT NOT NULL,
+                source_episode_id TEXT,
+                source_offset_start INTEGER,
+                source_offset_end INTEGER,
+                confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
         self.conn.commit()
 
     def _row_to_memory(self, row: tuple[Any, ...] | dict[str, Any]) -> Memory:
@@ -119,7 +261,10 @@ class PGVectorBackend(MemoryBackend):
             cols = [
                 "id", "content", "metadata", "source", "tags", "importance",
                 "ttl_seconds", "created_at", "updated_at", "last_accessed_at",
-                "access_count", "embedding",
+                "access_count", "embedding", "user_id", "session_id", "workspace_id",
+                "agent_id", "observed_at", "valid_from", "valid_to", "status", "confidence",
+                "evidence_quote", "source_id", "claim_key", "supersedes_id", "content_hash",
+                "needs_reindex",
             ]
             d = dict(zip(cols, row))
             emb = d.get("embedding")
@@ -142,6 +287,21 @@ class PGVectorBackend(MemoryBackend):
             access_count=int(d.get("access_count") or 0),
             embedding=list(emb) if isinstance(emb, (list, tuple)) else None,
             snippet=None,
+            user_id=d.get("user_id"),
+            session_id=d.get("session_id"),
+            workspace_id=d.get("workspace_id"),
+            agent_id=d.get("agent_id"),
+            observed_at=str(d["observed_at"]) if d.get("observed_at") else None,
+            valid_from=str(d["valid_from"]) if d.get("valid_from") else None,
+            valid_to=str(d["valid_to"]) if d.get("valid_to") else None,
+            status=str(d.get("status") or "active"),
+            confidence=float(d.get("confidence") if d.get("confidence") is not None else 1.0),
+            evidence_quote=d.get("evidence_quote"),
+            source_id=d.get("source_id"),
+            claim_key=d.get("claim_key"),
+            supersedes_id=d.get("supersedes_id"),
+            content_hash=d.get("content_hash"),
+            needs_reindex=bool(d.get("needs_reindex") or False),
         )
 
     def add(self, m: Memory) -> int:
@@ -150,8 +310,13 @@ class PGVectorBackend(MemoryBackend):
             """
             INSERT INTO memories (content, metadata, source, tags, importance,
                                   ttl_seconds, created_at, updated_at,
-                                  last_accessed_at, access_count, embedding)
-            VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
+                                  last_accessed_at, access_count, embedding,
+                                  user_id, session_id, workspace_id, agent_id,
+                                  observed_at, valid_from, valid_to, status, confidence,
+                                  evidence_quote, source_id, claim_key, supersedes_id,
+                                  content_hash, needs_reindex)
+            VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -166,6 +331,21 @@ class PGVectorBackend(MemoryBackend):
                 m.last_accessed_at,
                 int(m.access_count),
                 m.embedding,
+                m.user_id,
+                m.session_id,
+                m.workspace_id,
+                m.agent_id,
+                m.observed_at,
+                m.valid_from,
+                m.valid_to,
+                m.status or "active",
+                float(m.confidence),
+                m.evidence_quote,
+                m.source_id,
+                m.claim_key,
+                m.supersedes_id,
+                m.content_hash,
+                bool(m.needs_reindex),
             ),
         )
         row = cur.fetchone()
@@ -182,6 +362,153 @@ class PGVectorBackend(MemoryBackend):
             return self._row_to_memory(row)
         return self._row_to_memory(row)
 
+    def find_by_hash(self, content_hash: str, scope: dict | None = None) -> Memory | None:
+        where, params = scope_sql(scope, alias="m", include_global=False)
+        cur = self.conn.cursor()
+        cur.execute(
+            f"SELECT m.* FROM memories m WHERE m.content_hash = %s AND "
+            f"{where.replace('?', '%s')} ORDER BY m.id LIMIT 1",
+            (content_hash, *params),
+        )
+        row = cur.fetchone()
+        return self._row_to_memory(row) if row else None
+
+    def find_by_claim_key(self, claim_key: str, scope: dict | None = None) -> list[Memory]:
+        where, params = scope_sql(
+            scope, alias="m", include_global=False, active_only=False
+        )
+        cur = self.conn.cursor()
+        cur.execute(
+            f"SELECT m.* FROM memories m WHERE m.claim_key = %s AND "
+            f"{where.replace('?', '%s')} ORDER BY m.id",
+            (claim_key, *params),
+        )
+        return [self._row_to_memory(row) for row in cur.fetchall()]
+
+    def record_event(
+        self,
+        event_type: str,
+        memory_id: int | None,
+        before: dict | None = None,
+        after: dict | None = None,
+        actor: str | None = None,
+    ) -> None:
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT INTO memory_events(memory_id, event_type, before_json, after_json, actor) "
+            "VALUES (%s, %s, %s::jsonb, %s::jsonb, %s)",
+            (
+                memory_id,
+                event_type,
+                json.dumps(before) if before is not None else None,
+                json.dumps(after) if after is not None else None,
+                actor,
+            ),
+        )
+        self.conn.commit()
+
+    def add_evidence(
+        self,
+        memory_id: int,
+        quote: str,
+        source_id: str | None = None,
+        observed_at: str | None = None,
+        extractor: str | None = None,
+        confidence: float = 1.0,
+    ) -> None:
+        if not quote:
+            return
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT INTO memory_evidence(memory_id, quote, source_id, observed_at, extractor, confidence) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (memory_id, quote, source_id, observed_at, extractor, float(confidence)),
+        )
+        self.conn.commit()
+
+    def record_episode(self, episode_id: str, content: str, **metadata) -> None:
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT INTO episodes "
+            "(id, content, source, metadata, user_id, session_id, workspace_id, agent_id, observed_at) "
+            "VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (id) DO NOTHING",
+            (
+                str(episode_id),
+                str(content),
+                metadata.get("source"),
+                json.dumps(metadata.get("metadata") or {}),
+                metadata.get("user_id"),
+                metadata.get("session_id"),
+                metadata.get("workspace_id"),
+                metadata.get("agent_id"),
+                metadata.get("observed_at"),
+            ),
+        )
+        self.conn.commit()
+
+    def add_claim(self, memory_id: int, claim: dict, **scope) -> None:
+        subject = str(claim.get("subject") or "").strip()
+        predicate = str(claim.get("predicate") or "").strip()
+        object_value = str(claim.get("object") or "").strip()
+        quote = str(claim.get("evidence_quote") or "").strip()
+        if not subject or not predicate or not object_value or not quote:
+            return
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT INTO claims "
+            "(memory_id, subject, predicate, object, polarity, status, confidence, evidence_quote, "
+            "source_episode_id, user_id, session_id, workspace_id, agent_id, observed_at, valid_from, valid_to) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "RETURNING id",
+            (
+                memory_id,
+                subject,
+                predicate,
+                object_value,
+                str(claim.get("polarity") or "positive"),
+                str(claim.get("status") or "active"),
+                float(claim.get("confidence") if claim.get("confidence") is not None else 1.0),
+                quote,
+                claim.get("source_episode_id"),
+                scope.get("user_id"),
+                scope.get("session_id"),
+                scope.get("workspace_id"),
+                scope.get("agent_id"),
+                claim.get("observed_at"),
+                claim.get("valid_from"),
+                claim.get("valid_to"),
+            ),
+        )
+        row = cur.fetchone()
+        claim_id = row[0] if row else None
+        if claim_id is not None:
+            cur.execute(
+                "INSERT INTO claim_evidence(claim_id, quote, source_episode_id, confidence) "
+                "VALUES (%s, %s, %s, %s)",
+                (
+                    claim_id,
+                    quote,
+                    claim.get("source_episode_id"),
+                    float(claim.get("confidence") if claim.get("confidence") is not None else 1.0),
+                ),
+            )
+        self.conn.commit()
+
+    def sync_claim_status(
+        self,
+        memory_id: int,
+        status: str,
+        valid_to: str | None = None,
+    ) -> None:
+        cur = self.conn.cursor()
+        cur.execute(
+            "UPDATE claims SET status = %s, valid_to = COALESCE(valid_to, %s) "
+            "WHERE memory_id = %s AND status IN ('active', 'conflicted')",
+            (str(status), valid_to, memory_id),
+        )
+        self.conn.commit()
+
     def update(self, m: Memory) -> None:
         if m.id is None:
             raise ValueError("cannot update a memory without an id")
@@ -190,7 +517,11 @@ class PGVectorBackend(MemoryBackend):
             """
             UPDATE memories SET content=%s, metadata=%s::jsonb, source=%s, tags=%s::jsonb,
                                 importance=%s, ttl_seconds=%s, updated_at=%s,
-                                last_accessed_at=%s, access_count=%s, embedding=%s
+                                last_accessed_at=%s, access_count=%s, embedding=%s,
+                                user_id=%s, session_id=%s, workspace_id=%s, agent_id=%s,
+                                observed_at=%s, valid_from=%s, valid_to=%s, status=%s,
+                                confidence=%s, evidence_quote=%s, source_id=%s, claim_key=%s,
+                                supersedes_id=%s, content_hash=%s, needs_reindex=%s
             WHERE id=%s
             """,
             (
@@ -204,6 +535,21 @@ class PGVectorBackend(MemoryBackend):
                 m.last_accessed_at,
                 int(m.access_count),
                 m.embedding,
+                m.user_id,
+                m.session_id,
+                m.workspace_id,
+                m.agent_id,
+                m.observed_at,
+                m.valid_from,
+                m.valid_to,
+                m.status or "active",
+                float(m.confidence),
+                m.evidence_quote,
+                m.source_id,
+                m.claim_key,
+                m.supersedes_id,
+                m.content_hash,
+                bool(m.needs_reindex),
                 m.id,
             ),
         )
@@ -233,8 +579,13 @@ class PGVectorBackend(MemoryBackend):
                     """
                     INSERT INTO memories (content, metadata, source, tags, importance,
                                           ttl_seconds, created_at, updated_at,
-                                          last_accessed_at, access_count, embedding)
-                    VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
+                                          last_accessed_at, access_count, embedding,
+                                          user_id, session_id, workspace_id, agent_id,
+                                          observed_at, valid_from, valid_to, status, confidence,
+                                          evidence_quote, source_id, claim_key, supersedes_id,
+                                          content_hash, needs_reindex)
+                    VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
@@ -249,6 +600,21 @@ class PGVectorBackend(MemoryBackend):
                         m.last_accessed_at,
                         int(m.access_count),
                         m.embedding,
+                        m.user_id,
+                        m.session_id,
+                        m.workspace_id,
+                        m.agent_id,
+                        m.observed_at,
+                        m.valid_from,
+                        m.valid_to,
+                        m.status or "active",
+                        float(m.confidence),
+                        m.evidence_quote,
+                        m.source_id,
+                        m.claim_key,
+                        m.supersedes_id,
+                        m.content_hash,
+                        bool(m.needs_reindex),
                     ),
                 )
                 row = cur.fetchone()
@@ -259,53 +625,134 @@ class PGVectorBackend(MemoryBackend):
             self.conn.rollback()
             raise
 
-    def recent(self, limit: int | None = 100, offset: int = 0) -> list[Memory]:
+    def recent(
+        self,
+        limit: int | None = 100,
+        offset: int = 0,
+        scope: dict | None = None,
+        include_global: bool = True,
+    ) -> list[Memory]:
         """Most-recent-first pagination at the SQL level (None = unlimited)."""
         cur = self.conn.cursor()
         o = max(0, int(offset))
+        where, params = scope_sql(scope, alias="m", include_global=include_global)
+        where = where.replace("?", "%s")
         if limit is None or int(limit) == 0:
             cur.execute(
-                "SELECT * FROM memories ORDER BY created_at DESC, id DESC OFFSET %s",
-                (o,),
+                f"SELECT m.* FROM memories m WHERE {where} "
+                "ORDER BY created_at DESC, id DESC OFFSET %s",
+                (*params, o),
             )
         else:
             cur.execute(
-                "SELECT * FROM memories ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s",
-                (max(0, int(limit)), o),
+                f"SELECT m.* FROM memories m WHERE {where} "
+                "ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s",
+                (*params, max(0, int(limit)), o),
             )
         rows = cur.fetchall()
         return [self._row_to_memory(r) for r in rows]
 
-    def keyword_search(self, query: str, limit: int | None = 10) -> list[tuple[Memory, float]]:
-        escaped = query.replace("%", r"\%").replace("_", r"\_")
-        q = f"%{escaped}%"
+    def top_by_importance(
+        self,
+        top_n: int,
+        min_importance: float = 0.0,
+        scope: dict | None = None,
+        include_global: bool = True,
+    ) -> list[Memory]:
+        """Return complete memories for strict recall fallback/core loading."""
         cur = self.conn.cursor()
+        where, params = scope_sql(scope, alias="m", include_global=include_global)
+        where = where.replace("?", "%s")
+        cur.execute(
+            f"SELECT m.* FROM memories m WHERE {where} AND m.importance >= %s "
+            "ORDER BY m.importance DESC, m.access_count DESC, m.id DESC LIMIT %s",
+            (*params, float(min_importance), max(0, int(top_n))),
+        )
+        return [self._row_to_memory(row) for row in cur.fetchall()]
+
+    def by_tag_top(
+        self,
+        tag: str,
+        top_n: int,
+        scope: dict | None = None,
+        include_global: bool = True,
+    ) -> list[Memory]:
+        """Return complete core memories carrying *tag*, scope-filtered."""
+        cur = self.conn.cursor()
+        where, params = scope_sql(scope, alias="m", include_global=include_global)
+        where = where.replace("?", "%s")
+        cur.execute(
+            f"SELECT m.* FROM memories m WHERE {where} AND m.tags @> %s::jsonb "
+            "ORDER BY m.importance DESC, m.access_count DESC, m.id DESC LIMIT %s",
+            (*params, json.dumps([tag]), max(0, int(top_n))),
+        )
+        return [self._row_to_memory(row) for row in cur.fetchall()]
+
+    def keyword_search(
+        self,
+        query: str,
+        limit: int | None = 10,
+        scope: dict | None = None,
+        include_global: bool = True,
+    ) -> list[tuple[Memory, float]]:
+        import re
+
+        terms = [term for term in re.findall(r"[A-Za-z0-9][A-Za-z0-9_./:+#@=-]*", query or "") if term]
+        if not terms or (limit is not None and int(limit) == 0):
+            return []
+        cur = self.conn.cursor()
+        where, scope_params = scope_sql(scope, alias="m", include_global=include_global)
+        where = where.replace("?", "%s")
+        patterns = [f"%{term}%" for term in terms]
+        match_clause = " OR ".join("m.content ILIKE %s" for _ in terms)
+        score_expr = " + ".join(
+            "CASE WHEN m.content ILIKE %s THEN 1 ELSE 0 END" for _ in terms
+        )
         if limit is None:
             cur.execute(
-                "SELECT * FROM memories WHERE content ILIKE %s OR tags::text ILIKE %s",
-                (q, q),
+                f"SELECT m.*, ({score_expr}) AS rank FROM memories m "
+                f"WHERE ({match_clause}) AND {where} ORDER BY rank DESC, m.id DESC",
+                (*patterns, *patterns, *scope_params),
             )
         else:
             cur.execute(
-                "SELECT * FROM memories WHERE content ILIKE %s OR tags::text ILIKE %s LIMIT %s",
-                (q, q, int(limit)),
+                f"SELECT m.*, ({score_expr}) AS rank FROM memories m "
+                f"WHERE ({match_clause}) AND {where} ORDER BY rank DESC, m.id DESC LIMIT %s",
+                (*patterns, *patterns, *scope_params, int(limit)),
             )
         rows = cur.fetchall()
-        return [(self._row_to_memory(r), 1.0) for r in rows]
+        results: list[tuple[Memory, float]] = []
+        for row in rows:
+            if isinstance(row, dict):
+                rank = float(row.get("rank") or 0.0)
+            else:
+                rank = float(row[-1] or 0.0) if row else 0.0
+            results.append((self._row_to_memory(row), rank / max(1, len(terms))))
+        return results
 
-    def vector_search(self, vec: list[float], limit: int | None = 10) -> list[tuple[Memory, float]]:
+    def vector_search(
+        self,
+        vec: list[float],
+        limit: int | None = 10,
+        scope: dict | None = None,
+        include_global: bool = True,
+    ) -> list[tuple[Memory, float]]:
+        if limit is not None and int(limit) == 0:
+            return []
         cur = self.conn.cursor()
+        where, scope_params = scope_sql(scope, alias="m", include_global=include_global)
+        where = where.replace("?", "%s")
         if limit is None:
             cur.execute(
-                "SELECT *, embedding <=> %s::vector AS distance FROM memories "
-                "WHERE embedding IS NOT NULL ORDER BY distance",
-                (vec,),
+                "SELECT m.*, m.embedding <=> %s::vector AS distance FROM memories m "
+                f"WHERE m.embedding IS NOT NULL AND {where} ORDER BY distance",
+                (vec, *scope_params),
             )
         else:
             cur.execute(
-                "SELECT *, embedding <=> %s::vector AS distance FROM memories "
-                "WHERE embedding IS NOT NULL ORDER BY distance LIMIT %s",
-                (vec, int(limit)),
+                "SELECT m.*, m.embedding <=> %s::vector AS distance FROM memories m "
+                f"WHERE m.embedding IS NOT NULL AND {where} ORDER BY distance LIMIT %s",
+                (vec, *scope_params, int(limit)),
             )
         rows = cur.fetchall()
         results: list[tuple[Memory, float]] = []
@@ -327,7 +774,13 @@ class PGVectorBackend(MemoryBackend):
             return 0
         return int(row[0] if isinstance(row, (list, tuple)) else row.get("count", 0))
 
-    def by_tags(self, tags: list[str]) -> set[int]:
+    def by_tags(
+        self,
+        tags: list[str],
+        match: str = "any",
+        scope: dict | None = None,
+        include_global: bool = True,
+    ) -> set[int]:
         if not tags:
             return set()
         cur = self.conn.cursor()
@@ -336,7 +789,17 @@ class PGVectorBackend(MemoryBackend):
             import json as _json
 
             wanted = set(tags)
-            cur.execute("SELECT id, tags FROM memories")
+            if scope:
+                where, scope_params = scope_sql(scope, alias="m", include_global=include_global)
+                where = where.replace("?", "%s")
+                cur.execute(
+                    f"SELECT m.id, m.tags FROM memories m WHERE {where}",
+                    tuple(scope_params),
+                )
+            else:
+                cur.execute(
+                    "SELECT id, tags FROM memories WHERE COALESCE(status, 'active') = 'active'"
+                )
             ids: set[int] = set()
             for row in cur.fetchall():
                 d = row if isinstance(row, dict) else {}
@@ -352,7 +815,9 @@ class PGVectorBackend(MemoryBackend):
                         tlist = _json.loads(raw) if isinstance(raw, str) else list(raw or [])
                     except Exception:  # noqa: BLE001
                         tlist = []
-                if wanted & set(tlist):
+                have = set(tlist)
+                matches = wanted <= have if match in {"all", "strict"} else bool(wanted & have)
+                if matches:
                     ids.add(int(d.get("id") or row[0]))
             return ids
         except Exception:  # noqa: BLE001

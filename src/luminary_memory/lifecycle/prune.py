@@ -15,6 +15,7 @@ def prune(
     max_count: int | None = None,
     now=None,
     pin_threshold: float = 0.9,
+    scope: dict | None = None,
 ) -> int:
     """Prune low-value memories.
 
@@ -27,14 +28,25 @@ def prune(
     def _pinned(m) -> bool:
         return float(getattr(m, "importance", 0.0) or 0.0) >= pin_threshold
 
-    all_mems = backend.all()
+    from luminary_memory.scope import memory_matches_scope
+
+    all_mems = [m for m in backend.all() if memory_matches_scope(m, scope, active_only=True)]
     low_imp = [m for m in all_mems if float(m.importance) < float(min_importance) and not _pinned(m)]
     if low_imp:
         delete_many = getattr(backend, "delete_many", None)
         if delete_many is not None:
+            for m in low_imp:
+                try:
+                    backend.record_event("prune", m.id, before={"content": m.content, "status": m.status})
+                except Exception:
+                    logger.debug("could not record prune for %s", m.id, exc_info=True)
             delete_many([m.id for m in low_imp if m.id is not None])  # type: ignore[union-attr]
         else:
             for m in low_imp:
+                try:
+                    backend.record_event("prune", m.id, before={"content": m.content, "status": m.status})
+                except Exception:
+                    logger.debug("could not record prune for %s", m.id, exc_info=True)
                 backend.delete(m.id)  # type: ignore[arg-type]
         removed += len(low_imp)
     if max_count is not None:
@@ -45,9 +57,18 @@ def prune(
             if to_drop:
                 delete_many = getattr(backend, "delete_many", None)
                 if delete_many is not None:
+                    for m in to_drop:
+                        try:
+                            backend.record_event("prune", m.id, before={"content": m.content, "status": m.status})
+                        except Exception:
+                            logger.debug("could not record prune for %s", m.id, exc_info=True)
                     delete_many([m.id for m in to_drop if m.id is not None])  # type: ignore[union-attr]
                 else:
                     for m in to_drop:
+                        try:
+                            backend.record_event("prune", m.id, before={"content": m.content, "status": m.status})
+                        except Exception:
+                            logger.debug("could not record prune for %s", m.id, exc_info=True)
                         backend.delete(m.id)  # type: ignore[arg-type]
                 removed += len(to_drop)
     logger.info("prune removed=%d min_importance=%s pin_threshold=%s", removed, min_importance, pin_threshold)

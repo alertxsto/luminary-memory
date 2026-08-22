@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Luminary activity hook — surface luminary-memory activity to the chat.
+"""Luminary activity hook — surface stored-memory activity to Telegram.
 
-Fires on agent:start and agent:end, reading the luminary store's recent
-activity (recalls, retains, lifecycle runs) and posting a compact status
-line to the configured Telegram chat via the Bot API.
+Fires on ``agent:end``, reads memories that have not been acknowledged by the
+hook yet, and posts a compact status line to the configured Telegram chat via
+the Bot API. The acknowledgement cursor advances only after Telegram accepts
+the message, so a transient delivery failure is retried on the next event.
 
 Install: copy this directory to ~/.hermes/hooks/luminary-activity/
 (see HOOK.yaml). Requires TELEGRAM_BOT_TOKEN + TELEGRAM_HOME_CHANNEL
@@ -23,6 +24,7 @@ from pathlib import Path
 logger = logging.getLogger("luminary-activity")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID = os.getenv("LUMINARY_HOOK_CHAT_ID") or os.getenv("TELEGRAM_HOME_CHANNEL", "")
+THREAD_ID = os.getenv("LUMINARY_HOOK_THREAD_ID") or os.getenv("TELEGRAM_HOME_CHANNEL_THREAD_ID", "")
 DB_PATH = os.getenv(
     "LUMINARY_DB_PATH",
     str(Path.home() / ".hermes" / "luminary" / "memory.db"),
@@ -75,26 +77,46 @@ def _last_shown_id() -> int:
 
 
 def _set_last_shown_id(mid: int) -> None:
+    tmp_file = STATE_FILE.with_name(f"{STATE_FILE.name}.tmp")
     try:
-        STATE_FILE.write_text(json.dumps({"last_id": mid}), encoding="utf-8")
+        tmp_file.write_text(json.dumps({"last_id": mid}), encoding="utf-8")
+        os.replace(tmp_file, STATE_FILE)
     except OSError as exc:
         logger.warning("could not write state file: %s", exc)
+        try:
+            tmp_file.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
-def _send_telegram_request(url: str, payload_data: dict[str, str | int]) -> None:
+def _send_telegram_request(url: str, payload_data: dict[str, str | int]) -> bool:
     payload = json.dumps(payload_data).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=payload,
         headers={"Content-Type": "application/json"},
     )
-    urllib.request.urlopen(req, timeout=10).read()
+    with urllib.request.urlopen(req, timeout=10) as response:
+        raw = response.read()
+    # Telegram may return HTTP 200 with {"ok": false}. Treat that as a
+    # delivery failure so the activity cursor is not advanced prematurely.
+    try:
+        response = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else str(raw))
+        if isinstance(response, dict) and response.get("ok") is False:
+            logger.warning("Telegram API rejected activity message: %s", response)
+            return False
+    except (TypeError, ValueError, UnicodeDecodeError):
+        # A successful HTTP response from a proxy may not be JSON. The request
+        # was accepted at the transport layer, so preserve the old best-effort
+        # behavior rather than treating a proxy body as a hard failure.
+        pass
+    return True
 
 
-def _post(text: str) -> None:
+def _post(text: str) -> bool:
     token = BOT_TOKEN
     chat = CHAT_ID
-    thread = os.getenv("LUMINARY_HOOK_THREAD_ID") or os.getenv("TELEGRAM_HOME_CHANNEL_THREAD_ID", "")
+    thread = THREAD_ID
     if not token or not chat:
         file_env = _load_hermes_env()
         token = token or file_env.get("TELEGRAM_BOT_TOKEN", "")
@@ -102,7 +124,7 @@ def _post(text: str) -> None:
         thread = thread or file_env.get("LUMINARY_HOOK_THREAD_ID") or file_env.get("TELEGRAM_HOME_CHANNEL_THREAD_ID", "")
     if not token or not chat:
         logger.warning("luminary-activity skipped: token/chat not set")
-        return
+        return False
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload_data: dict[str, str | int] = {
         "chat_id": chat,
@@ -113,38 +135,42 @@ def _post(text: str) -> None:
         payload_data["message_thread_id"] = int(thread)
 
     try:
-        _send_telegram_request(url, payload_data)
+        return _send_telegram_request(url, payload_data)
     except urllib.error.HTTPError as exc:
         # If Telegram rejects markdown formatting with 400 Bad Request, retry as plain text
         if exc.code == 400 and "parse_mode" in payload_data:
             logger.warning("Telegram markdown parse error, falling back to plain text: %s", exc)
             try:
                 payload_data.pop("parse_mode", None)
-                _send_telegram_request(url, payload_data)
+                return _send_telegram_request(url, payload_data)
             except Exception:
                 logger.exception("failed to post activity in plain text fallback")
+                return False
         else:
             logger.exception("failed to post activity")
+            return False
     except Exception:
         logger.exception("failed to post activity")
+        return False
 
 
-def _recent_activity(seconds: int = 30) -> str | None:
-    """Return a status line for *new* memories since last post (no repeats)."""
+def _read_recent_activity() -> tuple[str | None, int | None]:
+    """Read pending activity without advancing the delivery cursor."""
     db = DB_PATH
     if not Path(db).exists():
-        return None
+        return None, None
+    conn = None
     try:
         conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         last_id = _last_shown_id()
-        # First run after fix: only show the single newest to avoid spamming history
+        # First run after install: show only the newest row to avoid replaying
+        # the entire existing store into Telegram.
         if last_id == 0:
             row = conn.execute("SELECT MAX(id) as max_id FROM memories").fetchone()
             max_id = int(row["max_id"] or 0) if row else 0
             if max_id == 0:
-                conn.close()
-                return None
+                return None, None
             all_rows = conn.execute(
                 "SELECT * FROM memories WHERE id = ?",
                 (max_id,),
@@ -155,8 +181,7 @@ def _recent_activity(seconds: int = 30) -> str | None:
                 (last_id,),
             ).fetchall()
             if not all_rows:
-                conn.close()
-                return None
+                return None, None
         n_new = len(all_rows)
         noun = "memory" if n_new == 1 else "memories"
         lines = [f"🌙 Luminary — {n_new} {noun} stored"]
@@ -175,18 +200,32 @@ def _recent_activity(seconds: int = 30) -> str | None:
         if n_new > 3:
             lines.append(f"  ... (+{n_new - 3} more)")
         max_shown = max(int(r["id"]) for r in all_rows)
-        _set_last_shown_id(max_shown)
-        conn.close()
-        return "\n".join(lines)
+        return "\n".join(lines), max_shown
     except Exception:
         logger.exception("activity read failed")
-        return None
+        return None, None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _recent_activity(seconds: int = 30, *, commit: bool = True) -> str | None:
+    """Return new-memory activity; commit the cursor only when requested.
+
+    ``seconds`` remains for compatibility with older callers. Activity is
+    cursor-based rather than wall-clock-based so delayed writer jobs are not
+    silently missed.
+    """
+    line, max_id = _read_recent_activity()
+    if commit and line and max_id is not None:
+        _set_last_shown_id(max_id)
+    return line
 
 
 def handle(event_type: str, context: dict) -> None:
-    """Hook entry point: surface luminary activity on agent:end."""
+    """Hook entry point: surface stored-memory activity on agent:end."""
     if event_type != "agent:end":
         return
-    line = _recent_activity(seconds=30)
-    if line:
-        _post(line)
+    line, max_id = _read_recent_activity()
+    if line and _post(line) and max_id is not None:
+        _set_last_shown_id(max_id)

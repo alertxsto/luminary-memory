@@ -35,9 +35,81 @@ class MemoryBackend(ABC):
                 out[_id] = m
         return out
 
+    def find_by_hash(self, content_hash: str, scope: dict | None = None) -> Memory | None:
+        """Return an exact-content match in the requested scope, if any."""
+        from luminary_memory.scope import memory_matches_scope
+
+        for memory in self.all():
+            if memory.content_hash == content_hash and memory_matches_scope(memory, scope):
+                return memory
+        return
+
+    def find_by_claim_key(self, claim_key: str, scope: dict | None = None) -> list[Memory]:
+        """Return active claims for a canonical subject/predicate key."""
+        from luminary_memory.scope import memory_matches_scope
+
+        return [
+            memory
+            for memory in self.all()
+            if memory.claim_key == claim_key
+            and memory_matches_scope(memory, scope, active_only=False)
+        ]
+
+    def record_event(
+        self,
+        event_type: str,
+        memory_id: int | None,
+        before: dict | None = None,
+        after: dict | None = None,
+        actor: str | None = None,
+    ) -> None:
+        """Append an audit event when the backend supports an event table."""
+        return
+
+    def add_evidence(
+        self,
+        memory_id: int,
+        quote: str,
+        source_id: str | None = None,
+        observed_at: str | None = None,
+        extractor: str | None = None,
+        confidence: float = 1.0,
+    ) -> None:
+        """Persist a provenance row when the backend supports it."""
+        return
+
+    def record_episode(self, episode_id: str, content: str, **metadata) -> None:
+        """Persist immutable source text when the backend has an episode ledger."""
+        return
+
+    def add_claim(self, memory_id: int, claim: dict, **scope) -> None:
+        """Persist a structured claim when the backend supports claim storage."""
+        return
+
+    def sync_claim_status(
+        self,
+        memory_id: int,
+        status: str,
+        valid_to: str | None = None,
+    ) -> None:
+        """Keep derived claim rows aligned with a memory lifecycle mutation."""
+        return
+
     @abstractmethod
-    def keyword_search(self, query: str, limit: int | None) -> list[tuple[Memory, float]]: ...
+    def keyword_search(
+        self,
+        query: str,
+        limit: int | None,
+        scope: dict | None = None,
+        include_global: bool = True,
+    ) -> list[tuple[Memory, float]]: ...
     @abstractmethod
-    def vector_search(self, vec: list[float], limit: int | None) -> list[tuple[Memory, float]]: ...
+    def vector_search(
+        self,
+        vec: list[float],
+        limit: int | None,
+        scope: dict | None = None,
+        include_global: bool = True,
+    ) -> list[tuple[Memory, float]]: ...
     @abstractmethod
     def count(self) -> int: ...

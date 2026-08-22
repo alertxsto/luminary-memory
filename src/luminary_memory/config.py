@@ -79,6 +79,21 @@ class Settings:
     )
     token_budget: int = field(default_factory=lambda: _env_int("LUMINARY_TOKEN_BUDGET", 4096))
     max_memories: int | None = field(default_factory=lambda: _env_int("LUMINARY_MAX_MEMORIES", 1000))
+    # Safety policy.  Legacy direct clients keep permissive recall unless
+    # enabled, while Hermes/CLI accuracy paths opt into strict abstention.
+    strict_recall: bool = field(default_factory=lambda: _env_bool("LUMINARY_STRICT_RECALL", False))
+    scope_include_global: bool = field(
+        default_factory=lambda: _env_bool("LUMINARY_SCOPE_INCLUDE_GLOBAL", True)
+    )
+    abstention_min_confidence: float = field(
+        default_factory=lambda: _env_float("LUMINARY_ABSTENTION_MIN_CONFIDENCE", 0.34)
+    )
+    abstention_min_margin: float = field(
+        default_factory=lambda: _env_float("LUMINARY_ABSTENTION_MIN_MARGIN", 0.04)
+    )
+    evidence_required: bool = field(
+        default_factory=lambda: _env_bool("LUMINARY_EVIDENCE_REQUIRED", False)
+    )
     # core memory (DB-backed, auto-loaded into the system prompt every session)
     core_tag: str = field(default_factory=lambda: os.environ.get("LUMINARY_CORE_TAG", "core"))
     core_top_n: int = field(default_factory=lambda: _env_int("LUMINARY_CORE_TOP_N", 12))
@@ -127,6 +142,11 @@ class Settings:
             "recall_min_score": self.recall_min_score,
             "token_budget": self.token_budget,
             "max_memories": self.max_memories,
+            "strict_recall": self.strict_recall,
+            "scope_include_global": self.scope_include_global,
+            "abstention_min_confidence": self.abstention_min_confidence,
+            "abstention_min_margin": self.abstention_min_margin,
+            "evidence_required": self.evidence_required,
             "core_tag": self.core_tag,
             "core_top_n": self.core_top_n,
             "core_budget": self.core_budget,

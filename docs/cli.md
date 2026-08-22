@@ -7,7 +7,65 @@ Every command accepts:
 - `--db-path PATH`, override the SQLite path.
 - `--backend sqlite|pgvector`, select the backend.
 
+The CLI recall path uses strict abstention, evidence-required results, and
+non-destructive rule handling. Set scope without placing identity values in
+shell history:
+
+```bash
+export LUMINARY_USER_ID=u1
+export LUMINARY_WORKSPACE_ID=luminary
+export LUMINARY_AGENT_ID=coding-agent
+export LUMINARY_SESSION_ID=session-42
+```
+
 ## Commands
+
+### activity
+
+Show recent persisted memory activity in the same compact style used by the
+Telegram activity hook. This command is read-only and does not bump recall
+access counters.
+
+```bash
+luminary-memory activity --db-path ~/.hermes/luminary/memory.db
+luminary-memory activity --limit 5 --json
+```
+
+Human output:
+
+```text
+🌙 Luminary — 2 recent memories stored
+  📌 #12 ALWAYS verify tests before release
+    tags: core, rule · source: hermes
+  • #11 Deploy target is staging
+    tags: deploy · source: cli
+```
+
+JSON output is stable and automation-friendly:
+
+```json
+{
+  "status": "active",
+  "event": "memory_activity",
+  "count": 1,
+  "memories": [
+    {
+      "id": 11,
+      "content": "Deploy target is staging",
+      "tags": ["deploy"],
+      "source": "cli",
+      "importance": 0.5,
+      "created_at": "2026-08-23T10:00:00+00:00"
+    }
+  ]
+}
+```
+
+An empty store is explicit rather than silently producing a blank screen:
+
+```text
+🌙 Luminary — no stored memory activity
+```
 
 ### add
 
@@ -25,6 +83,9 @@ luminary-memory recall "where do we deploy?" --json
 ```
 
 Runs the full four-strategy pipeline. Default output is a rich table; `--json` emits a machine-readable object.
+The JSON form includes `status` (`ok`, `fallback`, or `abstain`), `reason`,
+confidence, evidence quote, source, and provenance. An unrelated query returns
+an explicit abstention with zero memories instead of a guessed top result.
 
 ### search
 

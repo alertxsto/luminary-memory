@@ -26,9 +26,9 @@ edits = [
     ("src/luminary_memory/__init__.py", r'__version__ = "0\.2\.[0-9]+"', f'__version__ = "{new}"'),
     ("src/luminary_memory/hermes/plugin.yaml", r'^version: 0\.2\.[0-9]+$', f"version: {new}"),
     ("website/index.html", r'v0\.2\.[0-9]+ - Self-Hosted Memory Layer', f"v{new} - Self-Hosted Memory Layer"),
-    ("ROADMAP.md", r'Current release:\*\* v0\.2\.[0-9]+', f"Current release:** v{new}"),
+    ("docs/ROADMAP.md", r'Current release:\*\* v0\.2\.[0-9]+', f"Current release:** v{new}"),
     ("README.md", r'v0\.2\.[0-9]+ → v1\.0\.0', f"v{new} → v1.0.0"),
-    ("ROADMAP.md", r'v0\.2\.[0-9]+ → v1\.0\.0', f"v{new} → v1.0.0"),
+    ("docs/ROADMAP.md", r'v0\.2\.[0-9]+ → v1\.0\.0', f"v{new} → v1.0.0"),
 ]
 for path, pat, repl in edits:
     try:

@@ -2,7 +2,7 @@
 
 This package registers luminary-memory as a Hermes ``MemoryProvider`` through the
 ``hermes_agent.memory_providers`` entry-point group. It is the standalone,
-pip-installable integration surface (see PLAN-v0.2.1.md §2.3).
+pip-installable integration surface (see ``docs/hermes-integration.md``).
 """
 
 from luminary_memory.hermes.provider import LuminaryMemoryProvider

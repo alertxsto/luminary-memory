@@ -6,36 +6,47 @@ Memory is a **loop**, not a one-shot pipeline: recall happens before the
 agent answers, ingest after, lifecycle in the background.
 
 ```
-ingest(text) ──► whitelist filter ──► (LLM enrich, optional) ──► embed ──► backend
-                                                                           │
-recall(query) ──► query expansion ──► 4 strategies ──► weighted RRF ──► adaptive cutoff ──► dedup ──► budget ──► results
-                                         │
+ingest(text) ──► whitelist ──► (LLM enrich, optional) ──► hash/evidence/claims ──► embed ──► backend + indexes
+                                                                                         │
+recall(query) ──► aliases ──► scoped candidates ──► RRF ──► confidence/abstention ──► cutoff ──► dedup/budget ──► results
+                                                                                         │
 core rules (DB, tag 'core', auto-loaded every session) ──► merged with recall, anti-duplicated
-                                         │
-lifecycle() ──► cleanup (TTL) ──► consolidate (semantic) ──► prune (importance + pinned-rules exempt) ──► max_memories cap
+                                                                                         │
+lifecycle() ──► cleanup (TTL) ──► consolidate ──► prune ──► max_memories cap + index repair state
 ```
 
 ## Ingest
 
-1. **Whitelist filter**, drops noise and non-durable text (configurable regex).
-2. **LLM enrichment** (optional), extracts a summary, entities, and tags. Provider-agnostic; a no-op by default so ingest works offline.
-3. **Embed**, local CPU embedding (fastembed / ONNX).
-4. **Store**, persists content, metadata, tags, timestamps, and the embedding to the backend.
+1. **Whitelist filter**, rejects disallowed text before it reaches any index.
+2. **LLM enrichment** (optional), extracts a summary, entities, tags, and
+   structured claims. The Hermes provider drops a turn when curation produces
+   no durable summary; it does not pollute the store with the raw transcript.
+3. **Evidence and identity**, validates the quote, assigns ownership/time
+   fields, status, confidence, source, and a normalized content hash.
+4. **Claim safety**, exact duplicates are suppressed within scope; same-key
+   conflicting claims remain versioned until an explicit supersession.
+5. **Embed and index**, local CPU embedding plus FTS, graph, evidence, claim,
+   episode, and audit records.
 
 ## Recall
 
 1. **Query expansion**, short queries are enriched with co-occurring graph entities before embedding (best-effort). When the graph yields nothing, rule-aware query expansion adds keywords from a topically-related durable rule.
-2. **Four strategies run in parallel:**
+2. **Four scoped strategy candidates:**
    - *semantic*, embedding similarity (vectorized cosine matmul).
    - *keyword*, FTS5 / BM25 term match.
    - *temporal*, recency decay × access popularity (batched top-id fetch, no N+1).
    - *graph*, entity co-occurrence traversal (SQL aggregation).
-3. **Weighted RRF fusion**, reciprocal-rank fusion with per-strategy weights (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1) combines the four ranked lists into one.
-4. **Importance boost**, memories at importance ≥ 0.8 get a ranking bonus (`importance_recall_boost`), lifting durable rules above weak-but-recent noise.
-5. **Adaptive cutoff** (cliff detection), cuts at the first steep score drop (default 45%) so a sparse store returns only the relevant cluster instead of padding to the limit.
-6. **Dedup**, Jaccard similarity removes near-duplicates.
-7. **Budget**, results truncated to a token budget so the context window stays safe.
-8. **Batched access bookkeeping**, recalled memories are marked accessed with one batched UPDATE (not N writes), and their importance is adaptively re-estimated on the spot so frequently used facts rank higher in the next turn's query recall.
+3. **Weighted RRF fusion**, reciprocal-rank fusion with per-strategy weights (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1) combines the available ranked lists into one.
+4. **Accuracy gate**, current status/validity/scope/tag filters, evidence-aware
+   confidence, and strict abstention run before fallback serialization.
+5. **Importance boost**, memories at importance ≥ 0.8 get a ranking bonus
+   (`importance_recall_boost`) without becoming an always-injected prompt tier.
+6. **Adaptive cutoff** (cliff detection), cuts at the first steep score drop
+   so a sparse store returns only the relevant cluster instead of padding.
+7. **Dedup and budget**, Jaccard similarity removes near-duplicates and the
+   token budget caps serialized context.
+8. **Batched access bookkeeping**, recalled memories are marked accessed with
+   one batched update and importance is re-estimated for the next query.
 
 ## Injection (Hermes provider)
 
@@ -68,3 +79,8 @@ Three maintenance passes, orchestrated by `run_lifecycle()`:
 Optional **LLM maintenance** (`run_maintenance()`, or provider `auto_maintain`)
 reviews the whole store and keeps/updates/deletes facts semantically.
 `health_score()` reports store quality (0-100) across five dimensions.
+
+All provider-owned writes use strict recall/evidence settings and disable
+destructive semantic rule replacement. The direct library client keeps its
+legacy replacement default for backwards compatibility; use explicit
+`claim_key` + `supersedes_id` when update history matters.

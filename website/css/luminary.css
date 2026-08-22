@@ -758,6 +758,25 @@ summary:focus-visible {
   border-radius: var(--radius-sm);
 }
 
+.accuracy-output {
+  max-width: 58rem;
+  margin-top: var(--s5);
+}
+
+.accuracy-output pre {
+  margin: var(--s3) 0 0;
+  padding: var(--s3);
+  overflow-x: auto;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
 /* ============================================================
    USE CASES
    ============================================================ */

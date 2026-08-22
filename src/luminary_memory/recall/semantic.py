@@ -15,13 +15,29 @@ def semantic_recall(
     engine: _Embedder,
     query: str,
     limit: int | None = 10,
+    scope: dict | None = None,
+    include_global: bool = True,
 ) -> list[tuple]:
-    query_vec = engine.embed(_expand_query(backend, query))
-    raw = backend.vector_search(query_vec, limit=limit)
+    query_vec = engine.embed(_expand_query(backend, query, scope=scope, include_global=include_global))
+    try:
+        raw = backend.vector_search(
+            query_vec,
+            limit=limit,
+            scope=scope,
+            include_global=include_global,
+        )
+    except TypeError:
+        raw = backend.vector_search(query_vec, limit=limit)
     return [(m, float(score), "semantic") for m, score in raw]
 
 
-def _expand_query(backend: MemoryBackend, query: str, max_extra: int = 8) -> str:
+def _expand_query(
+    backend: MemoryBackend,
+    query: str,
+    max_extra: int = 8,
+    scope: dict | None = None,
+    include_global: bool = True,
+) -> str:
     """Expand a short query with related entity names from the graph.
 
     A short query like "deploy?" produces a weak embedding. Appending entity
@@ -38,13 +54,20 @@ def _expand_query(backend: MemoryBackend, query: str, max_extra: int = 8) -> str
     if not words:
         return query
 
-    expanded = _expand_with_entities(backend, query, words, max_extra)
+    expanded = _expand_with_entities(backend, query, words, max_extra, scope, include_global)
     if expanded != query:
         return expanded
-    return _expand_with_rules(backend, query, words)
+    return _expand_with_rules(backend, query, words, scope, include_global)
 
 
-def _expand_with_entities(backend: MemoryBackend, query: str, words: list[str], max_extra: int) -> str:
+def _expand_with_entities(
+    backend: MemoryBackend,
+    query: str,
+    words: list[str],
+    max_extra: int,
+    scope: dict | None = None,
+    include_global: bool = True,
+) -> str:
     try:
         from luminary_memory.recall.graph import _exec, _query_entities
 
@@ -61,14 +84,18 @@ def _expand_with_entities(backend: MemoryBackend, query: str, words: list[str], 
         if not start_ids:
             return query
         sid_ph = ",".join("?" for _ in start_ids)
+        from luminary_memory.scope import scope_sql
+
+        scope_where, scope_params = scope_sql(scope, alias="m", include_global=include_global)
         rel_rows = _exec(
             backend,
             f"SELECT DISTINCT t.name FROM relations r "
             f"JOIN entities s ON s.id = r.source_id "
             f"JOIN entities t ON t.id = r.target_id "
-            f"WHERE s.id IN ({sid_ph}) AND t.name NOT IN ({ph}) "
+            f"JOIN memories m ON m.id = r.memory_id "
+            f"WHERE s.id IN ({sid_ph}) AND t.name NOT IN ({ph}) AND {scope_where} "
             f"ORDER BY r.weight DESC LIMIT ?",
-            (*start_ids, *qents, max_extra),
+            (*start_ids, *qents, *scope_params, max_extra),
         ).fetchall()
         extra = [str(r[0]) for r in rel_rows if str(r[0]) not in words]
         if not extra:
@@ -78,7 +105,13 @@ def _expand_with_entities(backend: MemoryBackend, query: str, words: list[str], 
         return query
 
 
-def _expand_with_rules(backend: MemoryBackend, query: str, words: list[str]) -> str:
+def _expand_with_rules(
+    backend: MemoryBackend,
+    query: str,
+    words: list[str],
+    scope: dict | None = None,
+    include_global: bool = True,
+) -> str:
     """Append up to 2 keywords from a durable rule whose topic overlaps the query.
 
     Looks at high-importance memories (rules) via the lean backend scan and
@@ -90,7 +123,15 @@ def _expand_with_rules(backend: MemoryBackend, query: str, words: list[str]) -> 
         top_by = getattr(backend, "top_by_importance", None)
         if top_by is None:
             return query
-        rules = top_by(top_n=8, min_importance=0.8)
+        try:
+            rules = top_by(
+                top_n=8,
+                min_importance=0.8,
+                scope=scope,
+                include_global=include_global,
+            )
+        except TypeError:
+            rules = top_by(top_n=8, min_importance=0.8)
         q_set = set(words)
         for rule in rules:
             r_words = [w for w in str(getattr(rule, "content", "") or "").lower().split() if len(w) > 2]

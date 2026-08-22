@@ -95,6 +95,9 @@ temp/
 REPORT-*.md
 *REPORT.md
 
+# ---- Local documentation and planning (keep out of source) ----
+docs/*
+
 # ---- Generated API docs (regenerate via pdoc) ----
 docs/api/
 

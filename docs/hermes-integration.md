@@ -1,6 +1,6 @@
 # Hermes integration
 
-Use luminary-memory as a first-class **memory provider** for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Since v0.2.1 the recommended path is the pip entry-point provider (`luminary`), which replaces the standalone-skill approach described below.
+Use luminary-memory as a first-class **memory provider** for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Since v0.2.1 the recommended path is the pip entry-point provider (`luminary`), which replaces the standalone-skill approach described below. The current provider is `0.2.18` and uses the strict accuracy path: scoped candidates, evidence-required results, abstention, and non-destructive rule updates.
 
 ## Preferred: install the provider (v0.2.1+)
 
@@ -21,9 +21,9 @@ memory:
 
 On the next session Hermes will:
 
-- **Auto-recall every turn**, the current user message is used to recall relevant memories from the local store, injected as a `# Luminary Memory (persistent cross-session context)` block.
+- **Auto-recall every turn**, the current user message is used to recall relevant memories from the local store, injected as a `# Luminary Memory (persistent cross-session context)` reference block. The block is filtered by session/user/workspace/agent scope and may explicitly abstain.
 - **Core rules auto-load every session**, durable rules tagged `core` (the DB-backed `MEMORY.md`) are always in the system prompt, independent of query match. All other memories come from query recall, merged under anti-duplication so nothing appears twice.
-- **Auto-save every session**, completed turns are persisted under session lineage tags (`session:<id>`, `parent:<id>`, `platform:<p>`, `agent:<identity>`).
+- **Auto-save every session**, completed turns are persisted under session lineage tags (`session:<id>`, `parent:<id>`, `platform:<p>`, `agent:<identity>`) and ownership fields.
 - **Expose explicit tools**, `luminary_recall` / `luminary_ingest` / `luminary_list` are registered for the model in `tools` and `hybrid` modes.
 - **Report a deterministic indicator**, a `🌙 Luminary, recalled N memories` status line appears whenever recall injected context.
 
@@ -63,6 +63,10 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `core_tag` | `core` | Tag marking DB-backed core memories — always auto-loaded into the system prompt every session (like MEMORY.md) |
 | `core_top_n` | `12` | Max core memories injected into the system prompt |
 | `core_budget` | `8000` | Max characters of core memory injected into the system prompt |
+
+The provider internally sets `strict_recall=true`, `evidence_required=true`,
+and `rule_auto_replace=false` regardless of the legacy direct-client defaults.
+This keeps weak results abstainable and contradictory claims auditable.
 
 ### Core memory (DB-backed, v0.2.13+)
 
@@ -128,12 +132,21 @@ Two safeguards keep rules accurate and non-contradictory:
 - **Raw transcripts are dropped when curation yields no summary**: with
   `ingest_llm: true`, a turn whose enrichment fails or returns nothing durable
   is not stored verbatim (avoids polluting the store with conversation noise).
-- **Rule auto-replace (anti-contradiction)**: ingesting a rule semantically
-  similar to an existing one (embedding cosine ≥ `rule_auto_replace_threshold`,
-  default 0.85) replaces it in place instead of stacking conflicting rows
-  (e.g. "never use tables" vs "always use tables").
+- **Non-destructive provider writes**: Hermes disables semantic rule
+  auto-replacement. A same-key, different-value claim remains `conflicted`
+  until the caller supplies an explicit supersession and evidence. The direct
+  library client keeps its legacy `rule_auto_replace` default for compatibility.
 - **Rule pinning**: memories at importance ≥ 0.9 are pinned — never pruned by
   importance or the `max_memories` cap, and never deleted by consolidation.
+
+### Scope, evidence, and status
+
+Provider-owned memories carry `user_id`, `workspace_id`, `agent_id`, and
+`session_id` when Hermes supplies them. Scope predicates run before semantic,
+keyword, graph, temporal, and fallback candidate generation. Every accepted
+write stores a grounded `evidence_quote`, source identifier, status, and
+confidence. Normal recall hides `conflicted`, `superseded`, and expired rows;
+diagnostic callers can request conflicts explicitly.
 
 ### Store layout
 
@@ -146,6 +159,14 @@ $HERMES_HOME/luminary/
 
 The store is profile-scoped and picked up by `hermes backup` automatically. If you
 override `db_path` to a location outside HERMES_HOME, `backup_paths()` declares it.
+
+### Activity hook contract
+
+The optional `luminary-activity` hook is registered for `agent:end`. It reports
+only persisted writes, escapes Telegram Markdown, supports Forum Topic IDs,
+and advances its cursor only after Telegram returns `ok: true`. Telegram
+failure/network errors leave the cursor unchanged so the notification retries.
+See [`hermes/hooks/luminary-activity/README.md`](../hermes/hooks/luminary-activity/README.md).
 
 ### Directory-install fallback
 

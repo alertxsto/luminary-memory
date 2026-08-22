@@ -157,6 +157,31 @@ def test_post_sends_correct_payload(tmp_path):
         assert body["parse_mode"] == "Markdown"
 
 
+def test_post_includes_forum_thread_id(tmp_path):
+    h = _load_handler(tmp_path, LUMINARY_HOOK_THREAD_ID="42")
+
+    with patch("urllib.request.urlopen") as mock_open:
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"ok":true}'
+        mock_open.return_value.__enter__.return_value = mock_resp
+
+        assert h._post("threaded activity") is True
+        req = mock_open.call_args.args[0]
+        body = json.loads(req.data.decode())
+        assert body["message_thread_id"] == 42
+
+
+def test_post_treats_telegram_ok_false_as_delivery_failure(tmp_path):
+    h = _load_handler(tmp_path)
+
+    with patch("urllib.request.urlopen") as mock_open:
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"ok":false,"description":"chat not found"}'
+        mock_open.return_value.__enter__.return_value = mock_resp
+
+        assert h._post("retriable activity") is False
+
+
 def test_post_swallows_network_error(tmp_path):
     h = _load_handler(tmp_path)
 
@@ -202,21 +227,22 @@ def test_post_falls_back_to_plain_text_on_http_400(tmp_path):
 
 
 # ============================================================================
-# handle — only on agent:end, skip agent:start (the hook YAML fires both)
+# handle — only on agent:end; the cursor commits after delivery succeeds
 # ============================================================================
 
 def test_handle_fires_on_agent_end(tmp_path):
     h = _load_handler(tmp_path)
-    with patch.object(h, "_recent_activity", return_value="test line") as mock_ra, \
-         patch.object(h, "_post") as mock_post:
+    with patch.object(h, "_read_recent_activity", return_value=("test line", 7)) as mock_ra, \
+         patch.object(h, "_post", return_value=True) as mock_post:
         h.handle("agent:end", {})
         mock_ra.assert_called_once()
         mock_post.assert_called_once_with("test line")
+        assert h._last_shown_id() == 7
 
 
 def test_handle_ignores_agent_start(tmp_path):
     h = _load_handler(tmp_path)
-    with patch.object(h, "_recent_activity") as mock_ra, \
+    with patch.object(h, "_read_recent_activity") as mock_ra, \
          patch.object(h, "_post") as mock_post:
         h.handle("agent:start", {})
         mock_ra.assert_not_called()
@@ -225,10 +251,24 @@ def test_handle_ignores_agent_start(tmp_path):
 
 def test_handle_skips_when_store_idle(tmp_path):
     h = _load_handler(tmp_path)
-    with patch.object(h, "_recent_activity", return_value=None), \
+    with patch.object(h, "_read_recent_activity", return_value=(None, None)), \
          patch.object(h, "_post") as mock_post:
         h.handle("agent:end", {})
         mock_post.assert_not_called()
+
+
+def test_handle_does_not_advance_cursor_when_telegram_fails(tmp_path):
+    h = _load_handler(tmp_path)
+    h._set_last_shown_id(0)
+    _seed(h.DB_PATH, ["fact that must be retried"])
+
+    with patch.object(h, "_post", return_value=False):
+        h.handle("agent:end", {})
+    assert h._last_shown_id() == 0
+
+    with patch.object(h, "_post", return_value=True):
+        h.handle("agent:end", {})
+    assert h._last_shown_id() == 1
 
 
 def test_recent_activity_escapes_markdown_underscores(tmp_path):
@@ -264,4 +304,3 @@ def test_recent_activity_handles_batch_overflow(tmp_path):
     assert "4 memories stored" in res
     assert "(+1 more)" in res
     assert h._last_shown_id() == 5
-

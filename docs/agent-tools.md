@@ -38,8 +38,8 @@ Paginates over the store. Useful for the agent to review what it has saved.
 
 Pins a memory as `core` + `importance 0.9`. Core memories are loaded into the
 system prompt at the start of every session — the DB-backed equivalent of
-`MEMORY.md`. Rule auto-replace is applied: a semantically similar existing rule
-is replaced instead of stacking a contradiction.
+`MEMORY.md`. The Hermes provider disables destructive semantic replacement, so
+similar but contradictory rules remain auditable until explicitly superseded.
 
 ## luminary_core_remove
 
@@ -68,3 +68,11 @@ what the agent will see at the start of the next session.
 | `context` | ✅ | ✅ | ❌ (no tools) |
 | `tools` | ❌ | ✅ | ✅ (all 6) |
 | `hybrid` | ✅ | ✅ | ✅ (all 6) |
+
+## Accuracy behavior
+
+Provider tool calls inherit the provider's current scope and strict recall
+policy. `luminary_recall` returns status, confidence, and provenance; an
+unrelated or weakly supported query may return `abstain` with no memories.
+`luminary_ingest` records evidence and ownership metadata, and exact duplicate
+writes are suppressed within the same scope.

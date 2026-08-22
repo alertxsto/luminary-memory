@@ -44,7 +44,7 @@ _DEFAULTS: dict = {
     "core_top_n": 12,  # max core memories injected into the system prompt
     "core_budget": 8000,  # max chars of core memory injected into the system prompt
     "importance_recall_boost": 1.0,  # ranking bonus multiplier for memories at importance >= 0.8
-    "recall_min_score": 0.0,  # score floor for recall results; below this is dropped (0 = off). Never empties the result (keeps top-1).
+    "recall_min_score": 0.0,  # score floor for recall results; weak results may be empty.
 }
 
 

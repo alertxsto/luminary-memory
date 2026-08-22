@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/luminary-memory?color=8ab4e8)](https://pypi.org/project/luminary-memory)
 [![License](https://img.shields.io/github/license/alertxsto/luminary-memory?color=8ab4e8)](LICENSE)
 [![CI](https://github.com/alertxsto/luminary-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/alertxsto/luminary-memory/actions)
-[![Tests](https://img.shields.io/badge/tests-375%2B%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
+[![Tests](https://img.shields.io/badge/tests-400%2B%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
 [![Coverage](https://img.shields.io/badge/coverage-93%25-8ab4e8)](https://github.com/alertxsto/luminary-memory)
 [![Stars](https://img.shields.io/github/stars/alertxsto/luminary-memory?color=8ab4e8)](https://github.com/alertxsto/luminary-memory)
 
@@ -18,14 +18,14 @@
 
 Agents are only as good as what they remember. A stateless agent re-learns the same context every session, paying the same tokens, making the same mistakes. luminary-memory closes that gap with a local memory store that persists between runs, retrieves the right context on demand, and keeps itself tidy over time.
 
-**Four retrieval strategies. One fused answer. Zero cloud.**
+**Four retrieval strategies. One fused result. Zero cloud.**
 
 - **Semantic**, ONNX embeddings (384-dim, CPU, no GPU needed)
 - **Keyword**, FTS5 BM25 (SQLite, zero config)
 - **Temporal**, recency decay × access count
 - **Graph**, entity co-occurrence with automatic curation
 
-Strategies run in parallel and fuse via **weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1)** → **adaptive cutoff (cliff detection)** → **Jaccard deduplication (0.85)** → **token budget (4096)**. Short queries are expanded with graph entities before embedding, so "deploy?" still finds "production cluster".
+Strategies fuse via **weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1)** → **scope/status/time filtering** → **conservative confidence and abstention** → **adaptive cutoff** → **Jaccard deduplication** → **token budget**. Short queries are expanded with graph entities and safe aliases before embedding.
 
 **Important rules always in context.** Durable rules tagged `core` are auto-loaded into the system prompt every session (the DB-backed `MEMORY.md`). All other memories are surfaced through query retrieval: relevant facts are recalled on demand (ranked by query relevance) and merged with the core block under anti-duplication, so the agent never forgets a durable rule.
 
@@ -56,6 +56,7 @@ for memory, score in zip(result.memories, result.scores):
 # CLI
 luminary-memory add "deploy target is staging" --tags deploy
 luminary-memory recall "where do we deploy?" --json
+luminary-memory activity --limit 5
 luminary-memory list
 luminary-memory lifecycle
 luminary-memory stats
@@ -77,7 +78,7 @@ Two optional LLM-powered features keep the store sharp:
 - **`ingest_llm`**, evaluates every turn before saving: drops chit-chat, stores factual summaries instead of raw transcripts.
 - **`auto_maintain`**, reviews the store at session end: keeps current facts, updates changed ones, deletes stale or duplicate ones.
 
-29 settings are exposed in the [Hermes dashboard](https://alertxsto.github.io/luminary-memory) for zero-hassle tuning. See
+28 settings are exposed in the [Hermes dashboard](https://alertxsto.github.io/luminary-memory) for zero-hassle tuning. See
 [docs/config-reference.md](docs/config-reference.md) for the complete reference and
 [hermes/README.md](hermes/README.md) for the one-shot installer.
 
@@ -126,6 +127,10 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `llm_max_tokens` | `LUMINARY_LLM_MAX_TOKENS` | `512` |
 | `rule_keywords` | `LUMINARY_RULE_KEYWORDS` | `NEVER,ALWAYS,MUST,...` |
 
+> The direct library client keeps `rule_auto_replace=true` for compatibility.
+> The accuracy-facing CLI and Hermes provider explicitly disable destructive
+> replacement and preserve conflicting claims for explicit supersession.
+
 > Provider-specific settings (Hermes dashboard): `max_memories`,
 > `mode`, `recall_limit`, `auto_recall`, `recall_sync`, `auto_retain`,
 > `retain_every_n_turns`, `retain_user_prefix` / `retain_assistant_prefix`,
@@ -144,7 +149,7 @@ after, and a background lifecycle keeps the store lean.
 ```
         ┌───────────────────────────── LOOP ─────────────────────────────┐
         │                                                               │
-   recall(query) ──► 4 strategies in parallel ──► weighted RRF ──► adaptive cutoff ──► ranked results
+   recall(query) ──► scoped strategy candidates ──► weighted RRF ──► confidence/abstention ──► ranked results
         ▲            semantic │ keyword │ temporal │ graph   (per-strategy weights)   (cliff detection)
         │                                                               │
         └── inject into agent context ◄── token budget (4096) ◄── dedup (Jaccard 0.85)
@@ -157,11 +162,15 @@ after, and a background lifecycle keeps the store lean.
    maintenance() ──► LLM reviews store ──► keep │ update │ delete stale facts
 ```
 
-**Why it is accurate:**
+**Accuracy safeguards:**
 
 | Stage | Mechanism |
 |-------|-----------|
-| **4 strategies** | Semantic (ONNX cosine, vectorized matmul) + keyword (FTS5 BM25) + temporal (recency × access, batched fetch) + graph (entity co-occurrence, SQL aggregation), all in parallel |
+| **4 strategies** | Semantic (ONNX cosine, vectorized matmul) + keyword (FTS5 BM25) + temporal (recency × access, batched fetch) + graph (entity co-occurrence, SQL aggregation) |
+| **Scope isolation** | User/workspace/agent/session predicates are applied before fusion and fallback |
+| **Abstention** | Strict provider/CLI paths can return `abstain` when support is weak or ambiguous |
+| **Evidence** | Stored claims retain evidence quote, source, validity time, and audit provenance |
+| **Conflict safety** | Conflicting claim keys remain versioned/conflicted until explicit supersession or resolution |
 | **Core memory** | Rules tagged `core` are auto-loaded into the system prompt every session (the DB-backed MEMORY.md), independent of query match |
 | **Weighted fusion** | Each strategy carries a tunable weight (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1), so high-signal strategies dominate the ranking |
 | **Query expansion** | Short queries are expanded with co-occurring graph entities before embedding; when the graph is empty, keywords from a durable rule on the same topic are appended (v0.2.15). A bare "deploy?" still finds "production cluster" |
@@ -175,7 +184,7 @@ after, and a background lifecycle keeps the store lean.
 |-------|-----------|
 | **Lifecycle** | TTL cleanup, semantic consolidation (embedding cosine, fallback Jaccard), importance-based pruning (all batched at the backend level) |
 | **Rule pinning** | Memories at importance ≥ 0.9 are pinned: never pruned, never deleted by consolidation |
-| **Rule auto-replace** | Similar rule ingests replace the old one (anti-contradiction), so "never use tables" never coexists with "always use tables" |
+| **Rule replacement** | Hermes/CLI disable destructive replacement by default; legacy direct-client behavior remains compatibility-controlled |
 | **Store hygiene** | Rule keywords are checked only against the LLM-curated summary (raw transcripts are never pinned); turns without a curated summary are dropped when `ingest_llm` is on |
 | **Auto importance** | Every memory is scored by recency + access + graph centrality; prune and health use live values. On recall, frequently-used memories are re-estimated immediately so they rank higher in the next turn's query recall (v0.2.15, `LUMINARY_IMPORTANCE_AUTO`) |
 | **Max memories cap** | `max_memories` (default 1000) prunes the oldest/lowest-importance when the store exceeds it |
@@ -202,8 +211,8 @@ after, and a background lifecycle keeps the store lean.
 | [Configuration reference](docs/config-reference.md) | All 37 env vars + provider config |
 | [Hermes integration](docs/hermes-integration.md) | Provider, config, installer |
 | [Debugging Guide](docs/debugging-v0.2.17.md) | Gateway envelopes, hook internals, verification |
-| [Roadmap](ROADMAP.md) | v0.2.17 → v1.0.0 |
-| [Benchmarks](benchmarks/RESULTS.md) | ~77 ms recall @ 5k (p50), 0 LLM tokens |
+| Roadmap (local) | `docs/ROADMAP.md` is intentionally ignored from source via `docs/*` |
+| [Benchmarks](benchmarks/RESULTS.md) | Pipeline smoke + independent gold-set metrics (not a competitor proof) |
 
 ---
 

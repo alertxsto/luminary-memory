@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Luminary Memory - What Your Agent Remembers Is What It Becomes</title>
-  <meta name="description" content="Luminary Memory: local 384-d ONNX vector search, SQLite FTS5 keyword, temporal decay, and entity graph retrieval fused via RRF. Core memory auto-loaded every session. 0 LLM tokens per recall. Self-hosted, Apache-2.0.">
+  <meta name="description" content="Luminary Memory: scoped, evidence-aware memory for AI agents. Local 384-d ONNX search, SQLite FTS5, temporal decay, and entity graph candidates fused via RRF. Core memory auto-loaded every session; strict paths can abstain.">
   <meta property="og:title" content="Luminary Memory - What Your Agent Remembers Is What It Becomes">
-  <meta property="og:description" content="Embedded memory layer for AI agents. Four retrieval strategies fused via RRF. Core memory (DB-backed MEMORY.md) auto-loaded every session. Local CPU ONNX, zero cloud, zero LLM tokens per search.">
+  <meta property="og:description" content="Embedded memory layer for AI agents. Scoped, evidence-aware recall with four candidate strategies, strict abstention, and DB-backed core memory. Local CPU ONNX by default.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://alertxsto.github.io/luminary-memory/">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Luminary Memory - What Your Agent Remembers Is What It Becomes">
-  <meta name="twitter:description" content="Embedded memory for AI agents. Four-strategy fused recall + DB-backed core memory. 0 LLM tokens per recall.">
+  <meta name="twitter:description" content="Evidence-aware memory for AI agents. Scoped four-strategy recall, strict abstention, and DB-backed core memory.">
   <meta name="theme-color" content="#06070a">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23e9f6ff'><path d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -45,6 +45,7 @@
       <a href="#core-memory">Core Memory</a>
       <a href="#agent-tools">Agent Tools</a>
       <a href="#benchmarks">Benchmarks</a>
+      <a href="#accuracy">Accuracy</a>
       <a href="#quickstart">Quickstart</a>
       <a href="#backends">Backends</a>
       <a href="#faq">FAQ</a>
@@ -70,7 +71,7 @@
     <div class="hero-inner reveal-on-scroll">
       <div class="eyebrow">
         <span class="eyebrow-dot" aria-hidden="true"></span>
-        <span>v0.2.18 · Self-Hosted Memory Layer · 93% Test Coverage</span>
+        <span>v0.2.18 · Self-Hosted Memory Layer · 406 Tests Passing</span>
       </div>
 
       <h1 class="hero-title">
@@ -132,7 +133,7 @@
         <pre class="term-body"><code><span class="c-com"># 1. Ingest a memory with metadata tags</span>
 <span class="c-fn">luminary-memory</span> add <span class="c-str">"The deploy target is the staging cluster"</span> --tags deploy infra
 
-<span class="c-com"># 2. Recall with 4-strategy parallel fusion</span>
+<span class="c-com"># 2. Recall with scoped 4-strategy fusion + abstention</span>
 <span class="c-fn">luminary-memory</span> recall <span class="c-str">"where do we deploy?"</span> --limit 5 --json
 
 <span class="c-com"># 3. Fast keyword search across FTS5 index</span>
@@ -189,9 +190,9 @@
         <p class="stat-sub">Retrieval runs locally via CPU ONNX embeddings. You never burn API tokens to search memory.</p>
       </div>
       <div class="stat-card">
-        <span class="stat-num">~77<em>ms</em></span>
-        <h3 class="stat-label">End-to-End Recall (p50, 5k store)</h3>
-        <p class="stat-sub">Measured on 5,000-memory stores (deterministic pipeline). 4 parallel strategies fused, MRR 1.0.</p>
+        <span class="stat-num">76.9<em>ms</em></span>
+        <h3 class="stat-label">Pipeline Recall p50 @ 5k</h3>
+        <p class="stat-sub">Deterministic SQLite smoke measurement. This is a latency signal, not an independent accuracy claim.</p>
       </div>
       <div class="stat-card">
         <span class="stat-num">4</span>
@@ -214,7 +215,7 @@
 
     <div class="why-body reveal-on-scroll">
       <p class="lead">
-        When agents restart from an empty prompt every turn, they repeat past mistakes, re-query known data, and inflate token bills. Luminary provides an embedded, self-pruning memory store that sits directly inside your Python process. Every memory is embedded locally, indexed across four dimensions, and retrieved in parallel without cloud roundtrips.
+        When agents restart from an empty prompt every turn, they repeat past mistakes, re-query known data, and inflate token bills. Luminary provides an embedded, self-pruning memory store that sits directly inside your Python process. Candidate memories are filtered by scope, status, validity, and evidence before the ranked result reaches the agent.
       </p>
 
       <dl class="recall-grid">
@@ -237,9 +238,9 @@
       </dl>
 
       <div class="fusion-note">
-        <h3 class="fusion-title">Parallel Fusion &amp; Anti-Contradiction</h3>
-        <p>All four strategies run concurrently and fuse via <strong>weighted Reciprocal Rank Fusion</strong> (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1). Short queries are expanded with graph entities — and when the graph is empty, with keywords from a durable rule on the same topic (v0.2.16). Jaccard dedup (0.85) removes paraphrases, adaptive cliff cutoff keeps only the relevant cluster, and a hard token budget protects the context window. Rules at importance ≥ 0.9 are pinned (never pruned or consolidated away), and a similar rule ingest auto-replaces the old one — "never use tables" never coexists with "always use tables".</p>
-        <p class="fusion-meta">RRF <code>k=60</code> · Jaccard Dedup <code>0.85</code> · Token Budget <code>4096</code> · Embedding Dim <code>384</code></p>
+        <h3 class="fusion-title">Scoped Fusion &amp; Evidence Gates</h3>
+        <p>The planner routes a query through semantic, keyword, temporal, and entity-graph candidates, then combines available lists with <strong>weighted Reciprocal Rank Fusion</strong> (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1). Scope, status, validity, evidence, confidence, abstention, deduplication, and token budget are applied before context injection. Contradictory claim keys stay auditable until explicitly superseded; the Hermes/CLI paths do not destructively auto-replace them.</p>
+        <p class="fusion-meta">RRF <code>k=60</code> · Jaccard Dedup <code>0.85</code> · Configurable Token Budget · Embedding Dim <code>384</code></p>
       </div>
     </div>
   </section>
@@ -248,7 +249,7 @@
   <section class="arch" id="core-memory">
     <div class="arch-head reveal-on-scroll">
       <h2>Core Memory. Auto-Loaded Every Session.</h2>
-      <p class="arch-sub">The DB-backed equivalent of Hermes' native <code>MEMORY.md</code> — but stored in the database, patched by the agent, and always present from the very first prompt.</p>
+        <p class="arch-sub">The DB-backed equivalent of Hermes' native <code>MEMORY.md</code> — stored in the database, patched by the agent, and always present from the very first prompt. Importance ranks query recall; it is not a hidden prompt tier.</p>
     </div>
 
     <div class="arch-steps reveal-on-scroll">
@@ -349,12 +350,12 @@
       </div>
       <div class="bench-row">
         <div class="bench-metric">Recall latency, 5k store</div>
-        <div class="bench-sqlite">~99ms p50 (deterministic pipeline, vectorized)</div>
+        <div class="bench-sqlite">76.9ms p50 (deterministic pipeline, vectorized)</div>
         <div class="bench-pg bench-pg-missing">not yet benchmarked</div>
       </div>
       <div class="bench-row">
-        <div class="bench-metric">Recall quality (MRR)</div>
-        <div class="bench-sqlite">1.0 on synthetic benchmarks</div>
+        <div class="bench-metric">Controlled gold recall@10</div>
+        <div class="bench-sqlite">0.95 (12-case regression fixture)</div>
         <div class="bench-pg bench-pg-missing">not yet benchmarked</div>
       </div>
       <div class="bench-row">
@@ -374,7 +375,58 @@
       </div>
     </div>
 
-    <p class="bench-help reveal-on-scroll">Want to fill in the pgvector numbers? <a href="https://github.com/alertxsto/luminary-memory/issues/6">Issue #6</a> is a real benchmark task.</p>
+    <p class="bench-help reveal-on-scroll">Gold metrics are a controlled regression signal, not proof against Mem0 or Hindsight. See the <a href="https://github.com/alertxsto/luminary-memory/blob/main/benchmarks/README.md" target="_blank" rel="noopener">benchmark protocol</a> for matched-evaluation requirements.</p>
+  </section>
+
+  <!-- ============ ACCURACY + ACTIVITY ============ -->
+  <section class="backends" id="accuracy">
+    <div class="backends-head reveal-on-scroll">
+      <h2>Accurate Output Has an Honest Status.</h2>
+      <p class="backends-sub">The strict CLI and Hermes paths can abstain, preserve evidence, and report only writes that actually committed.</p>
+    </div>
+
+    <div class="bench-table reveal-on-scroll">
+      <div class="bench-row bench-row-head">
+        <div class="bench-metric">Guard</div>
+        <div class="bench-sqlite">Behavior</div>
+        <div class="bench-pg">Why it matters</div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-metric"><code>scope</code></div>
+        <div class="bench-sqlite">Filters user/workspace/agent/session before candidates and fallback</div>
+        <div class="bench-pg">Prevents cross-context leakage</div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-metric"><code>evidence</code></div>
+        <div class="bench-sqlite">Returns grounded quote, source, validity, and provenance</div>
+        <div class="bench-pg">Makes a recalled fact auditable</div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-metric"><code>abstain</code></div>
+        <div class="bench-sqlite">Weak or ambiguous queries return no memory</div>
+        <div class="bench-pg">Avoids confident-looking guesses</div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-metric"><code>agent:end</code></div>
+        <div class="bench-sqlite">Telegram cursor advances only after <code>ok:true</code></div>
+        <div class="bench-pg">Failed delivery retries safely</div>
+      </div>
+    </div>
+
+    <div class="fusion-note reveal-on-scroll accuracy-output">
+      <h3 class="fusion-title">CLI + Telegram examples</h3>
+      <pre><code>$ luminary-memory recall "what is the office wifi password?" --json
+{
+  "status": "abstain",
+  "reason": "low_confidence_or_ambiguous",
+  "memories": []
+}
+
+🌙 Luminary — 2 recent memories stored
+  📌 #12 ALWAYS verify tests before release
+  • #11 Deploy target is staging</code></pre>
+      <p class="fusion-meta">The Telegram hook reports persisted writes only. It escapes Markdown, supports Forum Topics, and retries pending IDs after network or API failures.</p>
+    </div>
   </section>
 
   <!-- ============ USE CASES ============ -->
@@ -468,13 +520,13 @@
       <div class="arch-step">
         <div class="arch-body">
           <h3>Core rules loaded first</h3>
-          <p>At session start, the <code>&lt;memory-context&gt;</code> block is built from core memory (tagged <code>core</code>) plus the top-N by importance. Injected into the system prompt — the agent always knows the durable rules.</p>
+        <p>At session start, the core block is built only from database rows tagged <code>core</code>, bounded by <code>core_top_n</code> and <code>core_budget</code>. Injected as subordinate reference data, it gives the agent durable rules without letting stale memory override a live instruction.</p>
         </div>
       </div>
       <div class="arch-step">
         <div class="arch-body">
           <h3>Recall before you answer</h3>
-          <p>At the start of every turn, four strategies run in parallel: vector cosine, FTS5 OR keyword, temporal decay, entity graph. Weighted RRF (<code>k=60</code>) fuses them, Jaccard dedup (<code>0.85</code>) drops paraphrases, and a token budget (<code>4096</code>) caps what enters the context window. The recalled block is appended to the turn's message as authoritative reference data.</p>
+        <p>At the start of every turn, the planner selects from vector cosine, FTS5 OR keyword, temporal decay, and entity graph candidates. Weighted RRF (<code>k=60</code>) fuses the available lists; scope, status, validity, evidence, confidence, abstention, Jaccard dedup, and a configurable token budget run before the block enters context as untrusted reference data.</p>
         </div>
       </div>
       <div class="arch-step">
@@ -486,13 +538,13 @@
       <div class="arch-step">
         <div class="arch-body">
           <h3>Ingest what mattered</h3>
-          <p>After the turn, durable facts are extracted (optional <code>LLM</code> curation filters chit-chat; rule keywords are checked only against the curated summary, never raw transcripts), embedded locally, and stored with metadata tags and co-occurrence relations.</p>
+        <p>After the turn, durable facts are extracted (optional <code>LLM</code> curation filters chit-chat; rule keywords are checked only against the curated summary, never raw transcripts), grounded with evidence, embedded locally, and stored with scope, status, claims, and co-occurrence relations. If enabled curation yields no durable summary, the provider drops the turn instead of saving noise.</p>
         </div>
       </div>
       <div class="arch-step">
         <div class="arch-body">
           <h3>Lifecycle keeps it sharp</h3>
-          <p>Periodically, <code>TTL</code> cleanup expires stale facts, semantic consolidation merges near-duplicates (pinned rules exempt), importance-based pruning drops low-value noise, and the <code>max_memories</code> cap is enforced. The store stays lean without you touching it.</p>
+        <p>Periodically, <code>TTL</code> cleanup expires stale facts, semantic consolidation merges near-duplicates (pinned rules exempt), importance-based pruning drops low-value noise, and the <code>max_memories</code> cap is enforced. Mutations refresh FTS/embeddings/graph state or mark a row for reindex repair.</p>
         </div>
       </div>
     </div>
@@ -552,7 +604,7 @@
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>No. Luminary is completely self-hosted. Embeddings are generated on your local CPU using an ONNX runtime (<code>BAAI/bge-small-en-v1.5</code>), and memories are persisted directly to your local SQLite file or your own PostgreSQL instance. There is zero telemetry and zero external API calls.</p>
+          <p>By default, yes: retrieval, embeddings, storage, and lifecycle run on your machine or your own PostgreSQL instance. Optional <code>ingest_llm</code> / <code>auto_maintain</code> deliberately send selected write-time content to the OpenAI-compatible endpoint you configure; retrieval itself does not call an LLM.</p>
         </div>
       </details>
 
@@ -572,7 +624,7 @@
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>Vector search alone struggles with exact identifiers (function names, file paths, error codes) and ignores temporal recency. Luminary combines vector similarity with SQLite FTS5 exact keyword matching (OR-joined so multi-word queries never come back empty), temporal decay curves, and entity graph co-occurrences. Results are merged via Reciprocal Rank Fusion (<code>k=60</code>) and pruned with Jaccard deduplication (<code>0.85</code>).</p>
+          <p>Vector search alone struggles with exact identifiers (function names, file paths, error codes) and ignores temporal recency. Luminary combines vector similarity with SQLite FTS5 exact keyword matching (OR-joined), temporal decay curves, and entity graph co-occurrences. A planner selects useful candidates, then scope/status/evidence checks, Reciprocal Rank Fusion (<code>k=60</code>), abstention, and Jaccard deduplication (<code>0.85</code>) protect the final context.</p>
         </div>
       </details>
 
@@ -592,7 +644,7 @@
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>Several layers keep the store lean: deterministic lifecycle passes (<code>run_lifecycle()</code>) that expire TTLs, consolidate near-duplicates via semantic cosine clustering, and prune low-importance entries (&lt;0.2); a hard <code>max_memories</code> cap enforced by the lifecycle; and an optional LLM maintenance review (<code>run_maintenance()</code>) that cleans obsolete facts at session end. Rule pinning ensures durable rules survive every pass.</p>
+          <p>Several layers keep the store lean: deterministic lifecycle passes (<code>run_lifecycle()</code>) that expire TTLs, consolidate near-duplicates via semantic cosine clustering, and prune low-importance entries (&lt;0.2); a hard <code>max_memories</code> cap enforced by the lifecycle; and an optional LLM maintenance review (<code>run_maintenance()</code>) that cleans obsolete facts at session end. Core/pinned rules are protected, while conflicting claims remain auditable until explicitly superseded.</p>
         </div>
       </details>
 
@@ -632,7 +684,7 @@
           <span class="faq-toggle" aria-hidden="true">+</span>
         </summary>
         <div class="faq-answer">
-          <p>Four safeguards: (1) <strong>Core memory</strong> - memories tagged <code>core</code> are auto-loaded into the system prompt every session (the DB-backed equivalent of <code>MEMORY.md</code>), so durable rules are present from the very first prompt. (2) <strong>Query recall</strong> - relevant memories are recalled on demand and injected as a reference that is subordinate to your current instruction. (3) <strong>Rule pinning</strong> - memories at importance ≥ 0.9 are never pruned or consolidated away. (4) <strong>Rule auto-replace</strong> - a similar rule ingest replaces the old one (anti-contradiction), so "never use tables" never coexists with "always use tables". Since v0.2.16 the store also <strong>learns from use</strong>: memories that keep getting recalled are re-estimated immediately and rank higher in the next turn's recall.</p>
+          <p>Four safeguards: (1) <strong>Core memory</strong> - memories tagged <code>core</code> are auto-loaded into the system prompt every session (the DB-backed equivalent of <code>MEMORY.md</code>), so durable rules are present from the very first prompt. (2) <strong>Query recall</strong> - relevant memories are recalled on demand and injected as a reference subordinate to your current instruction. (3) <strong>Rule pinning</strong> - memories at importance ≥ 0.9 are protected from ordinary prune/consolidation. (4) <strong>Claim history</strong> - the strict provider/CLI paths preserve conflicting values and require explicit supersession with evidence. Memories that keep getting recalled are re-estimated immediately and rank higher in later query recall.</p>
         </div>
       </details>
     </div>
@@ -672,7 +724,7 @@
       <div class="cta-meta">
         <span>Apache-2.0 License</span>
         <span class="dot" aria-hidden="true">·</span>
-        <span>93% Test Coverage</span>
+        <span>406 Tests Passing</span>
         <span class="dot" aria-hidden="true">·</span>
         <span>Python 3.11+</span>
         <span class="dot" aria-hidden="true">·</span>
@@ -705,6 +757,7 @@
           <a href="#core-memory">Core Memory</a>
           <a href="#agent-tools">Agent Tools</a>
           <a href="#benchmarks">Benchmarks</a>
+          <a href="#accuracy">Accuracy</a>
           <a href="#quickstart">Quickstart</a>
           <a href="#backends">Backends</a>
           <a href="#faq">FAQ</a>
@@ -719,6 +772,7 @@
           <a href="https://github.com/alertxsto/luminary-memory/blob/main/docs/architecture.md" target="_blank" rel="noopener">Architecture Guide</a>
           <a href="https://github.com/alertxsto/luminary-memory/blob/main/docs/hermes-integration.md" target="_blank" rel="noopener">Hermes Integration</a>
           <a href="https://github.com/alertxsto/luminary-memory/blob/main/docs/config-reference.md" target="_blank" rel="noopener">Configuration Reference</a>
+          <a href="https://github.com/alertxsto/luminary-memory/blob/main/benchmarks/README.md" target="_blank" rel="noopener">Benchmark Protocol</a>
         </div>
       </div>
 

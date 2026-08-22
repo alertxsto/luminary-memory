@@ -16,6 +16,10 @@ class EnrichedContent:
     tags: list[str] = field(default_factory=list)
     worth_saving: bool = True
     importance: float | None = None  # explicit importance hint (rules get high)
+    # Optional structured claims.  The legacy summary fields remain for
+    # compatibility; validated claims give the writer a canonical key and a
+    # grounded evidence quote instead of treating an embedding as truth.
+    claims: list[dict] = field(default_factory=list)
 
 
 class LLMEnricher:
@@ -182,6 +186,9 @@ class OpenAICompatibleEnricher(LLMEnricher):
                             "empty string.\n"
                             "- entities (list of strings): key nouns/names mentioned. Empty if false.\n"
                             "- tags (list of strings): 1-3 short tags. Empty if false.\n"
+                            "- claims (list): atomic claims with subject, predicate, object, "
+                            "polarity, confidence, evidence_quote, and optional valid_from/valid_to. "
+                            "The evidence_quote MUST be copied from the turn. Empty if false.\n"
                             "No extra keys, no markdown."
                         ),
                     },
@@ -192,12 +199,15 @@ class OpenAICompatibleEnricher(LLMEnricher):
             summary = data.get("summary")
             entities = data.get("entities") or []
             tags = data.get("tags") or []
+            claims = data.get("claims") or []
             worth = data.get("worth_saving")
             # Normalize to expected types.
             if not isinstance(entities, list):
                 entities = []
             if not isinstance(tags, list):
                 tags = []
+            if not isinstance(claims, list):
+                claims = []
             if not isinstance(summary, str):
                 summary = None
             # Auto-importance for rules: only a *curated summary* that reads
@@ -221,6 +231,39 @@ class OpenAICompatibleEnricher(LLMEnricher):
             if summary_s and any(kw in summary_s.upper() for kw in rule_keywords):
                 importance = self.rule_importance
 
+            validated_claims: list[dict] = []
+            for claim in claims:
+                if not isinstance(claim, dict):
+                    continue
+                subject = str(claim.get("subject") or "").strip()
+                predicate = str(claim.get("predicate") or "").strip()
+                obj = str(claim.get("object") or "").strip()
+                quote = str(claim.get("evidence_quote") or "").strip()
+                polarity = str(claim.get("polarity") or "positive").strip().lower()
+                if not subject or not predicate or not obj or not quote:
+                    continue
+                if quote not in text:
+                    continue
+                if polarity not in {"positive", "negative", "unknown"}:
+                    continue
+                try:
+                    claim_confidence = max(0.0, min(1.0, float(claim.get("confidence", 1.0))))
+                except (TypeError, ValueError):
+                    continue
+                validated_claims.append(
+                    {
+                        "subject": subject,
+                        "predicate": predicate,
+                        "object": obj,
+                        "polarity": polarity,
+                        "confidence": claim_confidence,
+                        "evidence_quote": quote,
+                        "observed_at": claim.get("observed_at"),
+                        "valid_from": claim.get("valid_from"),
+                        "valid_to": claim.get("valid_to"),
+                    }
+                )
+
             return EnrichedContent(
                 content=text,
                 summary=summary if summary and summary.strip() else None,
@@ -228,6 +271,7 @@ class OpenAICompatibleEnricher(LLMEnricher):
                 tags=[str(x).strip() for x in tags if isinstance(x, str) and x.strip()],
                 worth_saving=bool(worth) if worth is not None else True,
                 importance=importance,
+                claims=validated_claims,
             )
         except Exception:  # noqa: BLE001 -- enrichment is best-effort
             return EnrichedContent(content=text)

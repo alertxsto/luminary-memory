@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from luminary_memory.scope import scope_sql
+
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
 
@@ -72,13 +74,17 @@ MAX_RELATIONS_PER_MEMORY = 8
 
 
 def index_memory_entities(backend, memory) -> None:
+    if getattr(memory, "id", None) is None:
+        return
+    # Clear old edges even when the updated content has no extractable
+    # entities. Otherwise a rename/removal leaves stale graph evidence that
+    # can keep an obsolete memory in recall.
+    _exec(backend, "DELETE FROM relations WHERE memory_id = ?", (memory.id,))
     ents = extract_entities(memory)
     if not ents:
+        backend.conn.commit()
         return
     ids = [_entity_id(backend, e) for e in ents]
-    # Idempotent: clear prior relations for this memory before re-inserting,
-    # so re-indexing never duplicates edges.
-    _exec(backend, "DELETE FROM relations WHERE memory_id = ?", (memory.id,))
     # Generate pairs in salience order (first entities are most salient),
     # then cap the total so dense memories don't explode the graph.
     pairs: list[tuple[int, int]] = []
@@ -117,6 +123,8 @@ def graph_recall(
     backend: MemoryBackend,
     query: str,
     limit: int | None = 10,
+    scope: dict | None = None,
+    include_global: bool = True,
 ) -> list[tuple]:
     query_ents = _query_entities(query)
     if not query_ents:
@@ -136,12 +144,18 @@ def graph_recall(
     # Python (a dense entity graph can produce hundreds of thousands of
     # relation rows; summing them in the database is orders of magnitude
     # faster and yields identical scores).
+    scope_where, scope_params = scope_sql(
+        scope,
+        alias="m",
+        include_global=include_global,
+    )
     rel_rows = _exec(
         backend,
         f"SELECT memory_id, SUM(weight) AS score, COUNT(*) AS cnt "
-        f"FROM relations WHERE source_id IN ({sid_ph}) "
+        f"FROM relations r JOIN memories m ON m.id = r.memory_id "
+        f"WHERE r.source_id IN ({sid_ph}) AND {scope_where} "
         f"GROUP BY memory_id",
-        tuple(start_ids),
+        tuple(start_ids) + tuple(scope_params),
     ).fetchall()
     rel_scores: dict[int, float] = {}
     rel_counts: dict[int, int] = {}
@@ -153,9 +167,11 @@ def graph_recall(
     eid_ph = ",".join("?" for _ in start_ids)
     for mid_row in _exec(
         backend,
-        f"SELECT DISTINCT memory_id FROM relations "
-        f"WHERE source_id IN ({eid_ph}) OR target_id IN ({eid_ph})",
-        tuple(start_ids) + tuple(start_ids),
+        f"SELECT DISTINCT r.memory_id FROM relations r "
+        f"JOIN memories m ON m.id = r.memory_id "
+        f"WHERE (r.source_id IN ({eid_ph}) OR r.target_id IN ({eid_ph})) "
+        f"AND {scope_where}",
+        tuple(start_ids) + tuple(start_ids) + tuple(scope_params),
     ).fetchall():
         direct_ids.add(int(mid_row[0]))
     for mid in direct_ids:
@@ -168,8 +184,8 @@ def graph_recall(
         mid_ph = ",".join("?" for _ in rel_scores)
         mem_rows = _exec(
             backend,
-            f"SELECT * FROM memories WHERE id IN ({mid_ph})",
-            tuple(rel_scores.keys()),
+            f"SELECT * FROM memories m WHERE m.id IN ({mid_ph}) AND {scope_where}",
+            tuple(rel_scores.keys()) + tuple(scope_params),
         ).fetchall()
         mem_by_id = {int(r["id"]): r for r in mem_rows}
         row_to_mem = getattr(backend, "_row_to_memory", None)

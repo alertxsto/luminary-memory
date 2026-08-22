@@ -2,7 +2,8 @@
 
 One-shot installer for using luminary-memory as a first-class Hermes Agent
 memory provider: auto-recall every turn, auto-save every session, zero LLM
-tokens per turn, plus an optional chat-activity hook and a skill.
+tokens for retrieval, plus optional write-time curation, a chat-activity hook,
+and a skill.
 
 ## Quick install
 
@@ -17,7 +18,7 @@ That installs everything:
 | Component | What it does |
 |-----------|--------------|
 | **Provider** | `pip install luminary-memory[hermes]` + `memory.provider: luminary` in Hermes config |
-| **Hook** | `luminary-activity`, posts `🌙 Luminary, N memories recalled/stored` to chat |
+| **Hook** | `luminary-activity`, posts `🌙 Luminary — N memories stored` to chat after committed writes |
 | **Skill** | `luminary-memory` skill for agent use |
 
 Then restart your gateway:
@@ -57,9 +58,11 @@ Enable it (after `bash hermes/install.sh --llm`, edit
 }
 ```
 
-Any OpenAI-compatible endpoint works. Costs one small LLM call per retained
-turn (temperature 0, strict JSON). If the enricher fails, the provider falls
-back to storing the turn verbatim, it never blocks.
+Any OpenAI-compatible endpoint works. It costs one small LLM call per retained
+turn (temperature 0, strict JSON). Gateway responses may be direct
+`choices` or wrapped as `data.choices`; both are accepted. If curation fails
+or produces no durable summary, the Hermes provider drops that turn rather than
+storing a raw transcript as a false fact; the writer never blocks the agent.
 
 ### Store maintenance (auto_maintain)
 
@@ -80,10 +83,14 @@ changed ones, and **deletes stale, contradicted, or duplicate memories**:
 Results land in the transparency log:
 `maintenance {'reviewed': N, 'deleted': N, 'updated': N}`.
 
+For correctness, Hermes sets strict recall/evidence mode and disables
+destructive rule replacement. Conflicting claim keys remain visible in audit
+history until explicitly superseded.
+
 ## Manual install (no script)
 
 ```bash
-pip install "luminary-memory[hermes]>=0.2.15"
+pip install "luminary-memory[hermes]>=0.2.18"
 
 # config.yaml, add under memory:
 #   provider: luminary
@@ -109,6 +116,8 @@ cp hermes/SKILL.md ~/.hermes/skills/luminary-memory/SKILL.md
 - 📋 **Deterministic indicator**, `🌙 Luminary, recalled N memories` in the
   agent UI.
 - 🔔 **Chat activity hook**, optional mirror of store activity to your chat.
+- 🛡️ **Accuracy guard**, scoped/evidence-aware recall can abstain instead of
+  injecting a weak or unrelated memory.
 - 🧠 **Skill**, agent-side guidance for store usage.
 - 📜 **Transparency log**, `~/.hermes/luminary/luminary.log` records every
   recall, retain, and error (initialize/recall/retain lines), so you can see

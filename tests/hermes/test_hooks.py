@@ -42,6 +42,24 @@ def test_on_memory_write_add_ingests_with_tags(tmp_path):
     p.shutdown()
 
 
+def test_cli_status_callback_fires_after_memory_is_committed(tmp_path):
+    statuses = []
+    p = LuminaryMemoryProvider()
+    p.initialize(
+        "s1",
+        hermes_home=str(tmp_path),
+        platform="cli",
+        agent_identity="test",
+        status_callback=statuses.append,
+    )
+    p._client.engine = _FakeEngine()
+
+    p.on_memory_write("add", "user", "prefers X")
+    assert _wait_for_store(p, 1), "CLI hook write was not committed"
+    assert statuses == ["🌙 Luminary — memory saved"]
+    p.shutdown()
+
+
 def test_on_memory_write_replace_markers(tmp_path):
     p = _init_provider(tmp_path)
     p.on_memory_write("replace", "prefs", "new pref", metadata=None)

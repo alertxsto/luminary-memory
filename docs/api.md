@@ -14,9 +14,10 @@ pdoc --output-dir docs/api --docformat markdown src/luminary_memory
 
 ## Quick surface
 
-- `MemoryClient`, `ingest`, `ingest_batch`, `recall` (tags + snippets + planner), `search`, `get`/`update`/`delete`, `list`, `export`/`import_memories`, `run_lifecycle`, `run_maintenance` (LLM curation), `health_score` (store health report), `graph` (entities + relations), `stats`, `close`.
+- `MemoryClient`, `ingest`, `ingest_batch`, `recall` (tags + snippets + planner + strict abstention), `search`, `get`/`update`/`delete`, `supersede`, `resolve_conflict`, `retract`, `list`, `export`/`import_memories`, `run_lifecycle`, `run_maintenance` (LLM curation), `health_score` (store health report), `graph` (entities + relations), `stats`, `close`.
 - `Settings`, `LUMINARY_*` env vars, `as_dict()`.
-- `Memory`, `RecallResult`, `types.py`.
+- `Memory`, `RecallResult`, `types.py` — including scope, status, validity,
+  confidence, evidence, claim, supersession, and reindex fields.
 - Subpackages `backends/`, `embeddings/`, `ingest/`, `recall/`, `lifecycle/`, `export`.
 
 Regenerate whenever public docstrings change; CI optionally checks freshness with `pdoc --output-dir /tmp/pdoc_check && diff`.

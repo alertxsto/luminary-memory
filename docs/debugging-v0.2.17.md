@@ -1,170 +1,155 @@
-# v0.2.17 Debugging & Hermes Integration Guide
+# Gateway, Hermes, and Telegram Debugging Guide
 
-Comprehensive technical documentation for **Luminary Memory v0.2.17**, focusing on gateway envelope unwrapping, Hermes agent integration, Telegram activity hook mechanics, and 4-strategy fused recall verification.
+This guide preserves the v0.2.17 gateway investigation and records the
+post-v0.2.18 runtime behavior. For the complete current implementation map,
+see [`IMPLEMENTATION-AUDIT.md`](IMPLEMENTATION-AUDIT.md).
 
----
+## 1. Gateway envelope failure and fix
 
-## 1. Overview & Root Cause Analysis
-
-### 1.1 The Cline Gateway / Proxy Envelope Issue
-When using **LLM memory curation** (`ingest_llm = true`), `OpenAICompatibleEnricher` sends user/assistant conversation turns to an LLM endpoint to extract a concise factual summary, entities, tags, and importance scores.
-
-Certain third-party API gateways and reverse proxies (e.g. **Cline Pass Gateway** `api.cline.bot` or aggregator proxies) wrap standard OpenAI ChatCompletion response bodies inside a top-level `"data"` key:
+With `ingest_llm=true`, `OpenAICompatibleEnricher` accepts standard
+OpenAI-compatible responses and gateways that wrap them in `data`:
 
 ```json
 {
   "data": {
-    "id": "chatcmpl-...",
-    "object": "chat.completion",
-    "created": 1724000000,
-    "model": "deepseek-v4-flash",
     "choices": [
-      {
-        "index": 0,
-        "message": {
-          "role": "assistant",
-          "content": "{\"worth_saving\": true, \"summary\": \"User deployed Next.js portfolio to dwikycandra.vercel.app\", \"entities\": [\"Next.js\", \"dwikycandra.vercel.app\"], \"tags\": [\"project\", \"deploy\"]}"
-        },
-        "finish_reason": "stop"
-      }
-    ],
-    "usage": { "prompt_tokens": 120, "completion_tokens": 45, "total_tokens": 165 }
+      {"message": {"content": "{\"worth_saving\": true, \"summary\": \"Deploy target is staging.\"}"}}
+    ]
   }
 }
 ```
 
-#### Why it failed silently in earlier versions:
-1. `_call_llm()` executed `payload.get("choices")` directly on the root payload.
-2. In wrapped responses, `payload.get("choices")` returned `None` (empty list `[]`).
-3. `_call_llm()` returned an empty string `""`.
-4. `enrich()` parsed `{}` $\rightarrow$ `summary = None`.
-5. Provider retain pipeline logged:
-   `retain skipped (LLM: no curated summary)`
-6. **Result:** No new records were inserted into the SQLite database.
+Before v0.2.17 the enricher looked only at the root `choices` field. A wrapped
+response therefore became an empty string, which looked like a valid request
+but caused curation to produce no summary. The v0.2.17 fix unwraps a
+dictionary-valued `data` field before reading `choices`, while preserving the
+direct response path. The request has one defensive retry for transient
+failures.
 
-#### The Fix in v0.2.17:
-In `src/luminary_memory/ingest/llm.py`:
-```python
-if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
-    payload = payload["data"]
-```
-This safely unwraps the payload when `"data"` is a dictionary, while maintaining 100% backward compatibility for direct endpoints (OpenAI, Ollama, Groq, OpenRouter).
+When Hermes curation is enabled, an empty/failed curation is intentionally
+dropped rather than stored as a raw transcript. This is conservative write
+behavior; it prevents gateway failure from polluting recall.
 
----
+## 2. Current Hermes context flow
 
-## 2. Hermes Activity Hook Architecture (`luminary-activity`)
+The old “core + persistent importance context + recall” description is no
+longer current. Since v0.2.18, the provider has two context sources:
 
-The `luminary-activity` hook is an event-driven plugin for the Hermes agent located at `~/.hermes/hooks/luminary-activity/`.
+| Source | Selection | Destination |
+|---|---|---|
+| Core memory | DB rows tagged `core`, bounded by `core_top_n`/`core_budget` | System prompt every session |
+| Query recall | Scope/status/validity-aware fused candidates, bounded by `recall_limit`/`token_budget` | Turn context or explicit tool result |
 
-### 2.1 Hook Execution Flow
+Importance boosts query ranking and lifecycle decisions; it does not silently
+pin arbitrary rows into the prompt. Both sources are wrapped as untrusted
+reference data, subordinate to the user's current instruction, and deduped by
+ID plus content hash.
+
+## 3. Telegram activity hook flow
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    participant Hermes as Hermes Agent
-    participant Provider as Luminary Provider
-    participant SQLite as SQLite DB (memory.db)
-    participant Hook as Hook (handler.py)
+    participant Hermes as Hermes agent
+    participant Provider as Luminary provider
+    participant Writer as Writer queue
+    participant DB as memory.db
+    participant Hook as agent:end hook
     participant Telegram as Telegram Bot API
 
-    Hermes->>Provider: sync_turn() / retain
-    Provider->>Provider: LLM Enricher (unwraps data envelope)
-    Provider->>SQLite: INSERT INTO memories (id, content, importance...)
-    Hermes->>Hook: Event: agent:end
-    Hook->>Hook: Check last_shown_id from state.json
-    Hook->>SQLite: SELECT id, content FROM memories WHERE id > last_id
-    SQLite-->>Hook: Return newly stored memories
-    Hook->>Hook: Format compact markdown status line
-    Hook->>Telegram: POST /sendMessage (with thread_id support)
-    Hook->>Hook: Update state.json (last_id = max_id)
+    Hermes->>Provider: completed turn
+    Provider->>Writer: enqueue scoped retain
+    Writer->>DB: commit accepted memory
+    Hermes->>Hook: agent:end
+    Hook->>DB: read IDs greater than state.json cursor
+    Hook->>Telegram: sendMessage (escaped Markdown + optional topic)
+    Telegram-->>Hook: {"ok": true} or failure
+    Hook->>Hook: advance cursor only on ok=true
 ```
 
-### 2.2 Why Telegram Notifications Were Previously Silent
-The hook appeared to not fire because of the combination of two factors:
-1. **Empty DB Inserts:** Due to the gateway envelope bug, memories were never stored $\rightarrow$ `_recent_activity()` returned `None` $\rightarrow$ no message was posted.
-2. **Subprocess Environment Isolation:** If Hermes subprocess didn't pass `TELEGRAM_BOT_TOKEN` or `CHAT_ID` via `os.environ`, the hook previously exited early.
+The hook reports persisted writes only. It does not claim that a memory was
+recalled or used by the model. It shows a maximum of three detailed rows and a
+`... (+N more)` overflow line. Rules/core rows are marked with `📌`; ordinary
+facts use `•`.
 
-### 2.3 Hook Enhancements in v0.2.17
-* **Self-Recovery Environment Loader:** If `os.getenv` is empty, `handler.py` automatically parses `~/.hermes/.env` to retrieve `TELEGRAM_BOT_TOKEN`, `TELEGRAM_HOME_CHANNEL`, `LUMINARY_HOOK_CHAT_ID`, and `TELEGRAM_HOME_CHANNEL_THREAD_ID`.
-* **Thread / Topic ID Support:** If the target Telegram group uses Forum Topics (`TELEGRAM_HOME_CHANNEL_THREAD_ID`), messages are routed directly to the designated topic thread.
-* **Safe State Persistence:** Atomically tracks `state.json` to prevent spamming duplicate notifications across multiple turns.
+### Required runtime checks
 
----
+1. `hermes/hooks/luminary-activity/HOOK.yaml` contains `agent:end`.
+2. `TELEGRAM_BOT_TOKEN` and either `LUMINARY_HOOK_CHAT_ID` or
+   `TELEGRAM_HOME_CHANNEL` resolve from the environment or `~/.hermes/.env`.
+3. `LUMINARY_DB_PATH` points to the same store used by the provider.
+4. Forum topics use `LUMINARY_HOOK_THREAD_ID` or
+   `TELEGRAM_HOME_CHANNEL_THREAD_ID`.
+5. `state.json` is writable.
+6. Telegram returns `{"ok": true}`; `ok:false`, HTTP errors, and network
+   errors leave the cursor unchanged for retry.
 
-## 3. Recall Pipeline & Multi-Tier Context Memory
+### Expected output
 
-Luminary Memory organizes agent memory into three distinct tiers per conversation turn:
+```text
+🌙 Luminary — 2 recent memories stored
+  📌 #12 ALWAYS verify tests before release
+    tags: core, rule · source: hermes
+  • #11 Deploy target is staging
+    tags: deploy · source: cli
+```
 
-| Tier | Source | Injection Target | Lifetime / Behavior |
-|------|--------|------------------|---------------------|
-| **1. Core Memory** | Records tagged `core` in DB | System Prompt (`system_prompt_block`) | Auto-loaded **every session**, highest priority. Replaces `MEMORY.md`. |
-| **2. Persistent Context** | Top memories by importance ($\ge$ threshold) | System Prompt (`system_prompt_block`) | Always present in context window, updated turn-by-turn with adaptive importance. |
-| **3. Fused Recall** | 4-strategy fusion (Vector + BM25 + Temporal + Graph) | Turn Context (`prefetch` / `recall`) | Surfaced dynamically based on semantic and keyword relevance to the user's turn prompt. |
-
-### 3.1 Content-Level Anti-Duplication
-To preserve context tokens and prevent model confusion:
-1. `system_prompt_block()` collects IDs and SHA-256/hash of all injected Core and Persistent memories.
-2. When `prefetch()` or `recall()` runs, any memory matching an already-injected ID or identical text is **automatically suppressed**.
-3. Every memory appears **exactly once** per prompt.
-
----
-
-## 4. End-to-End Hermes Verification
-
-### 4.1 Running the Verification Suite
-To verify the full integration under Hermes runtime constraints:
+Equivalent local verification:
 
 ```bash
-# 1. Run all unit & regression tests
-pytest -v
+luminary-memory activity --db-path ~/.hermes/luminary/memory.db --limit 5
+luminary-memory activity --db-path ~/.hermes/luminary/memory.db --json
+```
 
-# 2. Run activity hook test suite
-pytest tests/hermes/test_activity_hook.py
+## 4. Provider concurrency checks
 
-# 3. Check code style & linter
+- Retains execute on a dedicated writer thread with a thread-owned SQLite
+  client.
+- `on_session_end()` joins queued writes before running `auto_maintain`.
+- `on_session_switch()` flushes the old session and increments the prefetch
+  generation.
+- Prefetch cache entries are accepted only when session ID, query, generation,
+  and scope still match.
+- `shutdown()` sends a sentinel, joins the writer, then closes the caller's
+  client.
+
+If a memory appears from an earlier session, inspect the generation/session
+fields in the provider log before changing ranking weights.
+
+## 5. Accuracy/debugging checklist
+
+```bash
+# Provider and CLI use strict behavior; scope is explicit and reproducible.
+export LUMINARY_USER_ID=u1
+export LUMINARY_WORKSPACE_ID=luminary
+export LUMINARY_AGENT_ID=coding-agent
+export LUMINARY_SESSION_ID=session-42
+
+luminary-memory recall "where do we deploy?" --json
+luminary-memory activity --json
+```
+
+For a weak/unrelated query, verify:
+
+```json
+{"status": "abstain", "reason": "no_supported_candidate", "memories": []}
+```
+
+For a supported result, verify `evidence_quote`, `source_id`, validity fields,
+scope fields, and `provenance` are present. For conflicting claims, use the
+diagnostic `include_conflicted` path and resolve through explicit
+supersession—do not solve a provenance problem by raising semantic
+auto-replacement.
+
+## 6. Verification commands
+
+```bash
+pytest -o addopts='' -q
+pytest tests/hermes/test_activity_hook.py -q
 ruff check .
+python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-gold.json
 ```
 
-### 4.2 Simulation Test Script
-You can simulate a complete agent session with local SQLite storage:
-
-```python
-import tempfile
-from luminary_memory.hermes.provider import LuminaryMemoryProvider
-
-with tempfile.TemporaryDirectory() as tmpdir:
-    provider = LuminaryMemoryProvider()
-    provider.initialize(
-        session_id="session-001",
-        hermes_home=tmpdir,
-        platform="telegram"
-    )
-    
-    # 1. Ingest Core & Rule memories
-    client = provider._client
-    client.ingest("User prefers concise code snippets in Python.", tags=["core"])
-    client.ingest("ALWAYS verify tests before git commit.", tags=["rule"])
-    client.ingest("Project dwikycandra deployed to Vercel.", tags=["deploy"])
-    
-    # 2. Verify System Prompt Injection
-    prompt_block = provider.system_prompt_block()
-    assert "Core memory" in prompt_block
-    
-    # 3. Verify Dynamic Recall
-    recall_block = provider.prefetch("dimana vercel deploy?", "session-001")
-    assert "dwikycandra" in recall_block
-    print("Verification passed successfully.")
-```
-
----
-
-## 5. Configuration Reference for LLM Gateways
-
-| Provider / Gateway | Example `llm_base_url` | Example `llm_model` | Envelope Handling |
-|--------------------|------------------------|---------------------|-------------------|
-| **Command Code (CMC)** | `https://api.commandcode.ai/provider/v1` | `deepseek/deepseek-v4-flash` | Direct / Proxy (`choices`) |
-| **Cline Pass Gateway** | `https://api.cline.bot/v1` | `cline-pass/deepseek-v4-flash` | Automatically unwrapped (`data.choices`) |
-| **OpenAI Direct** | `https://api.openai.com/v1` | `gpt-4o-mini` | Direct (`choices`) |
-| **OpenRouter** | `https://openrouter.ai/api/v1` | `deepseek/deepseek-chat` | Direct (`choices`) |
-| **Groq Cloud** | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` | Direct (`choices`) |
-| **Local vLLM / Ollama** | `http://localhost:11434/v1` | `qwen2.5:7b` | Direct (`choices`) |
+The current repository verification record is `406 passed, 3 skipped`, clean
+Ruff, and a controlled gold run with recall@10 `0.95`, MRR `1.00`, abstention
+accuracy `1.00`, evidence support precision `1.00`, and zero cross-scope
+leakage. These are regression numbers, not a matched Mem0/Hindsight claim.

@@ -31,7 +31,7 @@ def compute_temporal_score(
 ) -> float:
     if now is None:
         now = datetime.now(UTC)
-    created = _parse_dt(m.created_at)
+    created = _parse_dt(getattr(m, "observed_at", None) or m.created_at)
     age_hours = max(0.0, (now - created).total_seconds() / 3600.0)
     recency = math.exp(-age_hours / half_life_hours)
     popularity = 1.0 + math.log1p(float(m.access_count))
@@ -42,6 +42,8 @@ def temporal_recall(
     backend: MemoryBackend,
     limit: int | None = 10,
     half_life_hours: float = HALF_LIFE_HOURS,
+    scope: dict | None = None,
+    include_global: bool = True,
 ) -> list[tuple]:
     now = datetime.now(UTC)
 
@@ -50,7 +52,16 @@ def temporal_recall(
     scan = getattr(backend, "temporal_scan", None)
     if scan is not None:
         scored: list[tuple] = []
-        for mid, created_at, access_count in scan():
+        try:
+            scan_rows = scan(
+                scope=scope,
+                include_global=include_global,
+                include_observed=True,
+            )
+        except TypeError:
+            scan_rows = scan()
+        for row in scan_rows:
+            mid, created_at, access_count = row[:3]
             created = _parse_dt(created_at)
             age_hours = max(0.0, (now - created).total_seconds() / 3600.0)
             recency = math.exp(-age_hours / half_life_hours)
@@ -79,8 +90,13 @@ def temporal_recall(
         return out
 
     # Fallback: full objects via backend.all().
-    scored = [(m, compute_temporal_score(m, now=now, half_life_hours=half_life_hours))
-              for m in backend.all()]
+    from luminary_memory.scope import memory_matches_scope
+
+    scored = [
+        (m, compute_temporal_score(m, now=now, half_life_hours=half_life_hours))
+        for m in backend.all()
+        if memory_matches_scope(m, scope, include_global=include_global)
+    ]
     scored.sort(key=lambda x: -x[1])
     return [(m, float(score), "temporal") for m, score in scored] if limit is None else [
         (m, float(score), "temporal") for m, score in scored[:limit]
