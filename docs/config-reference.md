@@ -15,7 +15,8 @@ There are two layers by design:
 1. **Library settings** (`Settings` + `LUMINARY_*` env vars) control the core
    engine: recall, embeddings, consolidation, pruning, LLM enrichment.
 2. **Provider config** (`config.json` + dashboard) controls how the provider
-   hooks into Hermes: which AI agent session triggers auto-recall/auto-save,
+   hooks into Hermes: which AI agent session triggers auto-recall and automatic
+   turn curation,
    what gets injected into the system prompt, and LLM endpoint settings.
 
 ---
@@ -56,7 +57,7 @@ env. Every field is documented with:
 
 | Field | Env var | Default | Meaning |
 |-------|---------|---------|---------|
-| `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | HF sentence-transformer used for semantic similarity. English-focused; mixed Indonesian/English queries match better with keyword-heavy weights. |
+| `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Sentence-transformer used for semantic similarity. Language coverage follows the selected model; the memory pipeline does not classify durability from vocabulary. |
 | `embedding_dim` | `LUMINARY_EMBEDDING_DIM` | `384` | Embedding vector dimension, must match the model output and the pgvector column. |
 
 ## Recall
@@ -65,7 +66,7 @@ Controls how stored memories are matched and ranked against a query.
 
 | Field | Env var | Default | Meaning |
 |-------|---------|---------|---------|
-| `rrf_k` | `LUMINARY_RRF_K` | `60` | Recursive Rank Fusion constant. Higher smooths score differences across the fusion strategies. |
+| `rrf_k` | `LUMINARY_RRF_K` | `60` | Reciprocal Rank Fusion constant. Higher smooths score differences across the fusion strategies. |
 | `strategy_weights.semantic` | `LUMINARY_WEIGHT_SEMANTIC` | `0.4` | Fusion weight for embedding similarity. |
 | `strategy_weights.keyword` | `LUMINARY_WEIGHT_KEYWORD` | `0.3` | Fusion weight for lexical/FTS keyword match. |
 | `strategy_weights.graph` | `LUMINARY_WEIGHT_GRAPH` | `0.2` | Fusion weight for entity-graph relationships. |
@@ -74,18 +75,51 @@ Controls how stored memories are matched and ranked against a query.
 | `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | `0.85` | Near-duplicates (token-overlap Jaccard ≥ this) are removed before ranking. Lower = more aggressive dedup. |
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` | Hard cap on total tokens injected by a recall, so memory never overflows the agent context. |
 | `importance_recall_boost` | `LUMINARY_IMPORTANCE_RECALL_BOOST` | `1.0` | Ranking multiplier applied to memories at importance ≥ 0.8, so durable rules surface before chit-chat in recall. |
-| `query_planner` | `LUMINARY_QUERY_PLANNER` | `true` | Route the query among strategies (skip semantic if low confidence, etc.). |
+| `recall_min_score` | `LUMINARY_RECALL_MIN_SCORE` | `0.0` | Score floor for recall results; memory below this is dropped (0 = off). Provider/CLI may return an empty result when no evidence survives. |
+| `query_planner` | `LUMINARY_QUERY_PLANNER` | `true` | Apply conservative strategy guards (for example, skip graph when no entity signal exists, or temporal when a strong lexical match is present). Semantic and keyword candidates remain enabled. |
 | `query_planner_keyword_threshold` | `LUMINARY_QUERY_PLANNER_KEYWORD_THRESHOLD` | `0.9` | Score above which a keyword match is trusted so the planner skips semantic/graph passes. |
 
-## Persistent context (Hermes provider)
+> ### Persistent context (removed in v0.2.18)
+>
+> The importance-based persistent-context family (`context_top_n`,
+> `context_budget`, `context_min_importance`) was removed. Importance is now
+> used **only** for query retrieval/recall and pruning — it no longer pins
+> memory into the system prompt as rules that could override a live user
+> instruction. Durable rules that must always be present belong in **core
+> memory** (below).
 
-Injected into the system prompt every turn, independent of query match.
+## Accuracy and isolation safety
 
 | Field | Env var | Default | Meaning |
-|-------|---------|---------|---------|
-| `context_top_n` | `LUMINARY_CONTEXT_TOP_N` | `8` | Top-N most-important memories injected every turn as "key memories". |
-| `context_budget` | `LUMINARY_CONTEXT_BUDGET` | `2000` | Max tokens budget for the persistent-context block. |
-| `context_min_importance` | `LUMINARY_CONTEXT_MIN_IMPORTANCE` | `0.0` | Only inject memories at/above this importance into persistent context. |
+|-------|-----------|---------|---------|
+| `strict_recall` | `LUMINARY_STRICT_RECALL` | `false` for legacy library clients | Enables abstention when support is weak or ambiguous. Hermes and CLI enable it explicitly. |
+| `scope_include_global` | `LUMINARY_SCOPE_INCLUDE_GLOBAL` | `true` | Allows intentionally global rows to remain visible to a scoped caller; set `false` for strict tenant isolation. |
+| `abstention_min_confidence` | `LUMINARY_ABSTENTION_MIN_CONFIDENCE` | `0.34` | Minimum conservative confidence for strict recall. |
+| `abstention_min_margin` | `LUMINARY_ABSTENTION_MIN_MARGIN` | `0.04` | Minimum top-vs-second margin for ambiguous strict results. |
+| `evidence_required` | `LUMINARY_EVIDENCE_REQUIRED` | `false` for legacy library clients | Requires evidence/source provenance for strict results and maintenance mutations. Hermes and CLI enable it explicitly. |
+
+Provider and CLI also disable destructive semantic rule replacement. Direct
+library clients retain the historical default for compatibility; use
+`rule_auto_replace=False` when correctness is more important than legacy
+behavior.
+
+## Runtime scope identity
+
+Scope is an API/provider concern rather than a `Settings` field. The library
+accepts a `scope` mapping or explicit ownership arguments on ingest; the CLI
+reads these environment variables for the current process:
+
+| Environment variable | Memory field |
+|---|---|
+| `LUMINARY_USER_ID` | `user_id` |
+| `LUMINARY_WORKSPACE_ID` | `workspace_id` |
+| `LUMINARY_AGENT_ID` | `agent_id` |
+| `LUMINARY_SESSION_ID` | `session_id` |
+
+Each configured identity is applied before semantic, keyword, graph, temporal,
+tag, and fallback candidate generation. `scope_include_global=true` keeps
+legacy rows with `NULL` ownership visible during migration; set it to `false`
+for strict tenant isolation.
 
 ## Core memory (DB-backed, auto-loaded system prompt)
 
@@ -93,7 +127,7 @@ The Luminary equivalent of Hermes `MEMORY.md`, stored in the DB.
 
 | Field | Env var | Default | Meaning |
 |-------|---------|---------|---------|
-| `core_tag` | `LUMINARY_CORE_TAG` | `core` | Tag marking DB-backed core memories. Everything carrying this tag is auto-loaded into the system prompt every session. |
+| `core_tag` | `LUMINARY_CORE_TAG` | `core` | Tag marking DB-backed core memories. Active rows carrying this tag are eligible for the every-session prompt block, bounded by `core_top_n` and `core_budget`. |
 | `core_top_n` | `LUMINARY_CORE_TOP_N` | `12` | Max core memories injected into the system prompt. |
 | `core_budget` | `LUMINARY_CORE_BUDGET` | `8000` | Max character budget for the core-memory block. |
 
@@ -112,33 +146,32 @@ The Luminary equivalent of Hermes `MEMORY.md`, stored in the DB.
 
 | Field | Env var | Default | Meaning |
 |-------|---------|---------|---------|
-| `ingest_llm` | `LUMINARY_INGEST_LLM` | `false` | Enrich retained turns with an LLM (drops chit-chat, stores a factual summary instead of raw transcript). |
+| `ingest_llm` | `LUMINARY_INGEST_LLM` | `false` | Enrich retained turns and run the provider's grounded incremental review (drops chit-chat, stores a factual summary, and checks for captures/corrections instead of storing raw transcript). |
 | `ingest_whitelist` | `LUMINARY_INGEST_WHITELIST` | `[]` | Comma-separated list of content prefixes/tags allowed to be ingested; empty = everything. |
 
 ## LLM enrichment
 
 | Field | Env var | Default | Meaning |
 |-------|---------|---------|---------|
-| `llm_base_url` | `LUMINARY_LLM_BASE_URL` | (none) | OpenAI-compatible endpoint for the enricher. |
+| `llm_base_url` | `LUMINARY_LLM_BASE_URL` | (none) | OpenAI-compatible endpoint for the enricher (supports standard endpoints and gateway envelopes like Cline Pass). |
 | `llm_api_key` | `LUMINARY_LLM_API_KEY` | (none) | API key for the enricher (secret). |
 | `llm_model` | `LUMINARY_LLM_MODEL` | `gpt-4o-mini` | Enricher model id. |
 | `llm_timeout` | `LUMINARY_LLM_TIMEOUT` | `10` | Request timeout (seconds). |
 | `llm_max_tokens` | `LUMINARY_LLM_MAX_TOKENS` | `512` | Max completion tokens for the enricher output. |
 
-## Rule detection
+## Compatibility and explicit replacement
 
-Turn a surfaced instruction into a pinned, non-contradictory rule.
+These fields remain for compatibility with older callers. They do not classify
+durability from words or language. Durable core membership is explicit (`core`
+tag or core tool), structured importance comes from the caller/enricher or the
+behavioral estimator, and conflicting claims require an explicit supersession.
 
 | Field | Env var | Default | Meaning |
 |-------|---------|---------|---------|
-| `rule_keywords` | `LUMINARY_RULE_KEYWORDS` | `NEVER,ALWAYS,MUST,...` | Comma-separated imperative markers that indicate a rule (`NEVER`, `ALWAYS`, `MUST`, `FORBIDDEN`, ...). |
-| `rule_importance` | `LUMINARY_RULE_IMPORTANCE` | `0.9` | Importance assigned to a detected rule (≥ 0.9 = pinned, exempt from prune/consolidate). |
-| `rule_auto_replace` | `LUMINARY_RULE_AUTO_REPLACE` | `true` | Replace an existing rule semantically similar to a new one instead of stacking conflicting rows. |
-| `rule_auto_replace_threshold` | `LUMINARY_RULE_AUTO_REPLACE_THRESHOLD` | `0.85` | Embedding-cosine similarity at which a new rule replaces the old one. |
-
-**Note on rule detection scope:** with `ingest_llm` enabled, rule keywords are
-checked **only** against the LLM-curated summary, never the raw transcript. A
-turn that merely mentions "PLAN" is not pinned as a rule.
+| `rule_keywords` | `LUMINARY_RULE_KEYWORDS` | `""` | Compatibility input for callers of the standalone phrase matcher. It is not read by the active durability/importance pipeline. |
+| `rule_importance` | `LUMINARY_RULE_IMPORTANCE` | `0.9` | Pin threshold used by core/importance protection. It is not assigned because a phrase matches. |
+| `rule_auto_replace` | `LUMINARY_RULE_AUTO_REPLACE` | `true` (legacy library default) | Enables the explicit replacement compatibility path. A `supersedes_id` is still required; without it, different same-key claims remain auditable conflicts. Hermes/CLI disable this path by default. |
+| `rule_auto_replace_threshold` | `LUMINARY_RULE_AUTO_REPLACE_THRESHOLD` | `0.85` | Similarity threshold used only after the caller explicitly authorizes replacement. |
 
 ---
 
@@ -158,28 +191,26 @@ forward-compatible. This is what the dashboard (`Settings → Memory`) and
 | `max_memories` | `1000` | Hard cap on store size; oldest/lowest importance pruned when exceeded. | ✅ |
 | `token_budget` | `2048` | Recall context token budget. | ✅ |
 | `auto_recall` | `true` | Enable per-turn background recall. | ✅ |
-| `auto_retain` | `true` | Enable per-turn auto-save. | ✅ |
+| `auto_retain` | `true` | Record accepted turns in the exact-session continuity ledger and queue completed batches for curation; uncurated automatic transcripts are not promoted into durable memory. | ✅ |
 | `recall_sync` | `false` | Synchronous (live) recall instead of warm prefetch. | ✅ |
 | `retain_every_n_turns` | `1` | Batch N turns into one store write. | ✅ |
-| `retain_user_prefix` | `User` | Prefix when formatting retained user turns. | ✅ |
-| `retain_assistant_prefix` | `Assistant` | Prefix when formatting retained assistant turns. | ✅ |
-| `ingest_llm` | `false` | LLM curation on retain (drops chit-chat, stores factual summary). | ✅ |
+| `retain_user_prefix` | `User` | Structural prefix supplied to the optional curator for user content. | ✅ |
+| `retain_assistant_prefix` | `Assistant` | Structural prefix supplied to the optional curator for assistant content. | ✅ |
+| `ingest_llm` | `false` | LLM curation on retain plus serialized post-turn reconciliation (drops chit-chat, stores factual summary, and requires current-turn evidence for mutations). | ✅ |
 | `auto_maintain` | `false` | LLM store review at session end (keeps/updates/deletes stale or duplicate facts; requires `ingest_llm`). | ✅ |
 | `consolidate_semantic` | `true` | Embedding-cosine consolidation in lifecycle. | ✅ |
 | `importance_auto` | `true` | Auto importance estimation on ingest/lifecycle. | ✅ |
-| `llm_base_url` | `""` | OpenAI-compatible endpoint for the enricher. | ✅ |
+| `llm_base_url` | `""` | OpenAI-compatible endpoint for the enricher (supports standard endpoints and gateway envelopes like Cline Pass). | ✅ |
 | `llm_model` | `""` | Enricher model. | ✅ |
 | `llm_timeout` | `60` | Enricher request timeout (seconds). | ✅ |
 | `recall_indicator` | `true` | Show `🌙 Luminary, recalled N memories`. | ✅ |
 | `retain_indicator` | `true` | Show `🌙 Luminary, memory saved`. | ✅ |
-| `context_top_n` | `8` | Top-N important memories injected every turn. | ✅ |
-| `context_budget` | `2000` | Max tokens of persistent context per turn. | ✅ |
-| `context_min_importance` | `0.0` | Only inject memories at/above this importance. | ✅ |
 | `core_tag` | `core` | Tag marking DB-backed core memories. | ✅ |
 | `core_top_n` | `12` | Max core memories injected into the system prompt. | ✅ |
 | `core_budget` | `8000` | Max characters of core memory injected. | ✅ |
-| `extract_on_session_end` | `false` | Run extraction at session end. | ✅ |
+| `extract_on_session_end` | `false` | Compatibility/dashboard flag; the current provider does not run a second extraction mode from this key. Session end drains accepted retains and may run `auto_maintain`. | ✅ |
 | `importance_recall_boost` | `1.0` | Ranking multiplier for memories at importance ≥ 0.8 — durable rules surface first in recall. | ✅ |
+| `recall_min_score` | `0.0` | Score floor for recall results (0 = off; weak results may be empty). | ✅ |
 
 ---
 
@@ -202,3 +233,44 @@ because the tools call straight into `MemoryClient`.
 
 If you depend on a specific value, set it in **both** places, or keep one layer
 at default and tune the other.
+
+## Hermes activation boundary
+
+These three values live in Hermes' `$HERMES_HOME/config.yaml`, not in
+Luminary's `$HERMES_HOME/luminary/config.json`:
+
+```yaml
+memory:
+  provider: luminary
+  memory_enabled: false
+  user_profile_enabled: false
+```
+
+`provider` selects the public Luminary entry point. The two boolean switches
+disable Hermes' native `MEMORY.md` and `USER.md` prompt/tool surfaces, leaving
+one persistent authority. `hermes/install.sh` updates this block idempotently
+in the root config and in profile configs that already exist; it does not
+create profiles, rewrite Hermes source, or require a Hermes version number. If
+a provider update leaves either native switch enabled, treat the installation
+as incomplete rather than merging the stores implicitly.
+
+The provider runtime does not import Hermes' private Python modules. Its
+optional setup callback is only a convenience for Hermes CLIs that expose that
+callback; the on-disk activation helper and the installer remain the portable
+path across Hermes updates.
+
+## Exact-session continuity is not another config layer
+
+When Hermes `auto_retain` is enabled, each accepted completed turn is written
+to the backend's immutable episode ledger with the current `session_id`,
+ownership scope, and sequence metadata before the durable curation queue runs.
+If durable recall returns no usable block, the provider may read only the
+current session's recent episodes (up to four rows, bounded by the existing
+`token_budget` and an internal character ceiling) as untrusted reference
+context. The current user request remains authoritative.
+
+This fallback is intentionally not exposed as a new toggle or provider key:
+turns in the ledger are continuity evidence, not semantic memories, and they
+are never used to widen a query into another session, user, workspace, or
+agent. Set `auto_retain=false` only when automatic episode admission and
+automatic durable curation should both be disabled.

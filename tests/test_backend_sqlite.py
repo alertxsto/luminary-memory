@@ -1,3 +1,7 @@
+import sqlite3
+
+import pytest
+
 from luminary_memory.backends.sqlite import SQLiteBackend
 from luminary_memory.types import Memory
 
@@ -11,6 +15,28 @@ def test_add_and_get(tmp_path):
     m = b.get(mid)
     assert m is not None and m.content == "The sky is blue"
     assert b.count() == 1
+
+
+def test_non_unique_integrity_error_is_not_treated_as_duplicate(tmp_path):
+    b = _mk(tmp_path)
+    b.add(Memory(content="same content", content_hash="same-hash"))
+
+    with pytest.raises(sqlite3.IntegrityError, match="NOT NULL"):
+        b.add_with_status(Memory(content=None, content_hash="same-hash"))  # type: ignore[arg-type]
+    assert b.count() == 1
+    b.close()
+
+
+def test_batch_non_unique_integrity_error_rolls_back_all_rows(tmp_path):
+    b = _mk(tmp_path)
+    valid = Memory(content="batch valid")
+    invalid = Memory(content=None)  # type: ignore[arg-type]
+
+    with pytest.raises(sqlite3.IntegrityError, match="NOT NULL"):
+        b.add_many([valid, invalid])
+    assert b.count() == 0
+    b.close()
+
 
 def test_keyword_search_ranks(tmp_path):
     b = _mk(tmp_path)
@@ -82,11 +108,48 @@ def test_top_by_importance_lean_and_ordered(tmp_path):
     assert [m.content for m in top] == ["high rule", "high rule 2"]
     # embeddings are not loaded (lean scan) — memory has no embedding attr set
     assert all(getattr(m, "embedding", None) is None for m in top)
-
     # min_importance filters below-threshold (0.3 excluded)
     top_all = b.top_by_importance(10, min_importance=0.5)
     assert len(top_all) == 3
     assert all(m.importance >= 0.5 for m in top_all)
+
+
+def test_recent_episodes_are_ordered_and_exactly_scoped(tmp_path):
+    b = _mk(tmp_path)
+    b.record_episode(
+        "s1-old",
+        "older current-session turn",
+        source="hermes-session",
+        metadata={"sequence": 1},
+        user_id="user-1",
+        session_id="s1",
+    )
+    b.record_episode(
+        "s2",
+        "other session turn",
+        source="hermes-session",
+        metadata={"sequence": 9},
+        user_id="user-1",
+        session_id="s2",
+    )
+    b.record_episode(
+        "s1-new",
+        "newer current-session turn",
+        source="hermes-session",
+        metadata={"sequence": 2},
+        user_id="user-1",
+        session_id="s1",
+    )
+
+    rows = b.recent_episodes(
+        limit=10,
+        scope={"user_id": "user-1", "session_id": "s1"},
+        include_global=False,
+    )
+    assert [row["id"] for row in rows] == ["s1-new", "s1-old"]
+    assert all(row["session_id"] == "s1" for row in rows)
+    assert rows[0]["metadata"]["sequence"] == 2
+    b.close()
 
 
 def test_touch_memories_batches_access(tmp_path):
@@ -114,6 +177,38 @@ def test_delete_many_batches(tmp_path):
     assert b.get(ids[3]) is not None
 
 
+def test_claim_and_claim_evidence_insert_roll_back_together(tmp_path):
+    b = _mk(tmp_path)
+    memory_id = b.add(Memory(content="claim transaction source"))
+    b.conn.execute(
+        """
+        CREATE TRIGGER fail_claim_evidence
+        BEFORE INSERT ON claim_evidence
+        BEGIN
+            SELECT RAISE(ABORT, 'forced claim evidence failure');
+        END
+        """
+    )
+    b.conn.commit()
+
+    claim = {
+        "subject": "project:luminary",
+        "predicate": "deploy_target",
+        "object": "staging",
+        "evidence_quote": "deploy target is staging",
+    }
+    with pytest.raises(sqlite3.IntegrityError, match="forced claim evidence failure"):
+        b.add_claim(memory_id, claim)
+    assert b.conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0] == 0
+
+    b.conn.execute("DROP TRIGGER fail_claim_evidence")
+    b.conn.commit()
+    b.add_claim(memory_id, claim)
+    assert b.conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0] == 1
+    assert b.conn.execute("SELECT COUNT(*) FROM claim_evidence").fetchone()[0] == 1
+    b.close()
+
+
 def test_update_importances_bulk(tmp_path):
     b = _mk(tmp_path)
     ids = [b.add(Memory(content=f"fact {i}", importance=0.3)) for i in range(3)]
@@ -134,7 +229,58 @@ def test_scan_embeddings_matrix_shape(tmp_path):
     assert mat.dtype.name == "float32"
 
 
-def test_by_tag_top_returns_core_memories_by_importance(tmp_path):
+def test_scan_embeddings_ignores_corrupt_and_mixed_dimensions(tmp_path):
+    b = _mk(tmp_path)
+    good_id = b.add(Memory(content="good", embedding=[1.0, 0.0, 0.0]))
+    b.add(Memory(content="old model", embedding=[1.0, 0.0]))
+    b.conn.execute(
+        "INSERT INTO memories (content, embedding) VALUES (?, ?)",
+        ("corrupt", b"not-a-float32-vector"),
+    )
+    b.conn.commit()
+
+    ids, matrix = b.scan_embeddings_matrix()
+    assert ids == [good_id]
+    assert matrix.shape == (1, 3)
+
+
+def test_corrupt_legacy_row_degrades_to_safe_defaults(tmp_path):
+    b = _mk(tmp_path)
+    mid = b.add(Memory(content="repairable row", embedding=[1.0, 0.0]))
+    b.conn.execute(
+        "UPDATE memories SET metadata='[]', tags='{}', importance='NaN', "
+        "confidence='broken', access_count='broken', embedding=? WHERE id=?",
+        (b"x", mid),
+    )
+    b.conn.commit()
+
+    memory = b.get(mid)
+    assert memory is not None
+    assert memory.metadata == {}
+    assert memory.tags == []
+    assert memory.importance == 0.5
+    assert memory.confidence == 1.0
+    assert memory.access_count == 0
+    assert memory.embedding is None
+    assert b.all()[0].embedding is None
+
+
+def test_large_batch_helpers_chunk_sqlite_parameters(tmp_path):
+    b = _mk(tmp_path)
+    memories = [Memory(content=f"chunked memory {i}", importance=0.3) for i in range(1200)]
+    ids = b.add_many(memories)
+    assert len(b.get_many(ids)) == 1200
+
+    b.touch_memories(ids)
+    b.update_importances([(0.4, mid) for mid in ids])
+    assert b.get(ids[-1]).access_count == 1
+    assert b.get(ids[0]).importance == 0.4
+
+    b.delete_many(ids)
+    assert b.count() == 0
+
+
+def test_by_tag_top_returns_core_memories_in_stable_insert_order(tmp_path):
     b = _mk(tmp_path)
     b.add(Memory(content="rule tabel wajib", tags=["core"], importance=0.9))
     b.add(Memory(content="rule em dash", tags=["core"], importance=0.95))
@@ -147,9 +293,21 @@ def test_by_tag_top_returns_core_memories_by_importance(tmp_path):
     assert "rule tabel wajib" in contents
     assert "fakta biasa" not in contents
     assert "core-x mirip" not in contents, "core-x tag must not match core"
-    # ordered by importance desc
-    imps = [m.importance for m in top]
-    assert imps == sorted(imps, reverse=True)
+    # Core membership is not a relevance leaderboard. Its order is stable
+    # insertion order even when importance changes.
+    assert [m.content for m in top[:2]] == ["rule tabel wajib", "rule em dash"]
+
+
+def test_by_tag_top_order_does_not_change_when_importance_changes(tmp_path):
+    b = _mk(tmp_path)
+    first = b.add(Memory(content="first core rule", tags=["core"], importance=0.1))
+    second = b.add(Memory(content="second core rule", tags=["core"], importance=0.9))
+
+    m = b.get(first)
+    m.importance = 0.99
+    b.update(m)
+
+    assert [m.id for m in b.by_tag_top("core", 2)] == [first, second]
 
 
 def test_by_tag_top_respects_limit(tmp_path):

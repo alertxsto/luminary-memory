@@ -1,5 +1,166 @@
 # Changelog
 
+## [0.3.0] - 2026-08-24
+
+### Summary
+
+Major release. Memory is now scoped, evidenced, and auditable end to end:
+strict tenant isolation across every recall path, structured claims with
+grounded evidence quotes, a per-turn episode ledger for session continuity,
+and an incremental post-turn reconciliation pass. Persistent-context config
+keys were removed in favor of core memory and the episode ledger. The Hermes
+enricher also switched from urllib to requests so curation calls survive
+Cloudflare-protected gateways.
+
+### Fixed
+
+- **Active-task session continuity** — every accepted Hermes turn now enters a
+  strictly scoped, non-durable episode ledger before LLM curation. When durable
+  recall abstains, recent current-session turns are injected as untrusted
+  reference context, and ambiguous follow-ups stay within the active task
+  unless the user requests a history-wide operation. No Hermes source patch or
+  language-specific classifier is used.
+- **Autonomous post-turn reconciliation** — Hermes now runs a serialized,
+  provider-owned evidence review after curated automatic retains. It can save a
+  grounded new fact or explicitly supersede/retract a scoped claim without
+  language-specific heuristics, a second memory authority, or a Hermes source
+  patch. Malformed/failed reviews fail closed and leave the writer alive.
+- **Language-neutral graph entities** — graph extraction no longer uses an
+  English stopword list or ASCII-only tokenization; Unicode tokens are retained
+  through a structural filter so retrieval does not privilege one language.
+- **Atomic cross-process exact deduplication** — SQLite and pgvector now
+  enforce a scoped unique active-memory invariant, repair legacy duplicates
+  during schema initialization, and return the winning row without creating
+  duplicate episode/evidence/graph lineage.
+- **Rule-replacement source lineage** — every in-place replacement now records
+  a distinct raw episode and claim version, retiring the old structured claims
+  as `superseded` instead of leaving the source ledger stale.
+- **Evidence fail-closed in every recall mode** — `evidence_required` now
+  filters permissive recall and importance/temporal fallbacks too; fabricated
+  quotes and source labels cannot become answer support.
+- **Scoped JSONL transparency events** — Hermes logs per-home `trace_id`,
+  operation, scope, status/reason, result counts, confidence, and latency while
+  omitting prompt/memory content and credentials.
+- **PostgreSQL import/transaction polish** — missing export timestamps receive
+  UTC defaults, inactive history does not block an active restore, scoped
+  imports do not dedup against global compatibility rows, and unique-conflict
+  recovery closes the lookup transaction for long-lived writers.
+- **Deep long-term correctness audit** — scoped clients no longer mutate
+  compatibility-visible global rows during recall, lifecycle, or LLM
+  maintenance; malformed update state is normalized and content hashes are
+  repaired before future deduplication.
+- **Atomic claim ledger writes** — a failed `claim_evidence` insert rolls back
+  its parent claim, while independent claims continue to be recorded when one
+  malformed/external claim fails.
+- **Truthful Telegram activity delivery** — the hook requires Telegram's
+  `{"ok": true}` envelope, retries malformed/API/network failures, excludes
+  soft-deleted rows from counts and content, and acknowledges inactive-only
+  backlog rows without emitting a misleading message; HTTP error logging does
+  not stringify token-bearing request URLs.
+- **CI coverage of the actual integration surface** — `develop` pushes now
+  trigger CI and Ruff checks include the Telegram hook.
+- **Hermes activation boundary** — the installer and standalone activation
+  helper update only the documented top-level `memory` block, preserve
+  unrelated YAML and existing profiles, use the selected Hermes interpreter,
+  and fail visibly when the public provider capability is unavailable.
+- **Authority repair utility** — added a dry-run-first SQLite migration helper
+  that identifies imported authority snapshots and structurally uncurated
+  Hermes rows, creates a consistent backup before `--apply`, archives instead
+  of deleting, and records an audit event.
+- **Documentation contract sync** — tracked guides and the static website now
+  describe the three context surfaces, exact tool schemas, stable core ordering,
+  provider/runtime boundary, hook cursor resolution, and the current `505`
+  regression baseline.
+
+### Tests & documentation
+
+- Added scope, lifecycle, hash-repair, claim-rollback, inactive-hook, and
+  malformed-Telegram-response invariants to the long-term regression suite.
+- Current verification: `505 passed, 3 skipped`, `83%` full-source coverage
+  (`4,866` statements, `837` missed), and clean Ruff. The controlled gold
+  fixture remains a regression signal, not a matched Mem0/Hindsight accuracy
+  claim.
+
+## [0.2.18] - 2026-08-20
+
+### Changed
+
+- **Importance is now retrieval-only.** The importance-based persistent-context
+  family (`context_top_n`, `context_budget`, `context_min_importance`) was
+  **removed**. Importance now scores query relevance and drives pruning only; it
+  no longer pins memory into the system prompt as rules that could override a
+  live user instruction.
+- **Core = DB-backed `MEMORY.md`.** Rules tagged `core` remain auto-loaded every
+  session (the durable-rules channel the user chooses), injected with an
+  explicit subordinate label so a live instruction always wins.
+- **Docs & skill** synced to the new importance model; skill version bumped to
+  `2.1.0`.
+- **Accuracy-first provider path** — Hermes and the CLI now force strict
+  recall, evidence-required results, and non-destructive rule handling. Scope,
+  validity, status, confidence, content hashes, evidence quotes, claim
+  history, and append-only audit events are preserved through ingest/recall.
+
+### Added
+
+- **Recall noise filter** — shell/terminal artifacts (`&&`, `===`, `echo `,
+  etc.) and near-empty content are dropped before they can pollute context.
+- **Destructive-imperative suppression** — a query that is a destructive
+  instruction (`hapus`, `delete`, `remove`, `stop`, `disable`, ...) suppresses
+  the recall block so the agent follows the instruction instead of re-anchoring
+  on the stored topic.
+- **Scoped claim/evidence schema** — ownership fields, episodes, claims,
+  claim evidence, memory evidence, conflict/supersession status, and
+  `needs_reindex` repair state are migrated idempotently for existing SQLite
+  stores and represented in pgvector.
+- **Independent gold regression arm** — the benchmark now reports abstention,
+  unsupported-answer, evidence-support, and cross-scope metrics from a fixed
+  fixture instead of presenting circular synthetic labels as accuracy proof.
+
+### Removed
+
+- `context_top_n`, `context_budget`, `context_min_importance` from provider
+  `_DEFAULTS`, dashboard schema, and `Settings`. Recalled context is capped by
+  `token_budget` (`2048`) / `recall_limit` (`10`); core by `core_top_n` (`12`) /
+  `core_budget` (`8000`).
+
+## [0.2.17] - 2026-08-19
+
+### Fixed
+
+- **OpenAI-compatible gateway envelope unwrapping** — gateways and reverse
+  proxies (such as the Cline Pass Gateway `api.cline.bot` or certain API
+  aggregators) wrap standard ChatCompletion response bodies inside a top-level
+  `{"data": {"choices": [...]}}` envelope. `_call_llm()` now automatically
+  unwraps the `data` dictionary if present, preventing empty strings from
+  causing silent memory curation drops (`retain skipped (LLM: no curated summary)`).
+  Fully backward-compatible with standard OpenAI endpoints.
+
+### Enhanced
+
+- **Telegram activity hook robustness (`luminary-activity`)**:
+  - **Special character escaping** — memory content with unescaped Markdown
+    special characters (`_`, `*`, `` ` ``, `[`, `]`) is now automatically escaped,
+    preventing HTTP 400 Bad Request parsing rejections from Telegram Bot API.
+  - **Visual pin indicator** — durable rules (`importance >= 0.85` or tagged
+    `core`/`rule`) are now rendered with a `📌` icon for immediate visual clarity,
+    distinguishing rules from regular factual notes (`•`).
+  - **Batch overflow counter** — turns with $> 3$ memories display the top 3 items
+    and a summary counter `... (+N more)`, tracking all processed IDs cleanly.
+  - **Self-recovery `.env` fallback & topic thread routing** — parses `~/.hermes/.env`
+    automatically if subprocess environment variables are missing, and routes to
+    `TELEGRAM_HOME_CHANNEL_THREAD_ID` forum topics.
+- **LLM enricher transient error retry** — 1x defensive retry on transient network
+  glitches with exponential backoff. When provider curation is enabled but no
+  durable summary is produced, Hermes drops the turn instead of storing a raw
+  transcript as a false fact.
+
+### Tests
+
+- Added regression tests `test_unwrap_data_envelope` and `test_unwrap_data_envelope_plain_shape`.
+- Added retry resilience test `test_call_llm_retries_on_transient_error`.
+- Added hook test cases for Markdown character escaping, visual pin icons, and batch overflow.
+
+
 ## [0.2.16] - 2026-08-19
 
 ### Added

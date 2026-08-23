@@ -67,7 +67,7 @@ jobs:
             if (isFirst) {
               await github.rest.issues.createComment({
                 owner, repo, issue_number: pr.number,
-                body: "Welcome @" + login + "! Thanks for your first PR to luminary-memory. 🚀\n\nA maintainer will review shortly. Meanwhile, the CI checks will run automatically — keep an eye on the **Checks** tab.\n\n- [CONTRIBUTING.md](https://github.com/alertxsto/luminary-memory/blob/main/CONTRIBUTING.md) has the workflow\n- Tests: `python -m pytest` · Lint: `python -m ruff check src tests`\n- Coverage must stay ≥ 90%",
+                body: "Welcome @" + login + "! Thanks for your first PR to luminary-memory. 🚀\n\nA maintainer will review shortly. Meanwhile, the CI checks will run automatically — keep an eye on the **Checks** tab.\n\n- [CONTRIBUTING.md](https://github.com/alertxsto/luminary-memory/blob/main/CONTRIBUTING.md) has the workflow\n- Tests: `python -m pytest` · Lint: `python -m ruff check src tests hermes/hooks`\n- Coverage must not regress from the evidence-backed baseline; add invariant tests for changed behavior",
               });
               console.log("welcomed first-time contributor " + login);
             }

@@ -4,6 +4,8 @@ import math
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from luminary_memory.scope import memory_matches_scope, normalize_scope
+
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
 
@@ -31,7 +33,7 @@ def compute_temporal_score(
 ) -> float:
     if now is None:
         now = datetime.now(UTC)
-    created = _parse_dt(m.created_at)
+    created = _parse_dt(getattr(m, "observed_at", None) or m.created_at)
     age_hours = max(0.0, (now - created).total_seconds() / 3600.0)
     recency = math.exp(-age_hours / half_life_hours)
     popularity = 1.0 + math.log1p(float(m.access_count))
@@ -42,6 +44,8 @@ def temporal_recall(
     backend: MemoryBackend,
     limit: int | None = 10,
     half_life_hours: float = HALF_LIFE_HOURS,
+    scope: dict | None = None,
+    include_global: bool = True,
 ) -> list[tuple]:
     now = datetime.now(UTC)
 
@@ -50,7 +54,47 @@ def temporal_recall(
     scan = getattr(backend, "temporal_scan", None)
     if scan is not None:
         scored: list[tuple] = []
-        for mid, created_at, access_count in scan():
+        needs_local_filter = bool(normalize_scope(scope)) or not include_global
+        try:
+            scan_rows = scan(
+                scope=scope,
+                include_global=include_global,
+                include_observed=True,
+            )
+        except TypeError:
+            # Legacy scans are unscoped. Fetch all lightweight rows and defer
+            # top-k selection until after object-level scope filtering; taking
+            # top-k first could permanently hide a tenant's valid memories.
+            scan_rows = scan()
+            if needs_local_filter:
+                get_many = getattr(backend, "get_many", None)
+                ids = [row[0] for row in scan_rows]
+                by_id = get_many(ids) if get_many is not None else {}
+                filtered_rows = []
+                for row in scan_rows:
+                    memory = by_id.get(row[0]) if by_id else backend.get(row[0])
+                    if memory is not None and memory_matches_scope(
+                        memory,
+                        scope,
+                        include_global=include_global,
+                    ):
+                        filtered_rows.append(row)
+                scan_rows = filtered_rows
+        if needs_local_filter and not scan_rows:
+            # A legacy backend may apply the new global-only default to its
+            # unscoped fallback. Rebuild temporal candidates from full rows so
+            # a valid tenant memory is not lost before scope filtering.
+            scan_rows = [
+                (
+                    getattr(memory, "id", None),
+                    getattr(memory, "observed_at", None) or getattr(memory, "created_at", ""),
+                    getattr(memory, "access_count", 0),
+                )
+                for memory in backend.all()
+                if memory_matches_scope(memory, scope, include_global=include_global)
+            ]
+        for row in scan_rows:
+            mid, created_at, access_count = row[:3]
             created = _parse_dt(created_at)
             age_hours = max(0.0, (now - created).total_seconds() / 3600.0)
             recency = math.exp(-age_hours / half_life_hours)
@@ -79,8 +123,11 @@ def temporal_recall(
         return out
 
     # Fallback: full objects via backend.all().
-    scored = [(m, compute_temporal_score(m, now=now, half_life_hours=half_life_hours))
-              for m in backend.all()]
+    scored = [
+        (m, compute_temporal_score(m, now=now, half_life_hours=half_life_hours))
+        for m in backend.all()
+        if memory_matches_scope(m, scope, include_global=include_global)
+    ]
     scored.sort(key=lambda x: -x[1])
     return [(m, float(score), "temporal") for m, score in scored] if limit is None else [
         (m, float(score), "temporal") for m, score in scored[:limit]

@@ -42,6 +42,36 @@ def test_recall_json(tmp_path):
     assert "strategies_hit" in data
 
 
+def test_recall_empty_human_output_is_explicit(tmp_path):
+    db = tmp_path / "empty.db"
+    r = _invoke(["recall", "unknown fact"], db)
+    assert r.exit_code == 0, r.output
+    assert "no relevant memories found" in r.output
+
+
+def test_activity_human_output(tmp_path):
+    db = tmp_path / "activity.db"
+    _invoke(["add", "ALWAYS verify tests before release", "--tags", "core,rule"], db)
+    _invoke(["add", "Deploy target is staging", "--tags", "deploy"], db)
+    r = _invoke(["activity", "--limit", "2"], db)
+    assert r.exit_code == 0, r.output
+    assert "Luminary" in r.output
+    assert "Deploy target is staging" in r.output
+    assert "tags: deploy" in r.output
+
+
+def test_activity_json_output_is_parseable(tmp_path):
+    db = tmp_path / "activity-json.db"
+    _invoke(["add", "User prefers concise answers", "--tags", "preference"], db)
+    r = _invoke(["activity", "--json"], db)
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.output)
+    assert data["status"] == "active"
+    assert data["event"] == "memory_activity"
+    assert data["count"] == 1
+    assert data["memories"][0]["content"] == "User prefers concise answers"
+
+
 def test_search(tmp_path):
     db = tmp_path / "t.db"
     _invoke(["add", "postgresql indexing"], db)
@@ -131,10 +161,12 @@ def test_lifecycle_semantic_flag(tmp_path):
 
 
 def test_version_command():
+    from luminary_memory import __version__
+
     r = runner.invoke(app, ["version"])
     assert r.exit_code == 0
     assert "luminary-memory" in r.output
-    assert "0.2" in r.output
+    assert __version__ in r.output
 
 
 def test_graph_command(tmp_path):

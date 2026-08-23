@@ -1,29 +1,56 @@
 # Recall
 
-## Persistent context (v0.2.11+)
+## Core memory (DB-backed, auto-loaded)
 
-In the Hermes provider, recall is not just a ranked list — the top-N most
-important memories (durable rules, critical facts) are injected into context
-**every turn**, regardless of query match, and merged with the query-recall
-block under anti-duplication. This guarantees the agent never "forgets" a rule
-that exists in the store, even when the current query does not mention it.
+Rules tagged `core` are injected into the system prompt **every session**,
+regardless of query match (the DB-backed equivalent of Hermes' `MEMORY.md`).
+Ordinary durable memories are surfaced through query retrieval; Hermes may use
+the separate continuity fallback described below:
 
 ```
-Key memories:                          <- persistent block (top-N by importance)
-- <rule/fact 1>
-- <rule/fact 2>
+Core memory (auto-loaded every session):   <- curated default context; explicit live instruction wins
+- <durable rule 1>
+- <durable rule 2>
 
 # Luminary Memory (persistent cross-session context)   <- query-recall block
-- <query-relevant memory>              <- skips anything already injected above
+- <query-relevant memory>                  <- skips anything already injected above
+
+# Luminary Session Continuity (Hermes only, fallback)  <- exact-session reference
+- <recent current-session episode>
 ```
 
-Anti-duplication: memory ids injected by the persistent block are tracked per
-turn and skipped by the query-recall block, so no memory appears twice in one
-turn's context.
+> Persistent-context injection (top-N by importance every turn) was **removed
+> in v0.2.18**. Importance now scores query relevance and drives pruning only —
+> it does not pin memory into the prompt as rules that override a live user
+> instruction. Use the `core` tag for rules that must always be present.
+
+Anti-duplication: memory ids and content hashes injected by the core block are
+tracked per turn and skipped by the query-recall block, so the same durable
+memory does not appear twice in one turn's context. The continuity block is
+separately marked untrusted and is never treated as a durable recall hit.
+
+Core and query recall have different semantics. Core memory is curated
+persistent context: stable identity, preferences, and durable rules are
+applied as default context when relevant, and an explicit correction in the
+current user turn wins. Core rows are selected in stable insertion/id order and
+bounded by `core_top_n`/`core_budget`. Query recall is evidence only; it may be
+stale or incomplete and is never an instruction or a higher-priority system
+message.
+
+The Hermes provider has one additional continuity-only path: if the durable
+recall block is empty, it may inject a bounded untrusted reference block from
+recent immutable episodes with the exact current `session_id`. This path does
+not participate in semantic ranking, does not read another session, and does
+not promote raw turns into durable memory. It exists to keep an ambiguous
+follow-up attached to the active task.
 
 ## Four strategies
 
-`recall(query)` runs four complementary strategies in parallel and fuses them. No single query style dominates.
+`recall(query)` evaluates up to four complementary strategies and fuses them.
+Scope, status, tag, and validity filters run before fusion and before fallback;
+the query planner may skip a low-value strategy after inspecting the keyword
+signal. Strict provider/CLI paths can abstain when evidence is weak or
+ambiguous.
 
 ### 1. Semantic
 
@@ -71,19 +98,43 @@ match exists, and graph is skipped when the query has no entity tokens.
 
 Short queries ("deploy?") produce weak embeddings. Before semantic search,
 the query is expanded with co-occurring entity names from the knowledge
-graph, so relevant memories rank higher (`_expand_query`, best-effort , 
-falls back to the raw query on any error).
+graph, so relevant memories rank higher (`_expand_query`, best-effort, falls
+back to the raw query on any error).
 
-When the graph yields nothing, **rule-aware expansion (v0.2.15)** kicks in:
-if the query touches the topic of a durable rule (high-importance memory), up
-to two of its keywords are appended so the rule surfaces in semantic recall
-even when the query uses different words. Both expansions keep the original
-query tokens, so recall quality can never get worse than baseline.
+When the graph yields nothing, **content-aware expansion (v0.2.15)** may use
+up to two tokens from a topically related important memory. Both expansions
+keep the original query tokens, so the baseline query remains intact. There
+is no static alias table or language-specific vocabulary classifier.
+
+## Strict results, evidence, and conflicts
+
+Hermes and the CLI enable `strict_recall=true` and `evidence_required=true`.
+When `evidence_required` is enabled, the evidence gate applies in permissive
+recall too: a source label or fabricated quote is rejected unless the quote is
+grounded in the stored content, and importance/temporal fallbacks are filtered
+by the same rule. Strict mode returns `status="abstain"`; permissive mode
+returns an empty result with `reason="missing_evidence"`.
+They return a structured status rather than forcing a top-1 answer:
+
+```json
+{
+  "status": "abstain",
+  "reason": "low_confidence_or_ambiguous",
+  "confidence": 0.18,
+  "memories": [],
+  "provenance": []
+}
+```
+
+Normal results include `evidence_quote`, `source_id`, validity fields, and
+strategy provenance. Conflicted claims are hidden from ordinary recall;
+`include_conflicted=True` is a diagnostic view only. Use `supersede()` or an
+explicit versioned claim to resolve an update without deleting its history.
 
 
 ## Adaptive importance (v0.2.15)
 
-Memories that keep getting recalled have their importance re-estimated immediately during the recall pass (based on access count and recency). This allows frequently accessed facts to naturally climb in importance and eventually enter the persistent context, adapting to the agent's current focus.
+Memories that keep getting recalled have their importance re-estimated immediately during the recall pass (based on access count and recency). This allows frequently accessed facts to naturally climb in score and rank higher in the next turn's query recall, adapting to the agent's current focus.
 
 ## Adaptive cutoff
 
@@ -120,24 +171,25 @@ Results are truncated to a token budget (`LUMINARY_TOKEN_BUDGET`, default 4096) 
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | caps total injected tokens |
 | `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | quality/speed tradeoff |
 | `importance_recall_boost` | `LUMINARY_IMPORTANCE_RECALL_BOOST` | ranking bonus for memories at importance ≥ 0.8 (default 1.0) |
-| `context_top_n` | `LUMINARY_CONTEXT_TOP_N` | top-N important memories injected every turn (provider, default 8) |
-| `context_budget` | `LUMINARY_CONTEXT_BUDGET` | max tokens of persistent context (provider, default 2000) |
-| `context_min_importance` | `LUMINARY_CONTEXT_MIN_IMPORTANCE` | minimum importance for persistent-context injection (provider, default 0.0) |
+
+> Persistent-context knobs (`context_top_n`, `context_budget`,
+> `context_min_importance`) were removed in v0.2.18 — importance is now used
+> only for query retrieval/recall and pruning, never to pin rules per turn.
 
 ## Performance
 
-Recall runs four strategies in parallel and fuses them. On a 5k-memory store
-(SQLite, local CPU embeddings):
+The latency figures below are historical pipeline-smoke measurements on a
+5k-memory SQLite store. They are not independent accuracy scores; use the
+[gold benchmark](../benchmarks/README.md) for correctness metrics.
 
 | Stage | Typical latency |
 |-------|-----------------|
-| End-to-end recall | ~70–95 ms (p50), deterministic quality (MRR 1.0 on synthetic) |
+| End-to-end recall | ~70–95 ms (p50), synthetic pipeline smoke |
 | Semantic (vectorized cosine matmul) | ~35–50 ms |
 | Keyword (FTS5 BM25) | ~2–5 ms |
 | Temporal (batched fetch) | ~16–20 ms |
 | Graph (SQL aggregation) | ~20–25 ms |
-| Persistent context (lean scan, top-8) | ~5 ms |
+| Core memory (tag 'core', auto-load) | ~5 ms |
 
 Per-turn bookkeeping (access-count bump) is batched into one UPDATE statement,
-and the persistent-context scan reads only `id/content/importance/access_count`
-columns — never embedding blobs — so agent turns stay cheap.
+so agent turns stay cheap.

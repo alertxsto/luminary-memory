@@ -34,8 +34,24 @@ def _tags_of(p):
     return [set(m.tags or []) for m in p._client.list(limit=1000, offset=0)]
 
 
-def test_session_switch_flushes_old_session_lineage(tmp_path):
+def _enable_curator(p, monkeypatch):
+    import luminary_memory.ingest.llm as llm_module
+    from luminary_memory.ingest.llm import EnrichedContent
+
+    class _Curator:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich(self, text):
+            return EnrichedContent(content=text, summary=f"curated: {text}", worth_saving=True)
+
+    monkeypatch.setattr(llm_module, "OpenAICompatibleEnricher", _Curator)
+    p._config.update({"ingest_llm": True, "llm_base_url": "test", "llm_model": "test"})
+
+
+def test_session_switch_flushes_old_session_lineage(tmp_path, monkeypatch):
     p = _init_provider(tmp_path, retain_every_n_turns=5)
+    _enable_curator(p, monkeypatch)
     p.sync_turn("hello under s1", "reply", session_id="s1")
     # ensure the buffered turn is staged before switching
     assert p._session_turns, "expected a buffered turn"
@@ -59,8 +75,9 @@ def test_session_switch_reset_clears_buffer(tmp_path):
     p.shutdown()
 
 
-def test_session_end_flushes_pending_turns(tmp_path):
+def test_session_end_flushes_pending_turns(tmp_path, monkeypatch):
     p = _init_provider(tmp_path, retain_every_n_turns=5)
+    _enable_curator(p, monkeypatch)
     p.sync_turn("final turn", "reply", session_id="s1")
     p.on_session_end(messages=[{"role": "user", "content": "final turn"}])
     assert _wait_for_store(p, 1), "on_session_end did not flush"

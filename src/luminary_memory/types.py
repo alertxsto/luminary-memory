@@ -23,6 +23,27 @@ class Memory:
     access_count: int = 0
     embedding: list[float] | None = None
     snippet: str | None = None
+    # Ownership and lineage.  These fields are optional for backwards
+    # compatibility with legacy/global stores, but every provider-owned
+    # memory is written with them populated.
+    user_id: str | None = None
+    session_id: str | None = None
+    workspace_id: str | None = None
+    agent_id: str | None = None
+    # Claim lifecycle and provenance.  A row is a durable claim only while it
+    # is active; old rows remain queryable through the event log instead of
+    # being silently destroyed.
+    observed_at: str | None = None
+    valid_from: str | None = None
+    valid_to: str | None = None
+    status: str = "active"
+    confidence: float = 1.0
+    evidence_quote: str | None = None
+    source_id: str | None = None
+    claim_key: str | None = None
+    supersedes_id: int | None = None
+    content_hash: str | None = None
+    needs_reindex: bool = False
 
 @dataclass
 class ScoredMemory:
@@ -35,3 +56,7 @@ class RecallResult:
     memories: list[Memory]
     scores: list[float]
     strategies_hit: dict[str, int]
+    status: str = "ok"
+    reason: str | None = None
+    confidence: float = 0.0
+    provenance: list[dict[str, Any]] = field(default_factory=list)

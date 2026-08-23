@@ -48,6 +48,8 @@ def consolidate(
     semantic: bool = True,
     semantic_threshold: float = 0.85,
     pin_threshold: float = 0.9,
+    scope: dict | None = None,
+    include_global: bool = True,
 ) -> int:
     """Merge near-duplicate memories.
 
@@ -57,12 +59,37 @@ def consolidate(
     master (its content is kept), but it is never a duplicate that gets
     dropped.
     """
-    memories = backend.all()
+    from luminary_memory.recall.graph import index_memory_entities
+    from luminary_memory.scope import memory_matches_scope
+
+    memories = [
+        m
+        for m in backend.all()
+        if memory_matches_scope(
+            m,
+            scope,
+            include_global=include_global,
+            active_only=True,
+        )
+    ]
     merged = 0
     visited: set[int] = set()
 
     def _pinned(m) -> bool:
         return float(getattr(m, "importance", 0.0) or 0.0) >= pin_threshold
+
+    def _same_ownership_scope(a, b) -> bool:
+        """Never merge near-duplicates that belong to different owners.
+
+        An unbound lifecycle client is allowed to inspect the whole database,
+        but it is not allowed to collapse two tenants/sessions into one row.
+        The exact four-field identity matches the database dedup invariant and
+        keeps lineage, tags, and future reads attributable to one scope.
+        """
+        return all(
+            getattr(a, field, None) == getattr(b, field, None)
+            for field in ("user_id", "workspace_id", "agent_id", "session_id")
+        )
 
     for i, m in enumerate(memories):
         if m.id in visited:
@@ -70,6 +97,13 @@ def consolidate(
         cluster = [m]
         for n in memories[i + 1:]:
             if n.id in visited:
+                continue
+            if not _same_ownership_scope(m, n):
+                continue
+            # A shared claim key with different content is a conflict, not a
+            # duplicate.  Embeddings are intentionally not allowed to merge
+            # positive/negative or versioned facts.
+            if m.claim_key and n.claim_key and m.claim_key == n.claim_key and m.content_hash != n.content_hash:
                 continue
             if _similar(m, n, semantic, semantic_threshold, threshold):
                 cluster.append(n)
@@ -85,6 +119,26 @@ def consolidate(
                     visited.add(c.id)  # type: ignore[arg-type]
                 continue
         master = max(cluster, key=lambda x: len(x.content))
+        duplicates = [c for c in cluster if c.id != master.id]
+        rehome = getattr(backend, "rehome_memory_references", None)
+        if callable(rehome):
+            rehome_failed = False
+            for duplicate in duplicates:
+                try:
+                    rehome(duplicate.id, master.id)
+                except Exception:
+                    rehome_failed = True
+                    logger.warning(
+                        "could not rehome references from %s to %s; keeping duplicate",
+                        duplicate.id,
+                        master.id,
+                        exc_info=True,
+                    )
+            if rehome_failed:
+                # Do not hard-delete a row while its evidence/claim lineage
+                # may still point at it. A later lifecycle pass can retry.
+                visited.update(c.id for c in cluster if c.id is not None)
+                continue
         total_access = sum(c.access_count for c in cluster)
         merged_tags: list[str] = []
         seen: set[str] = set()
@@ -95,9 +149,31 @@ def consolidate(
                     merged_tags.append(t)
         master.access_count = total_access
         master.tags = merged_tags
+        before_master = backend.get(master.id) if master.id is not None else None
         backend.update(master)  # type: ignore[arg-type]
-        for c in cluster:
+        try:
+            backend.record_event(
+                "consolidate",
+                master.id,
+                before={"content": getattr(before_master, "content", None)} if before_master else None,
+                after={"content": master.content, "merged_ids": [c.id for c in cluster]},
+            )
+        except Exception:
+            logger.debug("could not record consolidation for %s", master.id, exc_info=True)
+        try:
+            index_memory_entities(backend, master)
+        except Exception:  # noqa: BLE001
+            master.needs_reindex = True
+            try:
+                backend.update(master)
+            except Exception:
+                logger.debug("could not mark consolidated memory for reindex", exc_info=True)
+        for c in duplicates:
             if c.id != master.id:
+                try:
+                    backend.record_event("consolidate_delete", c.id, before={"content": c.content})
+                except Exception:
+                    logger.debug("could not record consolidation delete for %s", c.id, exc_info=True)
                 backend.delete(c.id)  # type: ignore[arg-type]
                 visited.add(c.id)  # type: ignore[arg-type]
                 merged += 1

@@ -30,24 +30,38 @@ def _wait_for_store(p, expected_count, timeout=8.0):
     return False
 
 
-def test_on_memory_write_add_ingests_with_tags(tmp_path):
+def test_on_memory_write_is_ignored_when_luminary_is_authoritative(tmp_path):
     p = _init_provider(tmp_path)
     p.on_memory_write("add", "user", "prefers X", metadata={"k": "v"})
-    assert _wait_for_store(p, 1), "on_memory_write did not ingest"
+    time.sleep(0.2)
+    assert p._client.count() == 0
+    p.shutdown()
 
-    m = p._client.list(limit=10, offset=0)[0]
-    assert m.source == "hermes-builtin"
-    assert "user" in (m.tags or [])
-    assert "builtin" in (m.tags or [])
+
+def test_native_write_does_not_emit_saved_indicator(tmp_path):
+    statuses = []
+    p = LuminaryMemoryProvider()
+    p.initialize(
+        "s1",
+        hermes_home=str(tmp_path),
+        platform="cli",
+        agent_identity="test",
+        status_callback=statuses.append,
+    )
+    p._client.engine = _FakeEngine()
+
+    p.on_memory_write("add", "user", "prefers X")
+    time.sleep(0.2)
+    assert p._client.count() == 0
+    assert statuses == []
     p.shutdown()
 
 
 def test_on_memory_write_replace_markers(tmp_path):
     p = _init_provider(tmp_path)
     p.on_memory_write("replace", "prefs", "new pref", metadata=None)
-    assert _wait_for_store(p, 1)
-    m = p._client.list(limit=10, offset=0)[0]
-    assert any(t.startswith("replace:") for t in (m.tags or []))
+    time.sleep(0.2)
+    assert p._client.count() == 0
     p.shutdown()
 
 

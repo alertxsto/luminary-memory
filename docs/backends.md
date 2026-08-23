@@ -18,15 +18,28 @@
   a background recall thread and the writer thread never trip
   `sqlite3.ProgrammingError`. `close()` only touches the caller's thread-local
   connection.
-- **Lean scans** power the per-turn persistent-context/core blocks and avoid
+- **Lean scans** power the per-turn core/recall blocks and avoid
   decoding the (large) embedding blobs for every row:
   `top_by_importance`, `by_tag_top`, `temporal_scan`, `scan_embeddings`,
   `scan_embeddings_matrix`. Writes are batched (`touch_memories`,
   `update_importances`, `add_many`, `delete_many`).
 - Best for single-user, edge, and stores under ~100k memories (vector search
-  is a linear scan). WAL mode is not currently enabled; each thread uses its
-  own connection, so concurrent readers/writers do not block on the same
-  in-process connection.
+  is a linear scan). Each thread uses its own connection and the backend
+  enables SQLite WAL with a busy timeout on writable file stores, so Hermes'
+  background reader/writer paths can coexist. WAL setup is best-effort for
+  in-memory, read-only, or otherwise restricted paths.
+- Accuracy filters (`scope`, `status`, validity windows, and tags) are applied
+  in backend queries where supported and defensively again in the orchestrator
+  before fusion/fallback. Scope-aware indexes cover ownership, status, claim
+  keys, and content hashes.
+- The backend also owns the immutable episode/provenance helpers used by the
+  provider: `record_episode()` stores source turns, `recent_episodes()` reads
+  only a requested exact scope, and event/evidence/claim methods keep the
+  durable row auditable. Episode rows are not semantic recall candidates.
+- Exact active deduplication is a database invariant, not only an API
+  pre-check: `uq_memories_active_scope_hash` covers the normalized ownership
+  tuple plus `content_hash`. Concurrent writers resolve the winning row and
+  the API avoids writing duplicate episode/evidence/graph lineage.
 
 ## pgvector
 
@@ -34,9 +47,19 @@
 - Keyword search via `ILIKE` with `ESCAPE` handling.
 - Vector search via the `<=>` cosine distance operator (HNSW-ready).
 - Best for scale and concurrent access.
+- The same ownership, status, evidence, claim, and supersession fields are
+  stored so switching backends does not change the public accuracy contract.
+- Episode-ledger reads/writes and audit/provenance records follow the same
+  ownership boundary, so the Hermes continuity fallback behaves consistently
+  after a backend switch.
 - Integration tests run against a real Postgres service in CI
   (`.github/workflows/ci.yml`); run them locally with `LUMINARY_PG_DSN`
   (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
+- Schema initialization backfills legacy hashes, collapses exact active
+  duplicates while rehoming derived references, and installs the same scoped
+  unique invariant as SQLite. Unique-conflict recovery rolls back the failed
+  transaction and closes its lookup snapshot, which matters for long-lived
+  writer connections.
 
 ## Choosing
 
@@ -54,4 +77,11 @@
 
 ## Adding a new backend
 
-Implement the `MemoryBackend` ABC (`add`, `get`, `update`, `delete`, `all`, `keyword_search`, `vector_search`, `count`) and register it in `backends/__init__.py`.
+Implement the `MemoryBackend` ABC (`add`, `get`, `update`, `delete`, `all`,
+`keyword_search`, `vector_search`, `count`) and register it in
+`backends/__init__.py`. For a provider-capable backend, also implement the
+optional `record_event`, `add_evidence`, `record_episode`,
+`recent_episodes`, `add_claim`, and `sync_claim_status` helpers. A lightweight
+custom backend may use the no-op compatibility defaults, but then Hermes
+session continuity and provenance are explicitly unavailable and must be
+reported as such.

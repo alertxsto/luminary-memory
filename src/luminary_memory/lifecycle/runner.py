@@ -19,6 +19,8 @@ def run_lifecycle(
     backend: MemoryBackend,
     settings: Settings | None = None,
     semantic: bool | None = None,
+    scope: dict | None = None,
+    include_global: bool = True,
 ) -> dict[str, int]:
     min_importance = float(settings.prune_min_importance) if settings else 0.2
     consolidate_threshold = float(
@@ -36,14 +38,48 @@ def run_lifecycle(
     max_count = int(getattr(settings, "max_memories", 0) or 0) if settings else 0
     max_count = max_count or None
 
+    # Repair graph rows explicitly marked by a failed mutation.  A failed
+    # secondary index must be observable and recoverable, never silently stale.
+    reindexed = 0
+    from luminary_memory.recall.graph import index_memory_entities
+    from luminary_memory.scope import memory_matches_scope
+
+    for memory in backend.all():
+        if not getattr(memory, "needs_reindex", False):
+            continue
+        if not memory_matches_scope(
+            memory,
+            scope,
+            include_global=include_global,
+            active_only=False,
+        ):
+            continue
+        try:
+            index_memory_entities(backend, memory)
+            memory.needs_reindex = False
+            backend.update(memory)
+            reindexed += 1
+        except Exception:
+            logger.warning("reindex failed for memory %s", memory.id, exc_info=True)
+
     # Re-estimate importance before pruning so values reflect current value.
     # Pinned memories (importance >= pin_threshold, e.g. durable rules) are
     # never downgraded by re-estimation.
     reestimated = 0
     if settings is None or settings.importance_auto:
         from luminary_memory.lifecycle.importance import estimate_importance
+        from luminary_memory.scope import memory_matches_scope
 
-        memories = backend.all()
+        memories = [
+            m
+            for m in backend.all()
+            if memory_matches_scope(
+                m,
+                scope,
+                include_global=include_global,
+                active_only=True,
+            )
+        ]
         max_access = max((int(m.access_count or 0) for m in memories), default=1)
         changed: list[tuple[float, int]] = []
         for m in memories:
@@ -65,10 +101,35 @@ def run_lifecycle(
             reestimated = len(changed)
     start = time.monotonic()
     result = {
-        "cleanup": int(cleanup_expired(backend)),
-        "consolidate": int(consolidate(backend, threshold=consolidate_threshold, semantic=semantic, pin_threshold=pin_threshold)),
-        "prune": int(prune(backend, min_importance=min_importance, pin_threshold=pin_threshold, max_count=max_count)),
+        "cleanup": int(
+            cleanup_expired(
+                backend,
+                scope=scope,
+                include_global=include_global,
+            )
+        ),
+        "consolidate": int(
+            consolidate(
+                backend,
+                threshold=consolidate_threshold,
+                semantic=semantic,
+                pin_threshold=pin_threshold,
+                scope=scope,
+                include_global=include_global,
+            )
+        ),
+        "prune": int(
+            prune(
+                backend,
+                min_importance=min_importance,
+                pin_threshold=pin_threshold,
+                max_count=max_count,
+                scope=scope,
+                include_global=include_global,
+            )
+        ),
         "reestimated": reestimated,
+        "reindexed": reindexed,
     }
     logger.info("run_lifecycle %s (%.1fs)", result, time.monotonic() - start)
     return result

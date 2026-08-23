@@ -5,8 +5,9 @@
 # Installs everything needed to use luminary-memory as a Hermes
 # memory provider, plus the optional chat-activity hook and skill.
 #
-#   - pip install luminary-memory[hermes]
-#   - enables memory.provider = luminary in Hermes config
+#   - install luminary-memory[hermes] into the Hermes interpreter
+#   - enables memory.provider = luminary and disables the two native memory
+#     surfaces in Hermes config, so there is one persistent authority
 #   - installs the luminary-activity hook
 #   - installs the luminary-memory skill
 #
@@ -19,6 +20,7 @@
 set -euo pipefail
 
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+LUMINARY_PYTHON="${HERMES_PYTHON:-python3}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL_SRC="$REPO_DIR/hermes/SKILL.md"
 HOOK_SRC="$REPO_DIR/hermes/hooks/luminary-activity"
@@ -48,41 +50,48 @@ fail() { printf '\033[1;31m[luminary]\033[0m ERROR: %s\n' "$*" >&2; exit 1; }
 # ------------------------------------------------------------------ #
 if [ "$DO_PROVIDER" -eq 1 ]; then
   log "installing luminary-memory[hermes] ..."
-  pip install -q "luminary-memory[hermes]>=0.2.13" || fail "pip install failed"
+  "$LUMINARY_PYTHON" -m pip install -q "luminary-memory[hermes]" || fail "pip install failed"
+
+  # Check capabilities, never a Hermes release number.  This keeps an
+  # unsupported host from silently falling back to native memory or leaving
+  # two persistent stores active.
+  if ! "$LUMINARY_PYTHON" - <<'PY'
+from importlib import metadata
+
+from agent.memory_provider import MemoryProvider
+
+required = (
+    "name",
+    "is_available",
+    "initialize",
+    "get_tool_schemas",
+    "replaces_builtin_memory",
+)
+missing = [name for name in required if not hasattr(MemoryProvider, name)]
+if missing:
+    raise SystemExit(
+        "Hermes public MemoryProvider contract is missing: " + ", ".join(missing)
+    )
+
+entry_points = metadata.entry_points()
+if hasattr(entry_points, "select"):
+    installed = {entry.name for entry in entry_points.select(group="hermes_agent.memory_providers")}
+else:
+    installed = {
+        entry.name
+        for entry in entry_points
+        if getattr(entry, "group", "") == "hermes_agent.memory_providers"
+    }
+if "luminary" not in installed:
+    raise SystemExit("Luminary entry point is not visible to the Hermes interpreter")
+PY
+  then
+    fail "Hermes does not expose the public memory-provider capabilities required by Luminary"
+  fi
 
   CONFIG="$HERMES_HOME/config.yaml"
-  if [ ! -f "$CONFIG" ]; then
-    log "no config.yaml found — creating minimal config with memory.provider"
-    mkdir -p "$HERMES_HOME"
-    printf 'memory:\n  provider: luminary\n' > "$CONFIG"
-  else
-    # Use Python to inspect ONLY the ^memory: block — never match a
-    # `provider:` line elsewhere (e.g. provider: command-code in the
-    # models section), which would wrongly skip the edit.
-    python3 - "$CONFIG" <<'PY'
-import re, sys
-p = sys.argv[1]
-s = open(p).read()
-
-def memory_block(text):
-    m = re.search(r"(?m)^memory:\s*(.*?)(?=^\S|\Z)", text, re.S)
-    return m.group(1) if m else ""
-
-block = memory_block(s)
-if "provider:" in block:
-    print("memory.provider already set in memory: block — skipping")
-    raise SystemExit(0)
-
-if re.search(r"(?m)^memory:\s*$", s):
-    # memory: block exists but has no provider — insert under it
-    s = re.sub(r"(?m)^memory:\s*$", "memory:\n  provider: luminary", s, count=1)
-    print("inserted memory.provider under existing memory: block")
-else:
-    s += "\nmemory:\n  provider: luminary\n"
-    print("appended memory: block to config.yaml")
-open(p, "w").write(s)
-PY
-  fi
+  log "activating Luminary through Hermes config.yaml ..."
+  "$LUMINARY_PYTHON" -m luminary_memory.hermes.activation --all-profiles "$CONFIG" || fail "could not update Hermes memory configs"
 fi
 
 # ------------------------------------------------------------------ #

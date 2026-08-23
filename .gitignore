@@ -95,6 +95,9 @@ temp/
 REPORT-*.md
 *REPORT.md
 
+# ---- Local documentation and planning (keep out of source) ----
+docs/*
+
 # ---- Generated API docs (regenerate via pdoc) ----
 docs/api/
 
@@ -102,6 +105,9 @@ docs/api/
 website/screenshot_*.png
 website/test_*.png
 website/*.png
+
+# ---- Firecrawl research cache (local only) ----
+.firecrawl/
 
 # ---- Internal plan files ----
 website/plan.md

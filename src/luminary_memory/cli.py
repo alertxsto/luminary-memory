@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import typer
 from rich.console import Console
@@ -20,12 +21,25 @@ console = Console()
 
 
 def _client(db_path: str | None, backend: str | None) -> MemoryClient:
-    settings = Settings()
+    # CLI is an accuracy-facing surface: unrelated queries must abstain and
+    # destructive rule replacement stays opt-in. Scope can be supplied by the
+    # runner without putting identity values into command history.
+    settings = Settings(strict_recall=True, evidence_required=True, rule_auto_replace=False)
     if db_path is not None:
         settings.db_path = db_path
     if backend is not None:
         settings.backend = backend
-    return MemoryClient(settings=settings)
+    scope = {
+        key: os.environ.get(env_name)
+        for key, env_name in (
+            ("user_id", "LUMINARY_USER_ID"),
+            ("workspace_id", "LUMINARY_WORKSPACE_ID"),
+            ("agent_id", "LUMINARY_AGENT_ID"),
+            ("session_id", "LUMINARY_SESSION_ID"),
+        )
+        if os.environ.get(env_name)
+    }
+    return MemoryClient(settings=settings, scope=scope)
 
 
 @app.callback()
@@ -98,6 +112,10 @@ def recall(
             result = client.recall(query, limit=lim)
             if json_out:
                 payload = {
+                    "status": result.status,
+                    "reason": result.reason,
+                    "confidence": result.confidence,
+                    "count": len(result.memories),
                     "memories": [
                         {
                             "id": m.id,
@@ -106,13 +124,24 @@ def recall(
                             "source": m.source,
                             "created_at": m.created_at,
                             "importance": m.importance,
+                            "observed_at": m.observed_at,
+                            "valid_from": m.valid_from,
+                            "valid_to": m.valid_to,
+                            "confidence": m.confidence,
+                            "evidence_quote": m.evidence_quote,
+                            "source_id": m.source_id,
                         }
                         for m in result.memories
                     ],
                     "scores": result.scores,
                     "strategies_hit": result.strategies_hit,
+                    "provenance": result.provenance,
                 }
-                console.print(json.dumps(payload, indent=2))
+                typer.echo(json.dumps(payload, indent=2))
+                return
+            if not result.memories:
+                reason = f" ({result.reason})" if result.reason else ""
+                console.print(f"🌙 Luminary — no relevant memories found{reason}", markup=False)
                 return
             table = Table(title=f"Recall: {query}")
             table.add_column("id", style="dim")
@@ -121,6 +150,69 @@ def recall(
             for m, s in zip(result.memories, result.scores):
                 table.add_row(str(m.id), f"{s:.4f}", m.content)
             console.print(table)
+        finally:
+            client.close()
+
+    _safe_run(run)
+
+
+@app.command()
+def activity(
+    limit: int = typer.Option(3, "--limit", "-l", help="Recent stored memories to show (0 = unlimited)"),
+    json_out: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
+    db_path: str | None = typer.Option(None, "--db-path", help="Override SQLite path"),
+    backend: str | None = typer.Option(None, "--backend", help="sqlite | pgvector"),
+) -> None:
+    """Show recent persisted memory activity for CLI and hook verification."""
+    def run():
+        lim = _clamp_limit(limit)
+        if lim is None:
+            lim = 0
+        client = _client(db_path, backend)
+        try:
+            rows = client.list(limit=lim, offset=0)
+            items = [
+                {
+                    "id": m.id,
+                    "content": m.content,
+                    "tags": m.tags or [],
+                    "source": m.source,
+                    "importance": float(m.importance),
+                    "created_at": m.created_at,
+                }
+                for m in rows
+            ]
+            payload = {
+                "status": "active" if items else "idle",
+                "event": "memory_activity",
+                "count": len(items),
+                "memories": items,
+            }
+            if json_out:
+                typer.echo(json.dumps(payload, indent=2))
+                return
+            if not rows:
+                console.print("🌙 Luminary — no stored memory activity", markup=False)
+                return
+            noun = "memory" if len(rows) == 1 else "memories"
+            console.print(f"🌙 Luminary — {len(rows)} recent {noun} stored", markup=False)
+            for m in rows:
+                content = str(m.content or "").replace("\n", " ").strip()
+                if len(content) > 140:
+                    content = content[:140].rsplit(" ", 1)[0] + "…"
+                tags = ", ".join(m.tags or [])
+                is_rule = float(m.importance or 0.0) >= 0.85 or any(
+                    t in {"core", "rule"} for t in (m.tags or [])
+                )
+                icon = "📌" if is_rule else "•"
+                console.print(f"  {icon} #{m.id} {content}", markup=False)
+                details = []
+                if tags:
+                    details.append(f"tags: {tags}")
+                if m.source:
+                    details.append(f"source: {m.source}")
+                if details:
+                    console.print(f"    {' · '.join(details)}", markup=False)
         finally:
             client.close()
 
@@ -155,7 +247,7 @@ def search(
                     }
                     for m, s in rows
                 ]
-                console.print(json.dumps(payload, indent=2))
+                typer.echo(json.dumps(payload, indent=2))
                 return
             for m, score in rows:
                 console.print(f"[dim]{m.id}[/dim] ({score:.4f}) {m.content}")
@@ -194,7 +286,7 @@ def list(
                     }
                     for m in rows
                 ]
-                console.print(json.dumps(payload, indent=2))
+                typer.echo(json.dumps(payload, indent=2))
                 return
             for m in rows:
                 tags = ",".join(m.tags or [])
@@ -218,7 +310,7 @@ def export_cmd(
         client = _client(db_path, backend)
         try:
             result = client.export(path, include_embeddings=include_embeddings)
-            console.print(json.dumps(result, indent=2))
+            typer.echo(json.dumps(result, indent=2))
         finally:
             client.close()
     _safe_run(run)
@@ -235,7 +327,7 @@ def import_cmd(
         client = _client(db_path, backend)
         try:
             result = client.import_memories(path)
-            console.print(json.dumps(result, indent=2))
+            typer.echo(json.dumps(result, indent=2))
         finally:
             client.close()
     _safe_run(run)
@@ -252,7 +344,7 @@ def lifecycle(
     client = _client(db_path, backend)
     try:
         result = client.run_lifecycle(semantic=semantic)
-        console.print(json.dumps(result, indent=2))
+        typer.echo(json.dumps(result, indent=2))
     finally:
         client.close()
 
@@ -265,7 +357,7 @@ def stats(
     """Show store statistics."""
     client = _client(db_path, backend)
     try:
-        console.print(json.dumps(client.stats(), indent=2))
+        typer.echo(json.dumps(client.stats(), indent=2))
     finally:
         client.close()
 
@@ -281,7 +373,7 @@ def health(
     try:
         report = client.health_score()
         if json_output:
-            console.print(json.dumps(report, indent=2))
+            typer.echo(json.dumps(report, indent=2))
             return
         score = report["score"]
         bar = "█" * int(score / 10) + "░" * (10 - int(score / 10))
@@ -319,7 +411,7 @@ def graph(
     try:
         data = client.graph(limit=limit)
         if json_output:
-            console.print(json.dumps(data, indent=2))
+            typer.echo(json.dumps(data, indent=2))
             return
         table = Table(title="Knowledge Graph")
         table.add_column("Entity", style="cyan")

@@ -58,6 +58,29 @@ def test_handle_recall_returns_memories(tmp_path):
     p.shutdown()
 
 
+def test_handle_recall_reports_core_match_instead_of_false_empty(tmp_path):
+    from luminary_memory.types import RecallResult
+
+    p = _init_provider(tmp_path)
+    mid = p._client.ingest("a stable fact already loaded in core", tags=[p._core_tag()], source="test")
+    core = p._client.get(mid)
+    p._client.recall = lambda *args, **kwargs: RecallResult(
+        memories=[core],
+        scores=[1.0],
+        strategies_hit={"semantic": 1},
+        status="ok",
+        confidence=1.0,
+    )
+
+    data = json.loads(p.handle_tool_call("luminary_recall", {"query": "stable fact"}))
+
+    assert data["memories"] == []
+    assert data["reason"] == "matches_already_in_core"
+    assert data["deduplicated_core_count"] == 1
+    assert data["deduplicated_core_ids"] == [mid]
+    p.shutdown()
+
+
 def test_handle_recall_missing_query_returns_error(tmp_path):
     p = _init_provider(tmp_path)
     out = p.handle_tool_call("luminary_recall", {})

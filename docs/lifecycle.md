@@ -1,7 +1,16 @@
 # Lifecycle
 
+Lifecycle is deterministic and scope-aware. It maintains the store without
+turning an unresolved conflict or a provenance record into an accidental
+deletion.
+
 Two maintenance layers keep the store lean: deterministic passes
 (`run_lifecycle()`) and LLM-driven curation (`run_maintenance()`).
+
+The Hermes exact-session episode ledger is not part of either semantic
+maintenance pass. Episodes are immutable continuity evidence and are read only
+for the current session fallback; they are not ranked, consolidated, or
+pruned as durable memories by `run_lifecycle()`.
 
 ## `run_lifecycle()`, deterministic passes
 
@@ -33,7 +42,7 @@ importance dimension both use these live values.
 Every time a memory is recalled, its importance is **re-estimated immediately**
 (after the batched access bump), not just at lifecycle time. A memory that keeps
 getting recalled climbs toward the top of `top_by_importance`, so it rises into
-the next turn's persistent-context block — the store literally learns what the
+the next turn's query recall ranking, so the store literally learns what the
 agent uses. Pinned rules (importance ≥ 0.9) are never downgraded by this pass.
 
 ### prune, drop low-value memories
@@ -89,8 +98,22 @@ every session end:
 }
 ```
 
+This session-boundary sweep complements the provider's per-turn incremental
+review. When `ingest_llm` is enabled, every queued automatic retain is followed
+on the same writer queue by a bounded exact-scope comparison with the current
+turn. Only evidence-grounded captures, explicit claim supersessions, and
+explicitly supported retractions are applied; malformed or unsupported review
+actions are skipped and logged. `auto_maintain` remains the broader store-wide
+cleanup pass rather than the only opportunity to correct a memory.
+
 Results are recorded in the transparency log
 (`~/.hermes/luminary/luminary.log`): `maintenance {'reviewed': N, 'deleted': N, 'updated': N}`.
+
+The Hermes provider closes write admission and drains every accepted batch
+before closing its writer. A bounded shutdown reports a `partial` event when a
+worker cannot finish within its join window; Luminary will not start a new
+provider lifecycle while that worker is still alive, so a slow curation result
+cannot be written under a later session.
 
 ## `health_score()`, store health report (v0.2.4+)
 
@@ -100,7 +123,7 @@ existing store data (no new schema):
 | Dimension | Weight | What it measures |
 |-----------|--------|------------------|
 | `duplicate_rate` | 25% | Share of memories with a near-duplicate (Jaccard > threshold) |
-| `staleness` | 25% | Share of memories not accessed in 30 days |
+| `staleness` | 25% | Share of non-core recall memories not accessed in 30 days; core-tagged rows are tracked separately because they are surfaced by the always-loaded prompt path |
 | `importance` | 20% | Share of memories above `prune_min_importance` |
 | `density` | 15% | Share of memories with graph relations |
 | `size` | 15% | Store volume (scales toward 100 at ~1k memories) |
@@ -110,6 +133,10 @@ report = client.health_score()
 print(report["score"])            # 87.5
 print(report["recommendations"])  # actionable hints
 ```
+
+The JSON staleness dimension also reports `core_tagged_count` and
+`recall_memory_count`. Core rows are not counted as “never accessed” merely
+because they do not pass through query recall.
 
 CLI:
 
@@ -127,6 +154,29 @@ luminary-memory health --json    # raw JSON
 
 Empty store scores 100 (nothing wrong); low-scoring dimensions produce
 recommendations.
+
+## Repairing an old authority collision
+
+If a store was populated while an imported memory snapshot, native Hermes
+memory, and Luminary automatic transcripts were being treated as one source,
+use the dedicated SQLite repair utility before enabling more automatic writes:
+
+```bash
+# Read-only inventory; prints JSON and makes no changes.
+python scripts/repair_memory_authority.py \
+  --db-path ~/.hermes/luminary/memory.db
+
+# Explicit migration; creates a consistent backup first.
+python scripts/repair_memory_authority.py \
+  --db-path ~/.hermes/luminary/memory.db --apply
+```
+
+The utility identifies rows from imported authority snapshots and structurally
+uncurated Hermes turn batches using source, tags, metadata, scope, and shape.
+It does not classify by language or keywords. `--apply` archives matching rows,
+removes an accidental `core` tag where appropriate, and appends an audit event;
+it never hard-deletes the row. Review the dry-run JSON and backup path before
+continuing with normal lifecycle scheduling.
 
 
 ## Backup before lifecycle

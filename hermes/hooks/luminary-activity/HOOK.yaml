@@ -1,4 +1,4 @@
 name: luminary-activity
-description: Surface luminary-memory activity (recalls, stores) to the chat as a compact status line
+description: Surface newly stored luminary-memory facts to Telegram as a compact, delivery-safe status line
 events:
   - agent:end

@@ -12,7 +12,7 @@
 ## Testing
 
 - [ ] `python -m pytest` passes
-- [ ] `python -m ruff check src tests` passes
+- [ ] `python -m ruff check src tests hermes/hooks` passes
 
 ## Checklist
 

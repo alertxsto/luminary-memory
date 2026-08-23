@@ -35,22 +35,12 @@ def test_system_prompt_includes_core_block(tmp_path):
     p = _init_provider(tmp_path)
     _seed_core(p, ["always use markdown tables in Telegram"])
     block = p.system_prompt_block()
-    assert "Core memory (auto-loaded every session)" in block
+    assert "Core memory, auto-loaded every session" in block
+    assert "<luminary-core-memory>" in block
+    assert "Apply these durable facts, preferences, and rules" in block
+    assert "never higher-priority system instruction" in block
+    assert "<luminary-memory-untrusted>" not in block
     assert "markdown table" in block
-    p.shutdown()
-
-
-def test_core_block_before_persistent_context(tmp_path):
-    p = _init_provider(tmp_path)
-    _seed_core(p, ["rule inti format tabel"])
-    # A non-core high-importance memory that would land in persistent context.
-    p._client.settings.rule_auto_replace = False
-    p._client.ingest("fakta biasa deploy cluster", tags=["biasa"], source="test")
-    block = p.system_prompt_block()
-    core_idx = block.find("Core memory (auto-loaded")
-    ctx_idx = block.find("Key memories")
-    assert core_idx != -1 and ctx_idx != -1
-    assert core_idx < ctx_idx, "core block must come before persistent context"
     p.shutdown()
 
 
@@ -145,12 +135,43 @@ def test_core_list_returns_core_memories(tmp_path):
     p.shutdown()
 
 
+def test_core_list_respects_provider_scope(tmp_path):
+    import json
+
+    from luminary_memory.api import MemoryClient
+    from luminary_memory.ingest.llm import NoopEnricher
+
+    p = LuminaryMemoryProvider()
+    p.initialize(
+        "s1",
+        hermes_home=str(tmp_path),
+        platform="cli",
+        agent_identity="test",
+        user_id="alice",
+    )
+    p._client.engine = _FakeEngine()
+    p._client.ingest("alice scoped core", tags=[p._core_tag()])
+    other = MemoryClient(
+        db_path=str(tmp_path / "luminary" / "memory.db"),
+        engine=_FakeEngine(),
+        enricher=NoopEnricher(),
+    )
+    other.ingest("bob scoped core", tags=[p._core_tag()], user_id="bob")
+
+    data = json.loads(p.handle_tool_call("luminary_core_list", {}))
+    contents = {row["content"] for row in data["core"]}
+    assert "alice scoped core" in contents
+    assert "bob scoped core" not in contents
+    other.close()
+    p.shutdown()
+
+
 def test_core_block_included_in_prefetch_context(tmp_path):
     p = _init_provider(tmp_path)
     _seed_core(p, ["always use markdown tables in all output"])
     p._config["recall_sync"] = True
     result = p.prefetch("riset teknologi x y z", session_id="s1")
-    assert "Core memory (auto-loaded every session)" in result
+    assert "Core memory, auto-loaded every session" in result
     assert "markdown tables" in result
     p.shutdown()
 
@@ -201,6 +222,40 @@ def test_core_content_independent_of_injected_ids(tmp_path):
         p._injected_ids = set()
     block = p._build_core_memory()
     assert "aturan inti stabil" in block
+    p.shutdown()
+
+
+def test_core_budget_skips_oversized_top_row_and_keeps_later_rule(tmp_path):
+    p = _init_provider(tmp_path)
+    p._client.settings.core_top_n = 2
+    p._client.settings.core_budget = 24
+    tag = p._core_tag()
+    p._client.ingest("this core rule is much too long for the budget", tags=[tag], importance=1.0)
+    p._client.ingest("short core rule", tags=[tag], importance=0.8)
+
+    block = p._build_core_memory()
+    assert "this core rule is much too long" not in block
+    assert "short core rule" in block
+    core_ids, core_hashes = p._core_identifiers()
+    assert len(core_ids) == 1
+    assert len(core_hashes) == 1
+    p.shutdown()
+
+
+def test_core_add_promotes_exact_duplicate_without_creating_second_row(tmp_path):
+    p = _init_provider(tmp_path)
+    content = "always keep the deploy target evidence grounded"
+    p._client.ingest(content, tags=["ordinary"], source="test", **p._operation_scope())
+
+    import json
+
+    out = p.handle_tool_call("luminary_core_add", {"content": content})
+    data = json.loads(out)
+    assert "Core memory stored" in data["result"]
+    matching = [m for m in p._client.list(limit=0) if m.content == content]
+    assert len(matching) == 1
+    assert p._core_tag() in (matching[0].tags or [])
+    assert matching[0].importance >= p._client.settings.rule_importance
     p.shutdown()
 
 

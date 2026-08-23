@@ -7,28 +7,36 @@ that runs every turn.
 ## luminary_recall
 
 ```json
-{"name": "luminary_recall", "description": "Search long-term memory for context relevant to the current turn.", "parameters": {"query": "string (required) — the search query", "limit": "integer (optional, default 10)"}}
+{"name": "luminary_recall", "description": "Recall relevant memories from the Luminary store for a query.", "parameters": {"query": "string (required)", "limit": "integer (optional; provider default 10)"}}
 ```
 
-Runs the full four-strategy fused recall (semantic + keyword + temporal + graph)
-and returns the top-N memories as context.
+Runs the full scoped four-strategy fused recall (semantic + keyword + temporal
++ graph). The JSON result contains `status`, `reason`, `confidence`,
+`memories`, `scores`, and `provenance`; weak or unsupported queries can return
+an empty `abstain` result. Core matches are omitted from the tool payload when
+they are already present in the system prompt and are reported through
+`deduplicated_core_ids`.
 
 ## luminary_ingest
 
 ```json
-{"name": "luminary_ingest", "description": "Store a durable fact in long-term memory.", "parameters": {"content": "string (required)", "tags": "string (optional, comma-separated)", "source": "string (optional)", "importance": "float (optional, 0.0–1.0)"}}
+{"name": "luminary_ingest", "description": "Store a new memory in the Luminary store.", "parameters": {"content": "string (required)", "tags": "array of strings (optional)"}}
 ```
 
-Stores a memory. With `ingest_llm` enabled the fact is curated by the enricher
-first (drops chit-chat, stores a factual summary).
+The provider supplies the source (`hermes-tool`) and current ownership scope;
+the tool does not accept arbitrary `source` or `importance` arguments. Exact
+duplicates are suppressed, whitelist rejection is reported, and the write
+records evidence/provenance through the normal client path. This explicit tool
+remains writable even when automatic turn curation is disabled.
 
 ## luminary_list
 
 ```json
-{"name": "luminary_list", "description": "List stored memories (most recent first).", "parameters": {"limit": "integer (optional, default 20)", "offset": "integer (optional)"}}
+{"name": "luminary_list", "description": "List recent memories from the Luminary store (read-only).", "parameters": {"limit": "integer (optional, default 20)"}}
 ```
 
-Paginates over the store. Useful for the agent to review what it has saved.
+Returns only `id`, `content`, and `tags`, most recent first. It is an
+inspection view, not a recall query and not an episode-ledger reader.
 
 ## luminary_core_add
 
@@ -36,10 +44,11 @@ Paginates over the store. Useful for the agent to review what it has saved.
 {"name": "luminary_core_add", "description": "Pin a durable rule into core memory (auto-loaded every session).", "parameters": {"content": "string (required)"}}
 ```
 
-Pins a memory as `core` + `importance 0.9`. Core memories are loaded into the
+Pins a memory as `core` and raises it to the configured pin threshold (default
+`0.9`). Core memories are loaded into the
 system prompt at the start of every session — the DB-backed equivalent of
-`MEMORY.md`. Rule auto-replace is applied: a semantically similar existing rule
-is replaced instead of stacking a contradiction.
+`MEMORY.md`. The Hermes provider disables destructive semantic replacement, so
+similar but contradictory rules remain auditable until explicitly superseded.
 
 ## luminary_core_remove
 
@@ -53,11 +62,13 @@ auto-loading it every session).
 ## luminary_core_list
 
 ```json
-{"name": "luminary_core_list", "description": "List all pinned core memories.", "parameters": {}}
+{"name": "luminary_core_list", "description": "List current core memories.", "parameters": {"limit": "integer (optional, default 50)"}}
 ```
 
-Returns every memory tagged `core`, sorted by importance. Use this to inspect
-what the agent will see at the start of the next session.
+Returns `id`, `content`, and `importance` for active memories carrying the
+configured core tag, in stable ascending store-id/insertion order. The result
+is bounded by the supplied limit; the prompt itself is additionally bounded by
+`core_top_n` and `core_budget`.
 
 ---
 
@@ -68,3 +79,11 @@ what the agent will see at the start of the next session.
 | `context` | ✅ | ✅ | ❌ (no tools) |
 | `tools` | ❌ | ✅ | ✅ (all 6) |
 | `hybrid` | ✅ | ✅ | ✅ (all 6) |
+
+## Accuracy behavior
+
+Provider tool calls inherit the provider's current scope and strict recall
+policy. `luminary_recall` returns status, confidence, and provenance; an
+unrelated or weakly supported query may return `abstain` with no memories.
+`luminary_ingest` records evidence and ownership metadata, and exact duplicate
+writes are suppressed within the same scope.

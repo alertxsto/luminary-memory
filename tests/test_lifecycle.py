@@ -30,6 +30,42 @@ def test_cleanup_handles_no_expired(tmp_path):
     assert b.count() == 1
 
 
+def test_cleanup_skips_malformed_ttl_timestamp(tmp_path):
+    """A corrupt legacy timestamp must not abort or delete a TTL row."""
+    b = SQLiteBackend(str(tmp_path / "malformed-ttl.db"))
+    mid = b.add(Memory(content="needs timestamp repair", ttl_seconds=1, created_at="not-a-date"))
+
+    assert cleanup_expired(b) == 0
+    assert b.get(mid) is not None
+
+
+def test_cleanup_marks_claims_expired_before_hard_delete(tmp_path):
+    b = SQLiteBackend(str(tmp_path / "expired-claim.db"))
+    mid = b.add(
+        Memory(
+            content="temporary claim",
+            ttl_seconds=1,
+            created_at=(datetime.now(UTC) - timedelta(hours=2)).isoformat(),
+        )
+    )
+    b.add_claim(
+        mid,
+        {
+            "subject": "project",
+            "predicate": "phase",
+            "object": "temporary",
+            "evidence_quote": "temporary claim",
+        },
+    )
+
+    assert cleanup_expired(b) == 1
+    claim = b.conn.execute(
+        "SELECT status, memory_id FROM claims WHERE subject = 'project'"
+    ).fetchone()
+    assert claim[0] == "expired"
+    assert claim[1] is None
+
+
 def test_consolidate_merges_near_duplicates(tmp_path):
     b = SQLiteBackend(str(tmp_path / "t.db"))
     base = "postgres vector similarity search with pgvector is fast"
@@ -42,6 +78,43 @@ def test_consolidate_merges_near_duplicates(tmp_path):
     survivor = b.all()[0]
     assert survivor.access_count == 8
     assert set(survivor.tags) == {"database", "vector"}
+
+
+def test_consolidate_rehomes_provenance_before_hard_delete(tmp_path):
+    b = SQLiteBackend(str(tmp_path / "provenance.db"))
+    content = "postgres vector similarity search with pgvector is fast"
+    first = Memory(content=content, tags=["first"])
+    second = Memory(content=content, tags=["second"])
+    first_id = b.add(first)
+    second_id = b.add(second)
+    b.record_episode(f"memory:{first_id}", content, source="first")
+    b.record_episode(f"memory:{second_id}", content, source="second")
+    b.add_evidence(first_id, "first evidence", source_id="source:first")
+    b.add_evidence(second_id, "second evidence", source_id="source:second")
+    b.add_claim(
+        second_id,
+        {
+            "subject": "project",
+            "predicate": "uses",
+            "object": "pgvector",
+            "evidence_quote": content,
+            "source_episode_id": f"memory:{second_id}",
+        },
+    )
+
+    assert consolidate(b, threshold=0.9) == 1
+    survivor_id = b.all()[0].id
+    assert survivor_id == first_id
+    assert b.conn.execute(
+        "SELECT COUNT(*) FROM memory_evidence WHERE memory_id = ?", (survivor_id,)
+    ).fetchone()[0] == 2
+    assert b.conn.execute(
+        "SELECT COUNT(*) FROM claims WHERE memory_id = ?", (survivor_id,)
+    ).fetchone()[0] == 1
+    assert b.conn.execute(
+        "SELECT COUNT(*) FROM episodes WHERE id = ?", (f"memory:{second_id}",)
+    ).fetchone()[0] == 1
+    b.close()
 
 
 def test_consolidate_keeps_distinct_memories(tmp_path):
@@ -71,6 +144,20 @@ def test_prune_respects_max_count_ceiling(tmp_path):
     removed = prune(b, min_importance=0.0, max_count=3)
     assert b.count() == 3
     assert removed == 2
+
+
+def test_prune_applies_importance_cleanup_before_max_count_cap(tmp_path):
+    b = SQLiteBackend(str(tmp_path / "prune-order.db"))
+    for i in range(5):
+        b.add(Memory(content=f"low value {i}", importance=0.1))
+    for i in range(5):
+        b.add(Memory(content=f"valuable fact {i}", importance=0.8))
+
+    removed = prune(b, min_importance=0.2, max_count=3)
+
+    assert removed == 7
+    assert b.count() == 3
+    assert all(memory.importance >= 0.8 for memory in b.all())
 
 
 def test_runner_cleanup_consolidate_prune_orchestrator(tmp_path):

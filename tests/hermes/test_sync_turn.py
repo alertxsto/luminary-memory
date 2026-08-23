@@ -34,8 +34,28 @@ def _all_memories(p):
     return p._client.list(limit=1000, offset=0)
 
 
-def test_sync_turn_writes_single_memory(tmp_path):
+def _enable_curator(p, monkeypatch):
+    import luminary_memory.ingest.llm as llm_mod
+    from luminary_memory.ingest.llm import EnrichedContent
+
+    class _Curator:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich(self, text):
+            return EnrichedContent(
+                content=text,
+                summary=f"curated: {text}",
+                worth_saving=True,
+            )
+
+    monkeypatch.setattr(llm_mod, "OpenAICompatibleEnricher", _Curator)
+    p._config.update({"ingest_llm": True, "llm_base_url": "test", "llm_model": "test"})
+
+
+def test_sync_turn_writes_single_curated_memory(tmp_path, monkeypatch):
     p = _init_provider(tmp_path)
+    _enable_curator(p, monkeypatch)
     p.sync_turn("hello user message", "assistant reply", session_id="sess1")
     assert _wait_for_store(p, 1), "store never received the memory"
 
@@ -49,8 +69,9 @@ def test_sync_turn_writes_single_memory(tmp_path):
     p.shutdown()
 
 
-def test_sync_turn_batches_every_n_turns(tmp_path):
+def test_sync_turn_batches_every_n_turns(tmp_path, monkeypatch):
     p = _init_provider(tmp_path, retain_every_n_turns=2)
+    _enable_curator(p, monkeypatch)
     p.sync_turn("turn one user", "turn one assistant", session_id="sess1")
     time.sleep(0.3)
     assert p._client.count() == 0, "first turn must be buffered only"
@@ -69,6 +90,14 @@ def test_sync_turn_disabled_when_auto_retain_false(tmp_path):
     p = _init_provider(tmp_path, auto_retain=False)
     p.sync_turn("should not persist", "nope", session_id="sess1")
     time.sleep(0.3)
+    assert p._client.count() == 0
+    p.shutdown()
+
+
+def test_sync_turn_does_not_store_raw_episode_without_curator(tmp_path):
+    p = _init_provider(tmp_path)
+    p.sync_turn("raw user turn", "raw assistant turn", session_id="sess1")
+    time.sleep(0.5)
     assert p._client.count() == 0
     p.shutdown()
 
@@ -117,6 +146,45 @@ def test_sync_turn_llm_stores_summary(tmp_path, monkeypatch):
     p.shutdown()
 
 
+def test_sync_turn_preserves_curated_claim_lineage(tmp_path, monkeypatch):
+    import luminary_memory.ingest.llm as llm_mod
+    from luminary_memory.ingest.llm import EnrichedContent
+
+    class _ClaimingEnricher:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich(self, text):
+            return EnrichedContent(
+                content=text,
+                summary="The deploy target is staging.",
+                worth_saving=True,
+                claims=[
+                    {
+                        "subject": "project:runtime",
+                        "predicate": "deploy_target",
+                        "object": "staging",
+                        "polarity": "positive",
+                        "confidence": 0.9,
+                        "evidence_quote": text,
+                    }
+                ],
+            )
+
+    monkeypatch.setattr(llm_mod, "OpenAICompatibleEnricher", _ClaimingEnricher)
+    p = _init_provider(tmp_path)
+    p._config.update({"ingest_llm": True, "llm_base_url": "test", "llm_model": "test"})
+    p.sync_turn("The deploy target is staging.", "confirmed", session_id="s1")
+    assert _wait_for_store(p, 1)
+
+    memory = _all_memories(p)[0]
+    assert memory.claim_key == "project:runtime|deploy_target|positive"
+    assert p._client.backend.conn.execute(
+        "SELECT COUNT(*) FROM claims WHERE memory_id = ?", (memory.id,)
+    ).fetchone()[0] == 1
+    p.shutdown()
+
+
 def test_sync_turn_noop_when_shutting_down(tmp_path):
     p = _init_provider(tmp_path)
     p._shutting_down.set()
@@ -125,8 +193,9 @@ def test_sync_turn_noop_when_shutting_down(tmp_path):
     p.shutdown()
 
 
-def test_sync_turn_parent_session_tag(tmp_path):
+def test_sync_turn_parent_session_tag(tmp_path, monkeypatch):
     p = _init_provider(tmp_path, retain_every_n_turns=1)
+    _enable_curator(p, monkeypatch)
     p.sync_turn("turn with parent", "ok", session_id="s1", parent_session_id="root")
     time.sleep(0.5)
     ms = p._client.list(limit=10)

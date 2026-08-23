@@ -41,14 +41,10 @@ def test_prefetch_returns_cached_block_and_indicator(tmp_path):
     block = p.prefetch("database search", session_id="s1")
 
     assert block, "prefetch returned an empty block"
-    # Persistent context is always present (top-N by importance)
-    assert "Key memories" in block
-    # The recall block (header) may appear when non-injected memories match
+    # Query recall surfaces the relevant memory
     assert "sqlite fts5" in block
 
     status = p.recall_status()
-    # status may be None when all recalled memories were already injected via
-    # persistent context (anti-dup) — that's the intended no-duplicate behavior
     assert status is None or (status.provider_label == "Luminary" and status.glyph == "🌙")
     p.shutdown()
 
@@ -58,35 +54,30 @@ def test_recall_sync_returns_without_queue(tmp_path):
     _seed(p, ["postgres vector search is production ready"])
 
     block = p.prefetch("postgres", session_id="s1")
-    assert block and "Key memories" in block
+    assert block
     assert "postgres" in block
     p.shutdown()
 
 
-def test_persistent_context_merged_and_anti_duplicated(tmp_path):
-    """Important rule is always injected, and never duplicated by recall."""
+def test_core_rule_surfaces_and_not_duplicated_by_recall(tmp_path):
+    """A rule tagged core is always injected (like MEMORY.md), and never
+    duplicated by the query recall when the same content matches."""
     p = _init_provider(tmp_path)
-    # A high-importance rule + a lower-importance fact
-    _seed(p, ["rule: always use markdown tables in telegram replies"])
-    rule_id = None
-    for m in p._client.list(limit=0):
-        if "markdown tables" in m.content:
-            rule_id = m.id
-    assert rule_id is not None
-    m = p._client.get(rule_id)
-    m.importance = 0.95  # pin it like the enricher would
-    p._client.update(m)
+    # Store the durable rule as CORE (its presence is a fact, not ranking).
+    p._client.settings.rule_auto_replace = False
+    p._client.ingest("rule: always use markdown tables in telegram replies",
+                     tags=[p._core_tag()], source="test")
     p._client.ingest("the staging cluster deploy target uses docker compose", tags=["seed"])
 
-    # Query only matches the deploy fact, not the rule
+    # Query only matches the deploy fact, not the rule.
     p.queue_prefetch("deploy docker compose", session_id="s1")
     block = p.prefetch("deploy docker compose", session_id="s1")
 
-    # Rule is present via persistent context even though query doesn't match it
+    # Core is auto-loaded every session regardless of the query.
     assert "markdown tables" in block
-    # Deploy fact present via query recall
+    # Deploy fact present via query recall.
     assert "deploy target" in block
-    # Anti-dup: rule content appears exactly once
+    # Anti-dup: core rule content appears exactly once.
     assert block.count("markdown tables") == 1
     p.shutdown()
 
@@ -126,7 +117,12 @@ def test_do_retain_drops_raw_when_curation_yields_no_summary(tmp_path):
     client = p._writer_client()
     client.enricher = _NoSummaryEnricher()
 
-    p._do_retain("User: bikin PLAN dong\nAssistant: ok gw buat", [], {}, source="test")
+    p._do_retain(
+        "User: bikin PLAN dong\nAssistant: ok gw buat",
+        ["session:s1"],
+        {"session_id": "s1"},
+        source="hermes",
+    )
     p._writer_thread.join(timeout=5.0)
 
     assert p._client.count() == 0, "raw transcript without curated summary must be dropped"
@@ -151,7 +147,12 @@ def test_do_retain_stores_curated_summary(tmp_path):
     client = p._writer_client()
     client.enricher = _SummaryEnricher()
 
-    p._do_retain("User: tolong pakai table ya\nAssistant: siap", [], {}, source="test")
+    p._do_retain(
+        "User: tolong pakai table ya\nAssistant: siap",
+        ["session:s1"],
+        {"session_id": "s1"},
+        source="hermes",
+    )
     p._writer_thread.join(timeout=5.0)
 
     mems = p._client.list(limit=0)

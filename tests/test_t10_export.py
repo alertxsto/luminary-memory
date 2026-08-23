@@ -1,6 +1,7 @@
 import json
 
 from luminary_memory.api import MemoryClient
+from luminary_memory.config import Settings
 from luminary_memory.ingest.llm import NoopEnricher
 
 
@@ -86,6 +87,22 @@ def test_import_bare_list_format(tmp_path):
     assert "bare list memory one" in contents
 
 
+def test_import_fills_missing_timestamps_for_strict_backends(tmp_path):
+    payload = [{"content": "timestamp-safe imported memory"}]
+    path = tmp_path / "timestamp-safe.json"
+    path.write_text(json.dumps(payload))
+    dst = MemoryClient(
+        db_path=str(tmp_path / "timestamp-safe.db"),
+        engine=_FakeEngine(),
+        enricher=NoopEnricher(),
+    )
+    assert dst.import_memories(path)["imported"] == 1
+    memory = dst.list(limit=0)[0]
+    assert memory.created_at
+    assert memory.updated_at
+    dst.close()
+
+
 def test_import_missing_file_raises_cleanly(tmp_path):
     """Missing file raises FileNotFoundError (not swallowed)."""
     from luminary_memory.api import MemoryClient
@@ -146,3 +163,159 @@ def test_import_dedup_skips_existing(tmp_path):
     contents = [m.content for m in dst.list(limit=0)]
     assert contents.count("existing fact about deploy target") == 1
     assert "brand new fact about database" in contents
+
+
+def test_import_dedup_uses_same_normalized_content_hash_as_ingest(tmp_path):
+    import json as _json
+
+    dst = MemoryClient(db_path=str(tmp_path / "normalized.db"), engine=_FakeEngine(), enricher=NoopEnricher())
+    dst.ingest("normalized   durable   fact")
+    path = tmp_path / "normalized.json"
+    path.write_text(_json.dumps({"memories": [{"content": "  NORMALIZED durable fact  "}]}))
+
+    result = dst.import_memories(path)
+    assert result["imported"] == 0
+    assert result["skipped_duplicates"] == 1
+    dst.close()
+
+
+def test_import_can_restore_content_after_retraction(tmp_path):
+    """Inactive history must not block an active restore/import."""
+    dst = MemoryClient(
+        db_path=str(tmp_path / "restore-after-retract.db"),
+        engine=_FakeEngine(),
+        enricher=NoopEnricher(),
+    )
+    memory_id = dst.ingest("retractable durable fact")
+    assert memory_id is not None
+    dst.retract(memory_id, reason="source revoked")
+
+    path = tmp_path / "restore-after-retract.json"
+    path.write_text(
+        json.dumps({"memories": [{"content": "retractable durable fact"}]}),
+        encoding="utf-8",
+    )
+    result = dst.import_memories(path)
+
+    assert result["imported"] == 1
+    assert dst.count() == 1
+    assert [m.status for m in dst.list(limit=0)] == ["active"]
+    assert sum(m.content == "retractable durable fact" for m in dst.backend.all()) == 2
+    dst.close()
+
+
+def test_scoped_import_does_not_dedup_against_global_compatibility_row(tmp_path):
+    """Global read compatibility must not block a tenant-owned restore."""
+    db = tmp_path / "scoped-restore.db"
+    writer = MemoryClient(db_path=str(db), engine=_FakeEngine(), enricher=NoopEnricher())
+    writer.ingest("shared global restore fact")
+    path = tmp_path / "scoped-restore.json"
+    path.write_text(
+        json.dumps({"memories": [{"content": "shared global restore fact"}]}),
+        encoding="utf-8",
+    )
+    writer.close()
+
+    scoped = MemoryClient(
+        db_path=str(db),
+        engine=_FakeEngine(),
+        enricher=NoopEnricher(),
+        settings=Settings(db_path=str(db), scope_include_global=False),
+        scope={"user_id": "alice"},
+    )
+    result = scoped.import_memories(path)
+
+    assert result["imported"] == 1
+    assert scoped.count() == 1
+    assert [m.user_id for m in scoped.list(limit=0)] == ["alice"]
+    assert sum(m.content == "shared global restore fact" for m in scoped.backend.all()) == 2
+    scoped.close()
+
+
+def test_import_race_winner_does_not_duplicate_lineage(tmp_path, monkeypatch):
+    """A DB-level duplicate winner must not get a second import episode."""
+    from luminary_memory.api import MemoryClient
+
+    dst = MemoryClient(
+        db_path=str(tmp_path / "race-import.db"),
+        engine=_FakeEngine(),
+        enricher=NoopEnricher(),
+    )
+    dst.ingest("concurrent import durable fact")
+    path = tmp_path / "race-import.json"
+    path.write_text(
+        json.dumps({"memories": [{"content": "concurrent import durable fact"}]}),
+        encoding="utf-8",
+    )
+
+    # Hide the optimistic pre-check so the test exercises the backend's
+    # database-enforced conflict resolution path.
+    monkeypatch.setattr(dst.backend, "all", list)
+    result = dst.import_memories(path)
+
+    assert result["imported"] == 0
+    assert result["skipped_duplicates"] == 1
+    assert dst.count() == 1
+    assert dst.backend.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == 1
+    assert dst.backend.conn.execute(
+        "SELECT COUNT(*) FROM memory_events WHERE event_type = 'import'"
+    ).fetchone()[0] == 0
+    dst.close()
+
+
+def test_import_recomputes_tampered_content_hash_and_sanitizes_scores(tmp_path):
+    import json as _json
+
+    dst = MemoryClient(
+        db_path=str(tmp_path / "tampered.db"),
+        engine=_FakeEngine(),
+        enricher=NoopEnricher(),
+    )
+    path = tmp_path / "tampered.json"
+    path.write_text(
+        _json.dumps(
+            {
+                "memories": [
+                    {
+                        "content": "durable imported fact",
+                        "content_hash": "stale-hash",
+                        "importance": 99,
+                        "confidence": -4,
+                        "ttl_seconds": "broken",
+                        "tags": "not-a-list",
+                        "metadata": ["not", "a", "mapping"],
+                        "access_count": "broken",
+                    }
+                ]
+            }
+        )
+    )
+
+    assert dst.import_memories(path)["imported"] == 1
+    memory = dst.list(limit=0)[0]
+    assert memory.importance == 1.0
+    assert memory.confidence == 0.0
+    assert memory.tags == []
+    assert memory.metadata == {}
+    assert memory.access_count == 0
+    assert memory.content_hash == dst.backend.find_by_hash(memory.content_hash).content_hash
+    assert memory.ttl_seconds is None
+    dst.close()
+
+
+def test_import_rejects_future_or_malformed_exports(tmp_path):
+    import json as _json
+
+    import pytest
+
+    dst = MemoryClient(db_path=str(tmp_path / "validate.db"), engine=_FakeEngine(), enricher=NoopEnricher())
+    future = tmp_path / "future.json"
+    future.write_text(_json.dumps({"format": "luminary-memory-export", "version": 999, "memories": []}))
+    with pytest.raises(ValueError, match="unsupported export version"):
+        dst.import_memories(future)
+
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text(_json.dumps({"format": "other", "memories": []}))
+    with pytest.raises(ValueError, match="unsupported export format"):
+        dst.import_memories(malformed)
+    dst.close()

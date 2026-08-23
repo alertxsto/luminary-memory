@@ -115,6 +115,20 @@ def test_run_maintenance_delete_and_update(tmp_path):
     assert c.get(id3).content == "keep this"
 
 
+def test_run_maintenance_accepts_string_ids_from_json_llm(tmp_path):
+    c = MemoryClient(
+        db_path=str(tmp_path / "t.db"),
+        enricher=_MaintenanceEnricher('{"actions": [{"id": "1", "action": "delete"}]}'),
+        engine=_FakeEngine(),
+    )
+    mid = c.ingest("old fact")
+
+    result = c.run_maintenance()
+
+    assert result["deleted"] == 1
+    assert c.get(mid) is None
+
+
 def test_run_maintenance_bad_llm_response(tmp_path):
     c = MemoryClient(db_path=str(tmp_path / "t.db"),
                      enricher=_MaintenanceEnricher("not a list"),

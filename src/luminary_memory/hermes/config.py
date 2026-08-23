@@ -40,13 +40,11 @@ _DEFAULTS: dict = {
     "consolidate_semantic": True,  # embedding-cosine consolidation in lifecycle
     "importance_auto": True,  # auto-estimate importance on ingest/lifecycle
     "max_memories": 1000,  # hard cap on store size; oldest/lowest-importance pruned when exceeded
-    "context_top_n": 8,  # top-N memories injected into the system prompt (persistent context)
-    "context_budget": 2000,  # max tokens of persistent context in the system prompt
-    "context_min_importance": 0.0,  # only inject memories at/above this importance
     "core_tag": "core",  # tag marking DB-backed core memories (always loaded every session, like MEMORY.md)
     "core_top_n": 12,  # max core memories injected into the system prompt
     "core_budget": 8000,  # max chars of core memory injected into the system prompt
     "importance_recall_boost": 1.0,  # ranking bonus multiplier for memories at importance >= 0.8
+    "recall_min_score": 0.0,  # score floor for recall results; weak results may be empty.
 }
 
 
@@ -68,9 +66,19 @@ def load_config(hermes_home: str) -> dict:
                 stored = json.load(fh)
             if isinstance(stored, dict):
                 cfg.update({k: v for k, v in stored.items() if k in _DEFAULTS})
-        except (OSError, ValueError):
-            # Corrupt or unreadable config: fall back to defaults silently.
-            pass
+            else:
+                logger.warning(
+                    "load_config: ignoring non-object config at %s; using defaults",
+                    path,
+                )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            # Keep startup resilient, but make a mode/DB fallback visible in
+            # the provider log instead of letting it masquerade as amnesia.
+            logger.warning(
+                "load_config: ignoring unreadable config at %s (%s); using defaults",
+                path,
+                type(exc).__name__,
+            )
     return cfg
 
 

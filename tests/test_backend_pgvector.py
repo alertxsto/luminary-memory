@@ -169,6 +169,36 @@ def test_pgvector_backend_unit_add_encodes_embedding():
         assert fake.committed == committed_after_init + 1
 
 
+def test_pgvector_non_unique_insert_error_is_not_treated_as_duplicate():
+    """Only a unique race may resolve to an existing content hash."""
+    import psycopg
+
+    from luminary_memory.backends.pgvector import PGVectorBackend
+
+    class _ErrorCursor:
+        def execute(self, *_args, **_kwargs):
+            raise RuntimeError("database unavailable")
+
+    class _ErrorConn:
+        def __init__(self):
+            self.rollback_count = 0
+
+        def cursor(self):
+            return _ErrorCursor()
+
+        def rollback(self):
+            self.rollback_count += 1
+
+    backend = object.__new__(PGVectorBackend)
+    backend.conn = _ErrorConn()
+    backend._psycopg = psycopg
+    backend._find_active_hash_exact = lambda _memory: Memory(id=42, content="same")
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        backend.add_with_status(Memory(content="same"))
+    assert backend.conn.rollback_count == 1
+
+
 def test_pgvector_keyword_search_builds_ilike_query():
     with patch("psycopg.connect") as mock_connect:
         from luminary_memory.backends.pgvector import PGVectorBackend
