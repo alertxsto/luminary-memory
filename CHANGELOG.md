@@ -1,6 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-08-24
+
+### Summary
+
+Major release. Memory is now scoped, evidenced, and auditable end to end:
+strict tenant isolation across every recall path, structured claims with
+grounded evidence quotes, a per-turn episode ledger for session continuity,
+and an incremental post-turn reconciliation pass. Persistent-context config
+keys were removed in favor of core memory and the episode ledger. The Hermes
+enricher also switched from urllib to requests so curation calls survive
+Cloudflare-protected gateways.
 
 ### Fixed
 

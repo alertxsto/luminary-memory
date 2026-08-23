@@ -2,12 +2,11 @@
 
 A lightweight, self-hosted memory layer for AI agents.
 
-> Released baseline: `0.2.18`. The current `develop` implementation adds the
-> strict CLI/Hermes accuracy path on top of that baseline: scope isolation,
-> evidence/provenance, conflict history, abstention, delivery-safe Telegram
-> activity reporting, scoped JSONL transparency events, and exact-session
-> continuity fallback. Current verification: `505 passed, 3 skipped`, 83%
-> full-source coverage.
+> Released baseline: `0.3.0` — the strict CLI/Hermes accuracy path: scope
+> isolation, evidence/provenance, conflict history, abstention, delivery-safe
+> Telegram activity reporting, scoped JSONL transparency events, and
+> exact-session continuity fallback. Current verification: `505 passed,
+> 3 skipped`, 83% full-source coverage.
 
 ## What it does
 
