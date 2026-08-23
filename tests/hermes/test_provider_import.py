@@ -33,18 +33,17 @@ def test_getattr_unknown_name_raises():
     """Unknown attribute access raises AttributeError, not silent None."""
     import luminary_memory.hermes as hermes_pkg
 
+    raised = False
     try:
-        hermes_pkg.does_not_exist
+        _ = hermes_pkg.does_not_exist
     except AttributeError:
-        pass
-    else:
-        raise AssertionError("expected AttributeError for unknown attribute")
+        raised = True
+    assert raised
 
 
 def test_getattr_provider_class():
     """__getattr__ resolves LuminaryMemoryProvider on demand."""
     import luminary_memory.hermes as hermes_pkg
-
     from luminary_memory.hermes.provider import LuminaryMemoryProvider
 
     assert hermes_pkg.LuminaryMemoryProvider is LuminaryMemoryProvider
