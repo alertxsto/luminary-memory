@@ -368,108 +368,144 @@ class OpenAICompatibleEnricher(LLMEnricher):
                 raise
         return ""
 
+    def _parse_enrich_response(self, content_str: str, text: str) -> EnrichedContent | None:
+        """Parse one enricher response into content, or None when unusable.
+
+        A response is unusable when the JSON does not parse or when the model
+        claims ``worth_saving: true`` without producing a summary. That shape
+        is a truncated/garbage reply from a flaky gateway, not a valid curation
+        decision: a turn marked worth saving but with no distilled fact would
+        only feed the ``llm_no_curated_summary`` drop path downstream.
+        """
+        data = _parse_enrichment_payload(content_str)
+        if not isinstance(data, dict) or not data:
+            return None
+        worth = data.get("worth_saving")
+        summary = data.get("summary")
+        if worth is True and (not isinstance(summary, str) or not summary.strip()):
+            return None
+        entities = data.get("entities") or []
+        tags = data.get("tags") or []
+        claims = data.get("claims") or []
+        if not isinstance(entities, list):
+            entities = []
+        if not isinstance(tags, list):
+            tags = []
+        if not isinstance(claims, list):
+            claims = []
+        if not isinstance(summary, str):
+            summary = None
+        validated_claims: list[dict] = []
+        for claim in claims:
+            if not isinstance(claim, dict):
+                continue
+            subject = str(claim.get("subject") or "").strip()
+            predicate = str(claim.get("predicate") or "").strip()
+            obj = str(claim.get("object") or "").strip()
+            quote = str(claim.get("evidence_quote") or "").strip()
+            polarity = str(claim.get("polarity") or "positive").strip().lower()
+            if not subject or not predicate or not obj or not quote:
+                continue
+            if quote not in text:
+                continue
+            if polarity not in {"positive", "negative", "unknown"}:
+                continue
+            try:
+                claim_confidence = max(0.0, min(1.0, float(claim.get("confidence", 1.0))))
+            except (TypeError, ValueError):
+                continue
+            validated_claims.append(
+                {
+                    "subject": subject,
+                    "predicate": predicate,
+                    "object": obj,
+                    "polarity": polarity,
+                    "confidence": claim_confidence,
+                    "evidence_quote": quote,
+                    "observed_at": claim.get("observed_at"),
+                    "valid_from": claim.get("valid_from"),
+                    "valid_to": claim.get("valid_to"),
+                }
+            )
+
+        return EnrichedContent(
+            content=text,
+            summary=summary if summary and summary.strip() else None,
+            entities=[str(x) for x in entities if isinstance(x, str) and x.strip()],
+            tags=[str(x).strip() for x in tags if isinstance(x, str) and x.strip()],
+            worth_saving=bool(worth) if worth is not None else True,
+            importance=None,
+            claims=validated_claims,
+        )
+
     def enrich(self, text: str) -> EnrichedContent:
         if not self.base_url:
             return EnrichedContent(content=text)
-        try:
-            content_str = self._call_llm(
-                [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a memory curation helper for an AI agent's long-term memory. "
-                            "Given a conversation turn (User/Assistant), decide whether it contains "
-                            "durable, useful facts worth remembering — preferences, decisions, "
-                            "environment details, project conventions, instructions. "
-                            "A fact is worth saving if it will still matter days or weeks from now. "
-                            "Be selective, not permissive: save only NEW durable facts. "
-                            "If the turn repeats something already known (same preference, same "
-                            "decision, same convention), do NOT save a duplicate. "
-                            "Skip pure work-log ('done', 'pushed', 'fixed', 'deployed') that carries "
-                            "no durable fact, and skip chit-chat, greetings, and meta-conversation "
-                            "about the assistant itself. "
-                            "When a turn contains both work-log and a real new fact, save ONLY the "
-                            "fact, summarized tightly. "
-                            "One fact per entry. If a turn has multiple distinct facts, keep the "
-                            "most durable one and summarize it; do not dump the whole turn. "
-                            "Return STRICT JSON with exactly these keys:\n"
-                            "- worth_saving (boolean): true only when a NEW durable fact exists; "
-                            "false for pure work-log, chit-chat, duplicates, or meta-talk.\n"
-                            "- summary (string): if worth_saving is true, a concise factual summary "
-                            "in the same language as the turn (e.g. 'User prefers X', 'Deploy target "
-                            "is Y', 'Project publishes only via Trusted Publisher'). If false, an "
-                            "empty string.\n"
-                            "- entities (list of strings): key nouns/names mentioned. Empty if false.\n"
-                            "- tags (list of strings): 1-3 short tags. Empty if false.\n"
-                            "- claims (list): atomic claims with subject, predicate, object, "
-                            "polarity, confidence, evidence_quote, and optional valid_from/valid_to. "
-                            "The evidence_quote MUST be copied from the turn. Empty if false.\n"
-                            "No extra keys, no markdown."
-                        ),
-                    },
-                    {"role": "user", "content": text},
-                ]
-            )
-            data = _parse_enrichment_payload(content_str)
-            summary = data.get("summary")
-            entities = data.get("entities") or []
-            tags = data.get("tags") or []
-            claims = data.get("claims") or []
-            worth = data.get("worth_saving")
-            # Normalize to expected types.
-            if not isinstance(entities, list):
-                entities = []
-            if not isinstance(tags, list):
-                tags = []
-            if not isinstance(claims, list):
-                claims = []
-            if not isinstance(summary, str):
-                summary = None
-            validated_claims: list[dict] = []
-            for claim in claims:
-                if not isinstance(claim, dict):
-                    continue
-                subject = str(claim.get("subject") or "").strip()
-                predicate = str(claim.get("predicate") or "").strip()
-                obj = str(claim.get("object") or "").strip()
-                quote = str(claim.get("evidence_quote") or "").strip()
-                polarity = str(claim.get("polarity") or "positive").strip().lower()
-                if not subject or not predicate or not obj or not quote:
-                    continue
-                if quote not in text:
-                    continue
-                if polarity not in {"positive", "negative", "unknown"}:
-                    continue
-                try:
-                    claim_confidence = max(0.0, min(1.0, float(claim.get("confidence", 1.0))))
-                except (TypeError, ValueError):
-                    continue
-                validated_claims.append(
-                    {
-                        "subject": subject,
-                        "predicate": predicate,
-                        "object": obj,
-                        "polarity": polarity,
-                        "confidence": claim_confidence,
-                        "evidence_quote": quote,
-                        "observed_at": claim.get("observed_at"),
-                        "valid_from": claim.get("valid_from"),
-                        "valid_to": claim.get("valid_to"),
-                    }
-                )
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a memory curation helper for an AI agent's long-term memory. "
+                    "Given a conversation turn (User/Assistant), decide whether it contains "
+                    "durable, useful facts worth remembering — preferences, decisions, "
+                    "environment details, project conventions, instructions. "
+                    "A fact is worth saving if it will still matter days or weeks from now. "
+                    "Be selective, not permissive: save only NEW durable facts. "
+                    "If the turn repeats something already known (same preference, same "
+                    "decision, same convention), do NOT save a duplicate. "
+                    "Skip pure work-log ('done', 'pushed', 'fixed', 'deployed') that carries "
+                    "no durable fact, and skip chit-chat, greetings, and meta-conversation "
+                    "about the assistant itself. "
+                    "When a turn contains both work-log and a real new fact, save ONLY the "
+                    "fact, summarized tightly. "
+                    "One fact per entry. If a turn has multiple distinct facts, keep the "
+                    "most durable one and summarize it; do not dump the whole turn. "
+                    "Return STRICT JSON with exactly these keys:\n"
+                    "- worth_saving (boolean): true only when a NEW durable fact exists; "
+                    "false for pure work-log, chit-chat, duplicates, or meta-talk.\n"
+                    "- summary (string): if worth_saving is true, a concise factual summary "
+                    "in the same language as the turn (e.g. 'User prefers X', 'Deploy target "
+                    "is Y', 'Project publishes only via Trusted Publisher'). If false, an "
+                    "empty string.\n"
+                    "- entities (list of strings): key nouns/names mentioned. Empty if false.\n"
+                    "- tags (list of strings): 1-3 short tags. Empty if false.\n"
+                    "- claims (list): atomic claims with subject, predicate, object, "
+                    "polarity, confidence, evidence_quote, and optional valid_from/valid_to. "
+                    "The evidence_quote MUST be copied from the turn. Empty if false.\n"
+                    "No extra keys, no markdown."
+                ),
+            },
+            {"role": "user", "content": text},
+        ]
+        # Retry once when the reply is unusable (truncated JSON or
+        # worth_saving=true with no summary). The transport retry in
+        # _call_llm only covers network/HTTP errors; a partial 200 reply
+        # needs this second gate.
+        for attempt in range(2):
+            try:
+                content_str = self._call_llm(messages)
+                enriched = self._parse_enrich_response(content_str, text)
+                if enriched is not None:
+                    return enriched
+                if attempt == 0:
+                    import time
 
-            return EnrichedContent(
-                content=text,
-                summary=summary if summary and summary.strip() else None,
-                entities=[str(x) for x in entities if isinstance(x, str) and x.strip()],
-                tags=[str(x).strip() for x in tags if isinstance(x, str) and x.strip()],
-                worth_saving=bool(worth) if worth is not None else True,
-                importance=None,
-                claims=validated_claims,
-            )
-        except Exception as exc:
-            logger.warning("memory enricher failed: %s", type(exc).__name__, exc_info=True)
-            return EnrichedContent(content=text, error=type(exc).__name__)
+                    time.sleep(0.3)
+                    continue
+                logger.warning(
+                    "enricher reply unusable after retry (truncated JSON or missing summary); len=%s",
+                    len(content_str or ""),
+                )
+                return EnrichedContent(content=text, error="unusable_reply")
+            except Exception as exc:
+                if attempt == 0:
+                    import time
+
+                    time.sleep(0.3)
+                    continue
+                logger.warning("memory enricher failed: %s", type(exc).__name__, exc_info=True)
+                return EnrichedContent(content=text, error=type(exc).__name__)
+        return EnrichedContent(content=text, error="unusable_reply")
 
     def review_memories(self, memories: list) -> str:
         """Curate the store: return a JSON actions payload (keep/update/delete)."""

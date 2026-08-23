@@ -31,7 +31,8 @@
   function visibleDocs() {
     var query = search ? search.value.trim().toLowerCase() : "";
     return docs.filter(function (doc) {
-      var haystack = [doc.title, doc.label, doc.blurb, doc.source].concat(doc.facts || []).join(" ").toLowerCase();
+      var guide = guides[doc.id] || {};
+      var haystack = [doc.title, doc.label, doc.blurb, doc.source].concat(doc.facts || [], doc.keywords || [], [JSON.stringify(guide)]).join(" ").toLowerCase();
       var categoryMatch = activeFilter === "all" || doc.category === activeFilter;
       return categoryMatch && (!query || haystack.indexOf(query) !== -1);
     });
@@ -57,12 +58,55 @@
     }).join("");
   }
 
+  function renderList(items, className) {
+    if (!Array.isArray(items) || !items.length) return "";
+    return "<ul" + (className ? " class=\"" + escapeHTML(className) + "\"" : "") + ">" + items.map(function (item) {
+      return "<li>" + escapeHTML(item) + "</li>";
+    }).join("") + "</ul>";
+  }
+
+  function renderTable(table) {
+    if (!table || !Array.isArray(table.columns) || !Array.isArray(table.rows) || !table.rows.length) return "";
+    var caption = table.caption ? "<caption>" + escapeHTML(table.caption) + "</caption>" : "";
+    var head = "<thead><tr>" + table.columns.map(function (column) {
+      return "<th scope=\"col\">" + escapeHTML(column) + "</th>";
+    }).join("") + "</tr></thead>";
+    var body = "<tbody>" + table.rows.map(function (row) {
+      return "<tr>" + table.columns.map(function (_, index) {
+        return "<td>" + escapeHTML(row[index] === undefined ? "—" : row[index]) + "</td>";
+      }).join("") + "</tr>";
+    }).join("") + "</tbody>";
+    return "<div class=\"reader-table-wrap\"><table class=\"reader-table\">" + caption + head + body + "</table></div>";
+  }
+
+  function renderParameters(parameters) {
+    if (!Array.isArray(parameters) || !parameters.length) return "";
+    return renderTable({
+      caption: "Parameters and defaults",
+      columns: ["Name", "Type", "Default", "What it controls"],
+      rows: parameters.map(function (parameter) {
+        return [parameter.name, parameter.type, parameter.defaultValue, parameter.description];
+      })
+    });
+  }
+
+  function renderCallout(kind, title, content) {
+    if (!content || (Array.isArray(content) && !content.length)) return "";
+    var body = Array.isArray(content) ? renderList(content, "reader-callout-list") : "<p>" + escapeHTML(content) + "</p>";
+    return "<aside class=\"reader-callout reader-callout-" + escapeHTML(kind) + "\"><p class=\"reader-callout-title\">" + escapeHTML(title) + "</p>" + body + "</aside>";
+  }
+
   function renderSection(section) {
-    var bullets = section.bullets && section.bullets.length ? "<ul>" + section.bullets.map(function (bullet) {
-      return "<li>" + escapeHTML(bullet) + "</li>";
-    }).join("") + "</ul>" : "";
+    var bullets = renderList(section.bullets);
+    var parameters = renderParameters(section.parameters);
+    var table = renderTable(section.table);
+    var output = section.output ? "<pre class=\"reader-output\"><code>" + escapeHTML(section.output) + "</code></pre>" : "";
     var code = section.code ? "<pre><code>" + escapeHTML(section.code) + "</code></pre>" : "";
-    return "<section class=\"reader-section\"><h3>" + escapeHTML(section.title) + "</h3>" + renderParagraphs(section) + bullets + code + "</section>";
+    var returns = renderCallout("returns", "Returns", section.returns);
+    var tips = renderCallout("tip", "Tip", section.tips);
+    var warnings = renderCallout("warning", "Boundary", section.warnings);
+    var notes = renderCallout("note", "Note", section.notes);
+    return "<section class=\"reader-section\"><h3>" + escapeHTML(section.title) + "</h3>" + renderParagraphs(section) + bullets + parameters + table + output + code + returns + tips + warnings + notes + "</section>";
   }
 
   function renderReader() {
@@ -72,6 +116,9 @@
     var guide = guides[doc.id] || { kicker: doc.category, lead: doc.blurb, sections: [] };
     var guideSections = (guide.sections || []).map(renderSection).join("");
     var related = doc.related && doc.related.length ? "<p class=\"reader-related\">Related tracked references: " + escapeHTML(doc.related.join(" / ")) + "</p>" : "";
+    var facts = doc.facts && doc.facts.length ? "<ul class=\"reader-facts\" aria-label=\"Document facts\">" + doc.facts.map(function (fact) {
+      return "<li>" + escapeHTML(fact) + "</li>";
+    }).join("") + "</ul>" : "";
     var currentIndex = docs.findIndex(function (item) { return item.id === doc.id; });
     var previous = currentIndex > 0 ? docs[currentIndex - 1] : null;
     var next = currentIndex < docs.length - 1 ? docs[currentIndex + 1] : null;
@@ -79,7 +126,7 @@
       (previous ? "<a class=\"reader-nav-link\" href=\"docs.html?doc=" + encodeURIComponent(previous.id) + "\" data-doc-page-id=\"" + escapeHTML(previous.id) + "\"><span class=\"reader-nav-label\">Previous note</span>" + escapeHTML(previous.title) + "</a>" : "<span></span>") +
       (next ? "<a class=\"reader-nav-link\" href=\"docs.html?doc=" + encodeURIComponent(next.id) + "\" data-doc-page-id=\"" + escapeHTML(next.id) + "\"><span class=\"reader-nav-label\">Next note</span>" + escapeHTML(next.title) + "</a>" : "<span></span>") +
       "</footer>";
-    reader.innerHTML = "<header class=\"reader-header\"><p class=\"reader-kicker\">" + escapeHTML(guide.kicker) + "</p><h2>" + escapeHTML(doc.title) + "</h2><p class=\"reader-lead\">" + escapeHTML(guide.lead) + "</p><div class=\"reader-meta\"><span>tracked source <strong>" + escapeHTML(doc.source) + "</strong></span><span>surface <strong>" + escapeHTML(doc.category) + "</strong></span></div></header><div class=\"reader-body\">" + guideSections + related + navigation + "</div>";
+    reader.innerHTML = "<header class=\"reader-header\"><p class=\"reader-kicker\">" + escapeHTML(guide.kicker) + "</p><h2>" + escapeHTML(doc.title) + "</h2><p class=\"reader-lead\">" + escapeHTML(guide.lead) + "</p>" + facts + "<div class=\"reader-meta\"><span>tracked source <strong>" + escapeHTML(doc.source) + "</strong></span><span>surface <strong>" + escapeHTML(doc.category) + "</strong></span></div></header><div class=\"reader-body\">" + guideSections + related + navigation + "</div>";
     document.title = doc.title + " | Luminary Memory";
   }
 

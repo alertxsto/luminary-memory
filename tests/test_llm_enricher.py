@@ -342,3 +342,63 @@ def test_turn_review_parser_rejects_partial_invalid_claims():
 
     assert parsed["captures"] == []
     assert parsed["rejected"] == 1
+
+
+def test_enrich_retries_on_truncated_reply():
+    """A truncated JSON reply (worth_saving with no summary) triggers a retry."""
+    import json as _json
+    from unittest.mock import patch as _patch
+
+    from luminary_memory.ingest.llm import OpenAICompatibleEnricher
+
+    calls = {"n": 0}
+
+    class _FlakyPost:
+        def __call__(self, url, json=None, headers=None, timeout=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # HTTP 200 but truncated JSON body.
+                return type("R", (), {
+                    "raise_for_status": lambda self: None,
+                    "json": lambda self: {"choices": [{"message": {"content": '{\n  "worth_saving":'}}]},
+                })()
+            return type("R", (), {
+                "raise_for_status": lambda self: None,
+                "json": lambda self: {"choices": [{"message": {"content": _json.dumps({
+                    "worth_saving": True,
+                    "summary": "User deployed app to Vercel",
+                    "entities": ["Vercel"],
+                    "tags": ["deploy"],
+                })}}]},
+            })()
+
+    e = OpenAICompatibleEnricher(
+        base_url="https://fake.example/v1", api_key="k", model="m",
+    )
+    with _patch("requests.post", _FlakyPost()), _patch("time.sleep"):
+        out = e.enrich("User: gw deploy app ke Vercel")
+    assert calls["n"] == 2
+    assert out.summary == "User deployed app to Vercel"
+    assert out.error is None
+
+
+def test_enrich_returns_error_after_two_truncated_replies():
+    """Two consecutive truncated replies surface an explicit error, not a silent drop."""
+    from unittest.mock import patch as _patch
+
+    from luminary_memory.ingest.llm import OpenAICompatibleEnricher
+
+    class _AlwaysTruncated:
+        def __call__(self, url, json=None, headers=None, timeout=None):
+            return type("R", (), {
+                "raise_for_status": lambda self: None,
+                "json": lambda self: {"choices": [{"message": {"content": '{\n  "worth_saving":'}}]},
+            })()
+
+    e = OpenAICompatibleEnricher(
+        base_url="https://fake.example/v1", api_key="k", model="m",
+    )
+    with _patch("requests.post", _AlwaysTruncated()), _patch("time.sleep"):
+        out = e.enrich("User: gw deploy app ke Vercel")
+    assert out.error == "unusable_reply"
+    assert out.summary is None
