@@ -22,3 +22,9 @@ def test_recall_attaches_snippet(tmp_path):
     assert res.memories
     assert hasattr(res.memories[0], "snippet")
     assert res.memories[0].snippet and "postgresql" in res.memories[0].snippet.lower()
+
+
+def test_extract_snippet_empty_query_returns_leading_excerpt():
+    """An empty query falls back to the leading excerpt of the content."""
+    out = extract_snippet("a b c d e f g", "", width=4)
+    assert out == "a b"

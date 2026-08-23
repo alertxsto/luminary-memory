@@ -477,3 +477,52 @@ def test_concurrent_recall_and_ingest(tmp_path):
         t.join()
     assert not errors, f"cross-thread backend ops must not raise: {errors}"
     c.close()
+
+
+def test_get_backend_unsupported_raises():
+    """Unknown backend name raises a clear error."""
+    from luminary_memory.backends import get_backend
+
+    class _S:
+        backend = "mongodb"
+
+    try:
+        get_backend(_S())
+    except ValueError as exc:
+        assert "unsupported backend" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for unsupported backend")
+
+
+def test_get_backend_pgvector_requires_dsn():
+    """pgvector without pg_dsn raises a clear error."""
+    from luminary_memory.backends import get_backend
+
+    class _S:
+        backend = "pgvector"
+        pg_dsn = None
+        embedding_dim = 384
+
+    try:
+        get_backend(_S())
+    except ValueError as exc:
+        assert "pg_dsn" in str(exc)
+    else:
+        raise AssertionError("expected ValueError when pg_dsn is missing")
+
+
+def test_get_backend_pgvector_requires_positive_dim():
+    """pgvector with non-positive embedding_dim raises a clear error."""
+    from luminary_memory.backends import get_backend
+
+    class _S:
+        backend = "pgvector"
+        pg_dsn = "postgresql://x"
+        embedding_dim = 0
+
+    try:
+        get_backend(_S())
+    except ValueError as exc:
+        assert "embedding_dim" in str(exc)
+    else:
+        raise AssertionError("expected ValueError when embedding_dim <= 0")

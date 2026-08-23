@@ -27,3 +27,24 @@ def test_register_callback():
 
     register(_Ctx())
     assert calls and calls[0].name == "luminary"
+
+
+def test_getattr_unknown_name_raises():
+    """Unknown attribute access raises AttributeError, not silent None."""
+    import luminary_memory.hermes as hermes_pkg
+
+    try:
+        hermes_pkg.does_not_exist
+    except AttributeError:
+        pass
+    else:
+        raise AssertionError("expected AttributeError for unknown attribute")
+
+
+def test_getattr_provider_class():
+    """__getattr__ resolves LuminaryMemoryProvider on demand."""
+    import luminary_memory.hermes as hermes_pkg
+
+    from luminary_memory.hermes.provider import LuminaryMemoryProvider
+
+    assert hermes_pkg.LuminaryMemoryProvider is LuminaryMemoryProvider

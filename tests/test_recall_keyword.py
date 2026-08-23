@@ -62,3 +62,14 @@ def test_keyword_recall_multi_term_or_not_and(tmp_path):
     # bm25 still distinguishes: the doc matching two terms beats one-term docs.
     scores = [s for _, s, _ in res]
     assert scores == sorted(scores, reverse=True), "bm25 ordering must hold"
+
+
+def test_keyword_scan_empty_query_returns_empty(tmp_path):
+    """A punctuation-only query yields no keyword terms, so no matches."""
+    from luminary_memory.api import MemoryClient
+    from luminary_memory.recall.keyword import _legacy_keyword_scan
+
+    c = MemoryClient(db_path=str(tmp_path / "t.db"))
+    c.ingest("the database uses postgresql fts5")
+    rows = _legacy_keyword_scan(c.backend, "!!!")
+    assert rows == []

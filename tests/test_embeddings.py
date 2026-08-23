@@ -44,3 +44,9 @@ def test_model_name_and_threads_are_forwarded(fake_model):
     e.embed("x")
     assert e._model.kwargs["model_name"] == "custom/model"
     assert e._model.kwargs["threads"] == 4
+
+
+def test_embed_batch_empty_returns_empty(fake_model):
+    """An empty batch returns an empty list without touching the model."""
+    e = FastembedEngine()
+    assert e.embed_batch([]) == []

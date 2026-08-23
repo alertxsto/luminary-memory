@@ -28,3 +28,24 @@ def test_planner_never_skips_semantic_or_keyword():
             e = plan_strategies(q, keyword_top_score=score, planner=True)
             assert "semantic" in e
             assert "keyword" in e
+
+
+def test_planner_graph_guard_exception_safe(monkeypatch):
+    """Graph entity detection failing must not crash planning."""
+    import luminary_memory.recall.planner as planner_mod
+
+    def boom(query):
+        raise RuntimeError("graph unavailable")
+
+    monkeypatch.setattr("luminary_memory.recall.graph._query_entities", boom)
+    enabled = plan_strategies("deploy target", keyword_top_score=None, planner=True)
+    # Exception is swallowed; all strategies stay enabled.
+    assert enabled == frozenset({"semantic", "keyword", "temporal", "graph"})
+
+
+def test_planner_temporal_guard_exception_safe(monkeypatch):
+    """A non-numeric keyword score must not crash the temporal guard."""
+    enabled = plan_strategies(
+        "deploy target", keyword_top_score="not-a-number", planner=True
+    )
+    assert "temporal" in enabled

@@ -91,3 +91,10 @@ def test_dedup_caps_pairwise_window():
     out = dedup_jaccard(scored, threshold=0.9, max_pairs=10)
     assert len(out) == 10
     assert [m.id for m, _ in out] == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+
+def test_jaccard_empty_both_returns_one():
+    """Two empty strings are identical, so similarity is 1.0."""
+    from luminary_memory.recall.dedup import jaccard_similarity
+
+    assert jaccard_similarity("", "") == 1.0
