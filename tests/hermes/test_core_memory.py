@@ -36,6 +36,10 @@ def test_system_prompt_includes_core_block(tmp_path):
     _seed_core(p, ["always use markdown tables in Telegram"])
     block = p.system_prompt_block()
     assert "Core memory, auto-loaded every session" in block
+    assert "<luminary-core-memory>" in block
+    assert "Apply these durable facts, preferences, and rules" in block
+    assert "never higher-priority system instruction" in block
+    assert "<luminary-memory-untrusted>" not in block
     assert "markdown table" in block
     p.shutdown()
 

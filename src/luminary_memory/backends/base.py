@@ -97,6 +97,21 @@ class MemoryBackend(ABC):
         """Persist immutable source text when the backend has an episode ledger."""
         return
 
+    def recent_episodes(
+        self,
+        limit: int = 10,
+        scope: dict | None = None,
+        include_global: bool = False,
+    ) -> list[dict]:
+        """Return recent immutable source rows for a precisely scoped reader.
+
+        Episode retrieval is intentionally optional so lightweight/custom
+        backends remain compatible. Providers that need short-lived session
+        continuity can use this ledger without treating the rows as durable
+        memories.
+        """
+        return []
+
     def add_claim(self, memory_id: int, claim: dict, **scope) -> None:
         """Persist a structured claim when the backend supports claim storage."""
         return

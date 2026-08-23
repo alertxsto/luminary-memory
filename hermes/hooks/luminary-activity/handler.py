@@ -31,11 +31,14 @@ logger = logging.getLogger("luminary-activity")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID = os.getenv("LUMINARY_HOOK_CHAT_ID") or os.getenv("TELEGRAM_HOME_CHANNEL", "")
 THREAD_ID = os.getenv("LUMINARY_HOOK_THREAD_ID") or os.getenv("TELEGRAM_HOME_CHANNEL_THREAD_ID", "")
+_DEFAULT_HERMES_HOME = Path(
+    os.getenv("HERMES_HOME") or (Path.home() / ".hermes")
+).expanduser()
 DB_PATH = os.getenv(
     "LUMINARY_DB_PATH",
-    str(Path.home() / ".hermes" / "luminary" / "memory.db"),
+    str(_DEFAULT_HERMES_HOME / "luminary" / "memory.db"),
 )
-LOG_FILE = Path.home() / ".hermes" / "hooks" / "luminary-activity" / "hook.log"
+LOG_FILE = _DEFAULT_HERMES_HOME / "hooks" / "luminary-activity" / "hook.log"
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 STATE_FILE = LOG_FILE.parent / "state.json"
 
@@ -55,9 +58,9 @@ def _escape_md(text: str) -> str:
     return text
 
 
-def _load_hermes_env() -> dict[str, str]:
+def _load_hermes_env(context: dict | None = None) -> dict[str, str]:
     """Parse ~/.hermes/.env as fallback if env vars are not in os.environ."""
-    env_file = Path.home() / ".hermes" / ".env"
+    env_file = _resolve_hermes_home(context) / ".env"
     if not env_file.exists():
         return {}
     res: dict[str, str] = {}
@@ -72,10 +75,58 @@ def _load_hermes_env() -> dict[str, str]:
     return res
 
 
-def _last_shown_id() -> int:
+def _resolve_hermes_home(context: dict | None = None) -> Path:
+    """Resolve the active Hermes home without importing Hermes internals."""
+    if isinstance(context, dict):
+        for key in ("hermes_home", "HERMES_HOME", "home"):
+            value = context.get(key)
+            if value:
+                return Path(str(value)).expanduser()
+    return Path(os.getenv("HERMES_HOME") or (Path.home() / ".hermes")).expanduser()
+
+
+def _resolve_db_path(context: dict | None = None) -> str:
+    """Resolve the same canonical store used by the Luminary provider."""
+    home = _resolve_hermes_home(context)
+
+    def canonical(value: str) -> str:
+        path = Path(str(value)).expanduser()
+        return str(path if path.is_absolute() else (home / path).resolve())
+
+    if context is None:
+        return str(DB_PATH)
+    for key in ("luminary_db_path", "db_path"):
+        value = context.get(key) if isinstance(context, dict) else None
+        if value:
+            return canonical(str(value))
+    env_path = os.getenv("LUMINARY_DB_PATH")
+    if env_path:
+        return canonical(env_path)
+
+    config_path = home / "luminary" / "config.json"
     try:
-        if STATE_FILE.exists():
-            data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        stored = json.loads(config_path.read_text(encoding="utf-8"))
+        configured = stored.get("db_path") if isinstance(stored, dict) else None
+        if configured:
+            path = Path(str(configured)).expanduser()
+            return str(path if path.is_absolute() else (home / path).resolve())
+    except (OSError, ValueError, json.JSONDecodeError):
+        logger.warning("could not read Luminary path config at %s", config_path)
+    return str(home / "luminary" / "memory.db")
+
+
+def _resolve_state_file(context: dict | None = None) -> Path:
+    """Use a cursor beside the active Hermes home, not a global user cursor."""
+    if context is None:
+        return Path(STATE_FILE)
+    return _resolve_hermes_home(context) / "hooks" / "luminary-activity" / "state.json"
+
+
+def _last_shown_id(state_file: str | Path | None = None) -> int:
+    state_path = Path(state_file or STATE_FILE)
+    try:
+        if state_path.exists():
+            data = json.loads(state_path.read_text(encoding="utf-8"))
             return int(data.get("last_id", 0))
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         logger.warning("could not parse state file: %s", exc)
@@ -83,9 +134,11 @@ def _last_shown_id() -> int:
 
 
 @contextmanager
-def _cursor_lock():
+def _cursor_lock(state_file: str | Path | None = None):
     """Serialize read -> send -> cursor-advance across hook processes."""
-    lock_file = STATE_FILE.with_name(f"{STATE_FILE.name}.lock")
+    state_path = Path(state_file or STATE_FILE)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = state_path.with_name(f"{state_path.name}.lock")
     try:
         with open(lock_file, "a+", encoding="utf-8") as fh:
             if fcntl is not None:
@@ -101,14 +154,16 @@ def _cursor_lock():
         yield
 
 
-def _set_last_shown_id(mid: int) -> None:
-    tmp_file = STATE_FILE.with_name(f"{STATE_FILE.name}.tmp")
+def _set_last_shown_id(mid: int, state_file: str | Path | None = None) -> None:
+    state_path = Path(state_file or STATE_FILE)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = state_path.with_name(f"{state_path.name}.tmp")
     try:
         with open(tmp_file, "w", encoding="utf-8") as fh:
             json.dump({"last_id": int(mid)}, fh)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp_file, STATE_FILE)
+        os.replace(tmp_file, state_path)
     except OSError as exc:
         logger.warning("could not write state file: %s", exc)
         try:
@@ -142,12 +197,12 @@ def _send_telegram_request(url: str, payload_data: dict[str, str | int]) -> bool
     return True
 
 
-def _post(text: str) -> bool:
+def _post(text: str, context: dict | None = None) -> bool:
     token = BOT_TOKEN
     chat = CHAT_ID
     thread = THREAD_ID
     if not token or not chat:
-        file_env = _load_hermes_env()
+        file_env = _load_hermes_env(context)
         token = token or file_env.get("TELEGRAM_BOT_TOKEN", "")
         chat = chat or file_env.get("LUMINARY_HOOK_CHAT_ID") or file_env.get("TELEGRAM_HOME_CHANNEL", "")
         thread = thread or file_env.get("LUMINARY_HOOK_THREAD_ID") or file_env.get("TELEGRAM_HOME_CHANNEL_THREAD_ID", "")
@@ -196,16 +251,19 @@ def _post(text: str) -> bool:
         return False
 
 
-def _read_recent_activity() -> tuple[str | None, int | None]:
+def _read_recent_activity(
+    context: dict | None = None,
+    state_file: str | Path | None = None,
+) -> tuple[str | None, int | None]:
     """Read pending activity without advancing the delivery cursor."""
-    db = DB_PATH
+    db = _resolve_db_path(context)
     if not Path(db).exists():
         return None, None
     conn = None
     try:
         conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
-        last_id = _last_shown_id()
+        last_id = _last_shown_id(state_file)
         columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(memories)")}
         has_status = "status" in columns
         active_filter = " AND COALESCE(status, 'active') = 'active'" if has_status else ""
@@ -276,17 +334,23 @@ def _read_recent_activity() -> tuple[str | None, int | None]:
             conn.close()
 
 
-def _recent_activity(seconds: int = 30, *, commit: bool = True) -> str | None:
+def _recent_activity(
+    seconds: int = 30,
+    *,
+    commit: bool = True,
+    context: dict | None = None,
+) -> str | None:
     """Return new-memory activity; commit the cursor only when requested.
 
     ``seconds`` remains for compatibility with older callers. Activity is
     cursor-based rather than wall-clock-based so delayed writer jobs are not
     silently missed.
     """
-    with _cursor_lock():
-        line, max_id = _read_recent_activity()
+    state_file = _resolve_state_file(context)
+    with _cursor_lock(state_file):
+        line, max_id = _read_recent_activity(context, state_file)
         if commit and max_id is not None:
-            _set_last_shown_id(max_id)
+            _set_last_shown_id(max_id, state_file)
     return line
 
 
@@ -294,7 +358,21 @@ def handle(event_type: str, context: dict) -> None:
     """Hook entry point: surface stored-memory activity on agent:end."""
     if event_type != "agent:end":
         return
-    with _cursor_lock():
-        line, max_id = _read_recent_activity()
-        if max_id is not None and (line is None or _post(line)):
-            _set_last_shown_id(max_id)
+    effective_context = context if context else None
+    state_file = _resolve_state_file(effective_context)
+    with _cursor_lock(state_file):
+        if effective_context is None:
+            line, max_id = _read_recent_activity()
+        else:
+            line, max_id = _read_recent_activity(effective_context, state_file)
+        if max_id is not None:
+            delivered = (
+                _post(line)
+                if effective_context is None
+                else _post(line, effective_context)
+            ) if line is not None else True
+            if delivered:
+                if effective_context is None:
+                    _set_last_shown_id(max_id)
+                else:
+                    _set_last_shown_id(max_id, state_file)

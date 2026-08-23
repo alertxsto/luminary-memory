@@ -386,6 +386,63 @@ def test_batch_keeps_raw_episode_lineage_when_enrichment_summarizes(tmp_path):
     client.close()
 
 
+def test_batch_rejects_claim_quote_not_grounded_in_raw_item(tmp_path):
+    class _FabricatingBatchEnricher(LLMEnricher):
+        def enrich(self, text: str) -> EnrichedContent:
+            return EnrichedContent(
+                content="The deploy target is staging.",
+                summary="The deploy target is staging.",
+                claims=[
+                    {
+                        "subject": "project:luminary",
+                        "predicate": "deploy_target",
+                        "object": "staging",
+                        "polarity": "positive",
+                        "confidence": 0.9,
+                        "evidence_quote": "fabricated quote absent from source",
+                    }
+                ],
+            )
+
+    client = _client(tmp_path, enricher=_FabricatingBatchEnricher())
+    raw = "The release review confirmed the deploy target before Friday."
+    memory_id = client.ingest_batch([raw])[0]
+
+    assert memory_id is not None
+    memory = client.get(memory_id)
+    assert memory is not None
+    assert "claims" not in memory.metadata
+    assert client.backend.conn.execute(
+        "SELECT COUNT(*) FROM claims WHERE memory_id = ?", (memory_id,)
+    ).fetchone()[0] == 0
+    assert memory.evidence_quote in {raw, memory.content}
+    client.close()
+
+
+def test_precurated_metadata_claims_are_not_dropped(tmp_path):
+    client = _client(tmp_path)
+    raw = "The release review confirmed that the deploy target is staging."
+    claim = {
+        "subject": "project:luminary",
+        "predicate": "deploy_target",
+        "object": "staging",
+        "polarity": "positive",
+        "confidence": 0.9,
+        "evidence_quote": raw,
+    }
+
+    memory_id = client.ingest(raw, enrich=False, metadata={"claims": [claim]})
+
+    memory = client.get(memory_id)
+    assert memory.claim_key == "project:luminary|deploy_target|positive"
+    stored = client.backend.conn.execute(
+        "SELECT subject, predicate, object, status FROM claims WHERE memory_id = ?",
+        (memory_id,),
+    ).fetchone()
+    assert tuple(stored) == ("project:luminary", "deploy_target", "staging", "active")
+    client.close()
+
+
 def test_strict_recall_abstains_on_unrelated_query(tmp_path):
     client = _client(tmp_path)
     client.ingest(

@@ -117,7 +117,12 @@ def test_do_retain_drops_raw_when_curation_yields_no_summary(tmp_path):
     client = p._writer_client()
     client.enricher = _NoSummaryEnricher()
 
-    p._do_retain("User: bikin PLAN dong\nAssistant: ok gw buat", [], {}, source="test")
+    p._do_retain(
+        "User: bikin PLAN dong\nAssistant: ok gw buat",
+        ["session:s1"],
+        {"session_id": "s1"},
+        source="hermes",
+    )
     p._writer_thread.join(timeout=5.0)
 
     assert p._client.count() == 0, "raw transcript without curated summary must be dropped"
@@ -142,7 +147,12 @@ def test_do_retain_stores_curated_summary(tmp_path):
     client = p._writer_client()
     client.enricher = _SummaryEnricher()
 
-    p._do_retain("User: tolong pakai table ya\nAssistant: siap", [], {}, source="test")
+    p._do_retain(
+        "User: tolong pakai table ya\nAssistant: siap",
+        ["session:s1"],
+        {"session_id": "s1"},
+        source="hermes",
+    )
     p._writer_thread.join(timeout=5.0)
 
     mems = p._client.list(limit=0)

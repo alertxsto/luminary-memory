@@ -28,18 +28,17 @@ def test_call_llm_sends_max_tokens(tmp_path, monkeypatch):
         out = e._call_llm([{"role": "user", "content": "hi"}])
     assert out == "ok"
     assert captured["body"]["max_tokens"] == 512
-def test_rule_keywords_configurable():
-    """Rule keywords/importance come from settings (no hardcode)."""
-    import os
-    from unittest.mock import patch as _patch
+def test_importance_is_not_inferred_from_language_markers():
+    """Durability must come from structured signals, not prose markers."""
+    from luminary_memory.ingest.llm import OpenAICompatibleEnricher
 
-    from luminary_memory.config import Settings
-
-    with _patch.dict(os.environ, {"LUMINARY_RULE_KEYWORDS": "NEVER,ALWAYS,MUST", "LUMINARY_RULE_IMPORTANCE": "0.85"}):
-        s = Settings()
-        assert "NEVER" in s.rule_keywords
-        assert "ALWAYS" in s.rule_keywords
-        assert s.rule_importance == 0.85
+    enricher = OpenAICompatibleEnricher(
+        base_url="https://fake.example/v1",
+        api_key="k",
+        model="m",
+        rule_keywords="MUST,ALWAYS,NEVER",
+    )
+    assert not hasattr(enricher, "rule_keywords")
 
 
 def test_rule_importance_only_from_curated_summary():
@@ -121,8 +120,8 @@ def test_raw_rule_keyword_in_transcript_not_flagged():
     assert out.importance is None, "raw must in transcript must not pin a rule"
 
 
-def test_rule_importance_from_rule_summary():
-    """A curated summary that IS an instruction gets rule importance."""
+def test_rule_like_summary_still_uses_normal_importance_estimation():
+    """A summary's wording does not implicitly pin it."""
     import json as _json
     from unittest.mock import patch as _patch
 
@@ -153,8 +152,7 @@ def test_rule_importance_from_rule_summary():
     )
     with _patch("urllib.request.urlopen", _FakeUrlopen()):
         out = e.enrich("User: always use markdown tables in Telegram replies")
-    assert out.importance == e.rule_importance
-    assert out.importance == 0.9
+    assert out.importance is None
 
 
 def test_unwrap_data_envelope():
@@ -269,3 +267,91 @@ def test_call_llm_retries_on_transient_error():
     assert attempts == 2
     assert out == "retry succeeded"
 
+
+def test_turn_review_parser_is_candidate_and_evidence_bounded():
+    import json as _json
+
+    from luminary_memory.ingest.llm import parse_turn_review_payload
+
+    turn = "User: I switched to the beta model.\nAssistant: I will remember that."
+    raw = _json.dumps(
+        {
+            "captures": [
+                {
+                    "content": "The user prefers the beta model.",
+                    "evidence_quote": "I switched to the beta model.",
+                    "claim": {
+                        "subject": "user",
+                        "predicate": "preferred_model",
+                        "object": "beta",
+                        "polarity": "positive",
+                        "evidence_quote": "I switched to the beta model.",
+                    },
+                },
+                {
+                    "content": "This must be rejected.",
+                    "evidence_quote": "invented evidence",
+                },
+            ],
+            "actions": [
+                {
+                    "memory_id": 7,
+                    "action": "supersede",
+                    "content": "The user prefers the beta model.",
+                    "evidence_quote": "I switched to the beta model.",
+                },
+                {
+                    "memory_id": 999,
+                    "action": "retract",
+                    "evidence_quote": "I switched to the beta model.",
+                },
+            ],
+        }
+    )
+
+    parsed = parse_turn_review_payload(raw, turn, candidate_ids={7})
+
+    assert len(parsed["captures"]) == 1
+    assert parsed["captures"][0]["claims"][0]["object"] == "beta"
+    assert len(parsed["actions"]) == 1
+    assert parsed["actions"][0]["memory_id"] == 7
+    assert parsed["rejected"] == 2
+
+
+def test_turn_review_parser_rejects_partial_invalid_claims():
+    import json as _json
+
+    from luminary_memory.ingest.llm import parse_turn_review_payload
+
+    turn = "User: I use the stable channel."
+    parsed = parse_turn_review_payload(
+        _json.dumps(
+            {
+                "captures": [
+                    {
+                        "content": "The user uses the stable channel.",
+                        "evidence_quote": "I use the stable channel.",
+                        "claims": [
+                            {
+                                "subject": "user",
+                                "predicate": "channel",
+                                "object": "stable",
+                                "evidence_quote": "I use the stable channel.",
+                            },
+                            {
+                                "subject": "user",
+                                "predicate": "channel",
+                                "object": "invented",
+                                "evidence_quote": "not present",
+                            },
+                        ],
+                    }
+                ],
+                "actions": [],
+            }
+        ),
+        turn,
+    )
+
+    assert parsed["captures"] == []
+    assert parsed["rejected"] == 1

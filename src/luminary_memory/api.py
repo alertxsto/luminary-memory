@@ -12,38 +12,15 @@ from luminary_memory.budget import truncate
 from luminary_memory.config import Settings
 from luminary_memory.embeddings.fastembed import FastembedEngine
 from luminary_memory.ingest.llm import LLMEnricher, NoopEnricher
-from luminary_memory.ingest.rules import contains_rule_keyword
 from luminary_memory.ingest.whitelist import WhitelistFilter
 from luminary_memory.scope import memory_matches_scope, normalize_scope
 from luminary_memory.types import Memory, RecallResult
 
 logger = logging.getLogger(__name__)
 
-_QUERY_ALIASES = (
-    ("go live", "deploy"),
-    ("go-live", "deploy"),
-    ("deployment", "deploy"),
-    ("destination", "target"),
-    ("release destination", "deploy target"),
-    ("display theme", "dark mode"),
-    ("programming language", "compiler"),
-    ("model variant", "model"),
-    ("before release", "test suite"),
-)
-
 _VALID_MEMORY_STATUSES = frozenset(
     {"candidate", "active", "conflicted", "superseded", "expired", "deleted"}
 )
-
-
-def _expand_query_aliases(query: str) -> str:
-    expanded = str(query or "")
-    low = expanded.casefold()
-    additions: list[str] = []
-    for phrase, alias in _QUERY_ALIASES:
-        if phrase in low and alias.casefold() not in low:
-            additions.append(alias)
-    return f"{expanded} {' '.join(additions)}".strip()
 
 
 def _content_hash(content: str) -> str:
@@ -136,6 +113,47 @@ def _clean_tags(value) -> list[str]:
         if tag and tag not in tags:
             tags.append(tag)
     return tags
+
+
+def _clean_claims(value, source_text: str, content: str) -> list[dict]:
+    """Validate structured claims supplied by an upstream curator.
+
+    Curated provider paths may already have paid the enrichment cost and pass
+    their validated claims through ``metadata`` with ``enrich=False``.  Treat
+    those claims exactly like claims returned by the built-in enricher instead
+    of silently dropping the lifecycle/provenance information.
+    """
+    if not isinstance(value, list):
+        return []
+    claims: list[dict] = []
+    for claim in value:
+        if not isinstance(claim, Mapping):
+            continue
+        subject = str(claim.get("subject") or "").strip()
+        predicate = str(claim.get("predicate") or "").strip()
+        obj = str(claim.get("object") or "").strip()
+        quote = str(claim.get("evidence_quote") or "").strip()
+        polarity = str(claim.get("polarity") or "positive").strip().lower()
+        if not subject or not predicate or not obj or not quote:
+            continue
+        if quote not in source_text and quote not in content:
+            continue
+        if polarity not in {"positive", "negative", "unknown"}:
+            continue
+        claims.append(
+            {
+                "subject": subject,
+                "predicate": predicate,
+                "object": obj,
+                "polarity": polarity,
+                "confidence": _clean_unit_score(claim.get("confidence"), default=1.0),
+                "evidence_quote": quote,
+                "observed_at": claim.get("observed_at"),
+                "valid_from": claim.get("valid_from"),
+                "valid_to": claim.get("valid_to"),
+            }
+        )
+    return claims
 
 
 def _embed_safely(engine, text: str) -> list[float] | None:
@@ -405,16 +423,19 @@ class MemoryClient:
         source_id: str | None = None,
         claim_key: str | None = None,
         supersedes_id: int | None = None,
+        source_text: str | None = None,
     ) -> int | None:
         text = str(text or "").strip()
         if not text:
             return None
         if not self.whitelist.accepts(text):
             return None
+        claim_source = str(source_text or text)
 
         content, summary, entities, extra_tags = text, None, [], []
         importance_hint: float | None = importance
         enriched_claims: list[dict] = []
+        raw_claims = None
         if enrich and self.enricher is not None:
             enriched = self.enricher.enrich(text)
             if not bool(getattr(enriched, "worth_saving", True)):
@@ -423,11 +444,6 @@ class MemoryClient:
                 enriched.content, enriched.summary, enriched.entities, enriched.tags,
             )
             raw_claims = getattr(enriched, "claims", []) or []
-            enriched_claims = (
-                [dict(claim) for claim in raw_claims if isinstance(claim, dict)]
-                if isinstance(raw_claims, list)
-                else []
-            )
             if importance_hint is None:
                 importance_hint = getattr(enriched, "importance", None)
 
@@ -436,8 +452,18 @@ class MemoryClient:
             meta["summary"] = summary
         if entities:
             meta["entities"] = entities
+        claim_input = raw_claims if enrich else meta.get("claims")
+        enriched_claims = _clean_claims(
+            claim_input,
+            claim_source,
+            str(content or text),
+        )
         if enriched_claims:
             meta["claims"] = enriched_claims
+        elif claim_input is not None:
+            # Do not retain an unvalidated claim payload in metadata when its
+            # structured ledger entry was rejected by the evidence gate.
+            meta.pop("claims", None)
 
         effective_scope = self._effective_scope(
             user_id=user_id,
@@ -451,7 +477,7 @@ class MemoryClient:
         # An extractor-provided quote is evidence only when it is grounded in
         # the original source.  Invalid quotes are discarded rather than
         # presented as provenance.
-        if quote and quote not in text and quote not in content:
+        if quote and quote not in claim_source and quote not in content:
             quote = content
         source_identifier = source_id or meta.get("source_id") or source
         canonical_claim_key = claim_key or meta.get("claim_key")
@@ -471,7 +497,7 @@ class MemoryClient:
         content = str(content or "").strip()
         if not content:
             return None
-        if quote and quote not in text and quote not in content:
+        if quote and quote not in claim_source and quote not in content:
             quote = content
         confidence_value = _clean_unit_score(
             confidence if confidence is not None else meta.get("confidence", 1.0),
@@ -506,9 +532,8 @@ class MemoryClient:
             content_hash=_content_hash(content),
         )
         if importance_hint is not None:
-            # Enricher flagged this as a durable rule/fact: honor the hint
-            # (overrides auto-estimate, which would otherwise give fresh
-            # memories a low score).
+            # A caller-provided structured hint is explicit authority; it
+            # overrides auto-estimation for this observation.
             m.importance = _clean_unit_score(importance_hint)
         elif self.settings.importance_auto:
             from luminary_memory.lifecycle.importance import estimate_importance
@@ -566,20 +591,16 @@ class MemoryClient:
                         self._sync_claim_status(existing.id, "conflicted")
                         self._record_event("conflict", existing.id, before=existing_before, after=existing)
 
-        # Anti-contradiction auto-replace: if a similar memory already exists
-        # (embedding cosine >= replace_threshold), replace it instead of
-        # adding a duplicate.  The mutation is now event-sourced and
-        # scope-aware; callers that need true claim history should use
-        # ``claim_key`` + ``supersedes_id`` instead.
-        is_rule = contains_rule_keyword(content, self.settings.rule_keywords)
-        should_try_replace = self.settings.rule_auto_replace and (
-            float(m.importance) >= 0.8 or is_rule
-        )
+        # Similarity is only a candidate signal. Never infer permission to
+        # overwrite a memory from wording, language, or importance alone:
+        # contradictory observations remain inspectable unless the caller
+        # explicitly supplies a supersession relationship.
+        should_try_replace = self.settings.rule_auto_replace and supersedes_id is not None
         if should_try_replace:
-            replaced = self._maybe_replace_rule(
+            replaced = self._maybe_replace_explicit(
                 content,
                 m,
-                source_text=text,
+                source_text=claim_source,
                 claims=enriched_claims,
             )
             if replaced is not None:
@@ -595,13 +616,13 @@ class MemoryClient:
             self._record_event("duplicate_suppressed", mid, before=existing, after=m)
             return mid
         m.id = mid
-        self._record_episode_and_claims(m, text, enriched_claims)
+        self._record_episode_and_claims(m, claim_source, enriched_claims)
         self._record_event("ingest", mid, after=m)
         self._record_evidence(m, extractor="enricher" if enriched_claims else "direct")
         _try_index_graph(self.backend, m)
         return mid
 
-    def _maybe_replace_rule(
+    def _maybe_replace_explicit(
         self,
         content: str,
         new_memory: Memory,
@@ -609,11 +630,11 @@ class MemoryClient:
         source_text: str | None = None,
         claims: list[dict] | None = None,
     ) -> int | None:
-        """Replace a similar existing memory with the new one (anti-contradiction).
+        """Apply an explicitly requested replacement to a similar memory.
 
         Returns the id of the replaced (updated) memory, or None when nothing
-        similar exists. Similarity uses embedding cosine against existing
-        memories above ``rule_auto_replace_threshold``.
+        similar exists. Similarity is only a candidate check; the caller's
+        explicit ``supersedes_id`` authorizes the mutation.
 
         This path is deliberately scope-aware.  Embedding similarity is only
         a candidate signal; the previous row and the new row are retained in
@@ -677,7 +698,7 @@ class MemoryClient:
                     existing.confidence = new_memory.confidence
                     existing.needs_reindex = False
                     self.backend.update(existing)
-                    # Rule replacement is an in-place compatibility path, but
+                    # Explicit replacement is an in-place compatibility path, but
                     # it still represents a new source observation. Preserve
                     # that observation under a stable per-version episode ID
                     # and retire any old structured claims before appending
@@ -690,8 +711,8 @@ class MemoryClient:
                         claims,
                         episode_id=f"memory:{best_id}:replace:{new_memory.content_hash}",
                     )
-                    self._record_event("rule_replace", best_id, before=before, after=existing)
-                    self._record_evidence(existing, extractor="rule-replace")
+                    self._record_event("explicit_replace", best_id, before=before, after=existing)
+                    self._record_evidence(existing, extractor="explicit-replace")
                     _try_index_graph(self.backend, existing)
                     return best_id
             return None
@@ -751,7 +772,6 @@ class MemoryClient:
             if not self.whitelist.accepts(raw_text):
                 continue
             content, summary, entities, extra_tags = raw_text, None, [], []
-            enriched_claims: list[dict] = []
             if enrich and self.enricher is not None:
                 enriched = self.enricher.enrich(raw_text)
                 if not bool(getattr(enriched, "worth_saving", True)):
@@ -770,13 +790,18 @@ class MemoryClient:
                 item_metadata["summary"] = summary
             if entities:
                 item_metadata["entities"] = entities
-            if enrich and self.enricher is not None:
-                raw_claims = getattr(enriched, "claims", []) or []
-                if isinstance(raw_claims, list):
-                    enriched_claims = [dict(claim) for claim in raw_claims if isinstance(claim, dict)]
-            if enriched_claims:
-                item_metadata["claims"] = enriched_claims
-                first_claim = enriched_claims[0]
+            raw_claims = (
+                getattr(enriched, "claims", []) or []
+                if enrich and self.enricher is not None
+                else item_metadata.get("claims")
+            )
+            # A batch must use the same source-grounding gate as single
+            # ingest. Never persist a curator claim whose quote is absent
+            # from the raw item or its stored summary.
+            cleaned_claims = _clean_claims(raw_claims, raw_text, content)
+            if cleaned_claims:
+                item_metadata["claims"] = cleaned_claims
+                first_claim = cleaned_claims[0]
                 if claim_key is None and not item_metadata.get("claim_key"):
                     parts = [
                         str(first_claim.get(field) or "").strip().casefold()
@@ -796,6 +821,8 @@ class MemoryClient:
                     item_metadata["valid_to"] = first_claim.get("valid_to")
                 if evidence_quote is None and not item_metadata.get("evidence_quote"):
                     item_metadata["evidence_quote"] = first_claim.get("evidence_quote")
+            else:
+                item_metadata.pop("claims", None)
             item_quote = str(item_metadata.get("evidence_quote") or evidence_quote or raw_text)
             if item_quote not in raw_text and item_quote not in str(content or ""):
                 item_quote = str(content or raw_text)
@@ -843,12 +870,6 @@ class MemoryClient:
         mem_orig_idx: list[int] = []
         for (orig_idx, _raw_text, content, merged_tags, item_metadata, effective_scope), emb in zip(prepared, embeddings):
             importance_hint: float | None = importance
-            # Re-run enricher importance hint for this item's content (rule
-            # keywords check is cheap and we already have the enriched text).
-            if importance_hint is None and enrich and self.enricher is not None and hasattr(self.enricher, "rule_keywords"):
-                hint_text = f"{item_metadata.get('summary') or ''} {content}".upper()
-                if contains_rule_keyword(hint_text, self.enricher.rule_keywords):
-                    importance_hint = float(self.enricher.rule_importance)  # type: ignore[attr-defined]
             confidence_value = _clean_unit_score(
                 confidence if confidence is not None else item_metadata.get("confidence", 1.0),
                 default=1.0,
@@ -884,7 +905,7 @@ class MemoryClient:
             memories.append(m)
             mem_orig_idx.append(orig_idx)
 
-        # Filter through auto-replace (rule-aware) — matching ingest() guard.
+        # Filter through the same explicit replacement guard as ingest().
         to_insert: list[Memory] = []
         to_insert_idx: list[int] = []
         for mem, orig_idx in zip(memories, mem_orig_idx):
@@ -942,12 +963,9 @@ class MemoryClient:
                             self._sync_claim_status(existing.id, "conflicted")
                             self._record_event("conflict", existing.id, before=before, after=existing)
             content = mem.content
-            is_rule = contains_rule_keyword(content, self.settings.rule_keywords)
-            should_try = self.settings.rule_auto_replace and (
-                float(mem.importance) >= 0.8 or is_rule
-            )
+            should_try = self.settings.rule_auto_replace and supersedes_id is not None
             if should_try:
-                replaced = self._maybe_replace_rule(
+                replaced = self._maybe_replace_explicit(
                     content,
                     mem,
                     source_text=raw_sources[orig_idx],
@@ -1010,19 +1028,29 @@ class MemoryClient:
         source_id: str | None = None,
         metadata: dict | None = None,
         tags: list[str] | None = None,
+        claims: list[dict] | None = None,
+        source_text: str | None = None,
     ) -> int | None:
-        """Create a new version of a claim while preserving the old row."""
+        """Create a new version of a claim while preserving the old row.
+
+        ``claims`` and ``source_text`` let an evidence-grounded curator carry
+        the new claim ledger forward when its quote lives in the conversation
+        turn rather than in the distilled memory content.
+        """
         previous = self.get(memory_id)
         if previous is None:
             raise ValueError(f"memory {memory_id} does not exist in this scope")
         self._assert_mutable(previous)
         if not previous.claim_key:
             raise ValueError("supersede requires the previous memory to have a claim_key")
+        next_metadata = dict(metadata or previous.metadata)
+        if claims is not None:
+            next_metadata["claims"] = claims
         return self.ingest(
             content,
             tags=list(tags if tags is not None else previous.tags),
             source=source if source is not None else previous.source,
-            metadata=dict(metadata or previous.metadata),
+            metadata=next_metadata,
             enrich=False,
             importance=previous.importance,
             user_id=previous.user_id,
@@ -1036,6 +1064,7 @@ class MemoryClient:
             source_id=source_id or previous.source_id,
             claim_key=previous.claim_key,
             supersedes_id=memory_id,
+            source_text=source_text,
         )
 
     def resolve_conflict(
@@ -1164,6 +1193,14 @@ class MemoryClient:
             raise ValueError("offset must be >= 0")
         eff_limit: int | None = None if n == 0 else n
         effective_scope = self._scope_for(scope)
+        # An unbound client is an administrative/library view: list/count and
+        # lifecycle diagnostics must still be able to inspect the whole store.
+        # Recall paths pass their scope directly to candidate generation, where
+        # an empty scope remains global-only so an agent never receives another
+        # tenant's row merely because identity was omitted.
+        include_global = bool(getattr(self.settings, "scope_include_global", True))
+        if not effective_scope:
+            include_global = False
         recent = getattr(self.backend, "recent", None)
         if recent is not None:
             try:
@@ -1171,12 +1208,10 @@ class MemoryClient:
                     limit=eff_limit,
                     offset=o,
                     scope=effective_scope,
-                    include_global=bool(getattr(self.settings, "scope_include_global", True)),
+                    include_global=include_global,
                 )
             except TypeError:
-                if not effective_scope and bool(
-                    getattr(self.settings, "scope_include_global", True)
-                ):
+                if not effective_scope:
                     return recent(limit=eff_limit, offset=o)
         # fallback for backends without SQL pagination
         from luminary_memory.recall.temporal import _parse_dt
@@ -1186,7 +1221,7 @@ class MemoryClient:
             if memory_matches_scope(
                 m,
                 effective_scope,
-                include_global=bool(getattr(self.settings, "scope_include_global", True)),
+                include_global=include_global,
             )
         ]
         all_mem.sort(key=lambda m: (_parse_dt(m.created_at or ""), -(m.id or 0)), reverse=True)
@@ -1348,7 +1383,11 @@ class MemoryClient:
 
         - ``duplicate_rate`` — share of memories with a near-duplicate
           (Jaccard token overlap > dedup threshold).
-        - ``staleness`` — share of memories not accessed in 30 days.
+        - ``staleness`` — share of recall memories that are unaccessed, old, or
+          have malformed access timestamps; core-tagged memories are loaded
+          through the system-prompt path rather than query recall, so their
+          recall access counters are not treated as evidence of staleness.
+          The dimension also reports the reason counts.
         - ``importance`` — share of memories above ``prune_min_importance``.
         - ``density`` — share of memories with graph relations.
         - ``size`` — store volume vs a healthy scale (0 = empty, 100 = full).
@@ -1447,11 +1486,23 @@ class MemoryClient:
 
         cutoff = datetime.now(UTC) - timedelta(days=30)
         stale_count = 0
+        never_accessed_count = 0
+        not_accessed_30d_count = 0
+        malformed_access_count = 0
+        core_tag = str(getattr(self.settings, "core_tag", "core") or "core")
+        core_tagged_count = 0
         for m in memories:
+            if core_tag in (getattr(m, "tags", None) or []):
+                # Core rows are surfaced by the provider's always-loaded
+                # prompt path. They do not pass through recall(), so a zero
+                # last_accessed_at is expected and must not look like noise.
+                core_tagged_count += 1
+                continue
             if not m.last_accessed_at:
-                # Never-read memories are stale for this diagnostic; treating
-                # them as fresh hides accumulating noise.
+                # Never-read recall memories are stale for this diagnostic;
+                # treating them as fresh hides accumulating noise.
                 stale_count += 1
+                never_accessed_count += 1
                 continue
             try:
                 ts = datetime.fromisoformat(m.last_accessed_at)
@@ -1459,10 +1510,13 @@ class MemoryClient:
                     ts = ts.replace(tzinfo=UTC)
                 if ts < cutoff:
                     stale_count += 1
+                    not_accessed_30d_count += 1
             except Exception:  # noqa: BLE001 -- malformed timestamps are stale
                 # A malformed access timestamp cannot prove freshness.
                 stale_count += 1
-        stale_rate = stale_count / total
+                malformed_access_count += 1
+        recall_total = total - core_tagged_count
+        stale_rate = stale_count / recall_total if recall_total else 0.0
         stale_health = max(0.0, 100.0 * (1.0 - stale_rate * 3))  # 33% stale → 0
 
         # --- importance -------------------------------------------------------
@@ -1501,7 +1555,17 @@ class MemoryClient:
 
         dims = {
             "duplicate_rate": {"value": round(dup_rate, 4), "weight": 0.25, "health": round(dup_health, 1)},
-            "staleness": {"value": round(stale_rate, 4), "weight": 0.25, "health": round(stale_health, 1)},
+            "staleness": {
+                "value": round(stale_rate, 4),
+                "weight": 0.25,
+                "health": round(stale_health, 1),
+                "stale_count": stale_count,
+                "never_accessed_count": never_accessed_count,
+                "not_accessed_30d_count": not_accessed_30d_count,
+                "malformed_access_count": malformed_access_count,
+                "core_tagged_count": core_tagged_count,
+                "recall_memory_count": recall_total,
+            },
             "importance": {"value": round(imp_rate, 4), "weight": 0.20, "health": round(imp_health, 1)},
             "density": {"value": round(density_rate, 4), "weight": 0.15, "health": round(density_health, 1)},
             "size": {"value": total, "weight": 0.15, "health": round(size_health, 1)},
@@ -1512,7 +1576,18 @@ class MemoryClient:
         if dup_health <= 70:
             recs.append(f"duplicates detected ({dup_rate:.0%}) — run `luminary-memory lifecycle` to consolidate")
         if stale_health <= 70:
-            recs.append(f"{stale_count} stale memories (>30d) — run lifecycle prune or LLM maintenance")
+            reasons = []
+            if never_accessed_count:
+                reasons.append(f"{never_accessed_count} never accessed")
+            if not_accessed_30d_count:
+                reasons.append(f"{not_accessed_30d_count} not accessed in >30d")
+            if malformed_access_count:
+                reasons.append(f"{malformed_access_count} malformed access timestamps")
+            detail = "; ".join(reasons)
+            recs.append(
+                f"{stale_count} stale or unverified memories"
+                f" ({detail}) — run lifecycle prune or LLM maintenance"
+            )
         if imp_health <= 70:
             recs.append("low-value memories present — review store or raise prune_min_importance")
         if density_health <= 50 and total >= 20:
@@ -1775,7 +1850,11 @@ class MemoryClient:
                 status="abstain" if strict_policy else "empty",
                 reason="empty_query",
             )
-        query_for_retrieval = _expand_query_aliases(query)
+        # Keep the user's query intact. Retrieval gets language-neutral signal
+        # from embeddings, graph entities, keyword matches, and temporal
+        # evidence; a baked-in synonym table would silently privilege one
+        # vocabulary and can create false positives.
+        query_for_retrieval = query
 
         budget = token_budget if token_budget is not None else self.settings.token_budget
         rrf_k = self.settings.rrf_k
@@ -2145,15 +2224,8 @@ class MemoryClient:
         def _token_set(value: str) -> set[str]:
             import re
 
-            stop = {
-                "a", "an", "and", "are", "as", "at", "be", "does", "for", "from",
-                "how", "i", "is", "it", "of", "on", "or", "the", "to", "use", "was",
-                "what", "when", "where", "which", "who", "will", "with", "you", "your",
-                "go", "live", "now", "current", "used", "something", "else", "variant",
-                "judging", "happen", "deployment", "destination",
-            }
-            tokens = re.findall(r"[a-z0-9][a-z0-9_./:+#@=-]*", (value or "").casefold())
-            return {token for token in tokens if token not in stop and len(token) >= 2}
+            tokens = re.findall(r"[^\W_][\w./:+#@=-]*", (value or "").casefold(), re.UNICODE)
+            return {token for token in tokens if len(token) >= 2}
 
         query_tokens = _token_set(query_for_retrieval)
 

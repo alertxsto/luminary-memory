@@ -31,7 +31,6 @@ def test_transparency_log_is_scoped_correlated_and_redacted(tmp_path):
     secret_query = "find sensitive user secret"
     provider._do_retain(secret_content, ["durable"], {"session_id": "session-7"}, "test")
     provider._handle_recall({"query": secret_query, "limit": 3})
-    provider._config["rule_keywords"] = "ALWAYS"
     provider.on_pre_compress([{"role": "user", "content": "ALWAYS run the release checks."}])
     provider._handle_core_add({"content": "ALWAYS keep release notes current."})
 
@@ -55,7 +54,11 @@ def test_transparency_log_is_scoped_correlated_and_redacted(tmp_path):
         for event in events
         if event["event"] == "recall.started"
     )
-    assert any(event["event"] == "precompress.completed" for event in events)
+    assert any(
+        event["event"] == "precompress.skipped"
+        and event.get("reason") == "compaction_is_not_memory_write"
+        for event in events
+    )
     assert any(event["event"] == "core_add.completed" for event in events)
     assert all(
         event["scope"] == completed[0]["scope"]

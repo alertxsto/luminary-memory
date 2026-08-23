@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Protocol
 
 from luminary_memory.scope import memory_matches_scope, normalize_scope
@@ -10,6 +11,31 @@ if TYPE_CHECKING:
 
 class _Embedder(Protocol):
     def embed(self, text: str) -> list[float]: ...
+
+
+def _legacy_vector_scan(
+    backend: MemoryBackend,
+    query_vec: list[float],
+) -> list[tuple]:
+    """Compute a scoped fallback when an old backend hides rows by default."""
+    q = [float(value) for value in query_vec]
+    q_norm = math.sqrt(sum(value * value for value in q))
+    if q_norm <= 0:
+        return []
+    rows: list[tuple] = []
+    for memory in backend.all():
+        embedding = getattr(memory, "embedding", None)
+        if not embedding or len(embedding) != len(q):
+            continue
+        values = [float(value) for value in embedding]
+        norm = math.sqrt(sum(value * value for value in values))
+        if norm <= 0:
+            continue
+        score = sum(left * right for left, right in zip(values, q)) / (norm * q_norm)
+        if math.isfinite(score):
+            rows.append((memory, float(score)))
+    rows.sort(key=lambda item: (-item[1], -int(getattr(item[0], "id", 0) or 0)))
+    return rows
 
 
 def semantic_recall(
@@ -46,6 +72,12 @@ def semantic_recall(
         if not needs_local_filter
         or memory_matches_scope(m, scope, include_global=include_global)
     ]
+    if needs_local_filter and not rows:
+        rows = [
+            (m, float(score), "semantic")
+            for m, score in _legacy_vector_scan(backend, query_vec)
+            if memory_matches_scope(m, scope, include_global=include_global)
+        ]
     return rows if limit is None else rows[: max(0, int(limit))]
 
 
@@ -62,11 +94,11 @@ def _expand_query(
     names that co-occur with the query's entities gives the semantic search
     more signal, so relevant memories rank higher.
 
-    When the graph yields nothing, fall back to rule-aware expansion: if the
-    query touches the topic of a durable rule (high-importance memory), append
-    its distinctive keywords so the rule surfaces in semantic recall even when
-    the query words differ. Both expansions are best-effort and keep the
-    original query tokens, so recall can never get *worse* than baseline.
+    When the graph yields nothing, fall back to content-aware expansion: if the
+    query overlaps a high-importance memory, append a few distinctive content
+    tokens so that memory can surface even when the query wording differs.
+    Both expansions are best-effort and keep the original query tokens, so
+    recall can never get *worse* than baseline.
     """
     words = [w for w in (query or "").lower().split() if len(w) > 2]
     if not words:
@@ -130,11 +162,11 @@ def _expand_with_rules(
     scope: dict | None = None,
     include_global: bool = True,
 ) -> str:
-    """Append up to 2 keywords from a durable rule whose topic overlaps the query.
+    """Append up to two content tokens from an important memory when topics overlap.
 
-    Looks at high-importance memories (rules) via the lean backend scan and
-    picks the first rule that shares a topic token with the query, appending a
-    keyword or two that are not already in the query. Lossless: the original
+    Looks at high-importance memories via the lean backend scan and picks the
+    first memory that shares a topic token with the query, appending one or two
+    content tokens that are not already in the query. Lossless: the original
     tokens stay in the query.
     """
     try:

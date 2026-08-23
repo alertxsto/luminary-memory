@@ -7,7 +7,7 @@ import math
 from typing import Any
 
 from luminary_memory.backends.base import MemoryBackend
-from luminary_memory.scope import scope_sql
+from luminary_memory.scope import normalize_scope, scope_sql
 from luminary_memory.types import Memory
 
 logger = logging.getLogger(__name__)
@@ -579,6 +579,71 @@ class PGVectorBackend(MemoryBackend):
         )
         self.conn.commit()
 
+    def recent_episodes(
+        self,
+        limit: int = 10,
+        scope: dict | None = None,
+        include_global: bool = False,
+    ) -> list[dict]:
+        """Return newest episode rows under an explicit scope."""
+        try:
+            effective_limit = max(0, int(limit))
+        except (TypeError, ValueError):
+            effective_limit = 0
+        if effective_limit == 0:
+            return []
+
+        normalized = normalize_scope(scope)
+        clauses: list[str] = []
+        params: list[str] = []
+        for field in ("user_id", "workspace_id", "agent_id", "session_id"):
+            value = normalized.get(field)
+            if include_global:
+                if value is None:
+                    clauses.append(f"(e.{field} IS NULL OR e.{field} = '')")
+                else:
+                    clauses.append(f"(e.{field} = %s OR e.{field} IS NULL OR e.{field} = '')")
+                    params.append(value)
+            elif value is not None:
+                clauses.append(f"e.{field} = %s")
+                params.append(value)
+        where = " AND ".join(clauses) or "TRUE"
+
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT e.id, e.content, e.source, e.metadata, e.user_id, "
+            "e.session_id, e.workspace_id, e.agent_id, e.observed_at, e.created_at "
+            f"FROM episodes e WHERE {where} "
+            "ORDER BY e.created_at DESC, e.id DESC LIMIT %s",
+            (*params, effective_limit),
+        )
+        rows = cur.fetchall()
+        result: list[dict] = []
+        for row in rows:
+            metadata = row[3]
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            result.append(
+                {
+                    "id": row[0],
+                    "content": row[1],
+                    "source": row[2],
+                    "metadata": metadata,
+                    "user_id": row[4],
+                    "session_id": row[5],
+                    "workspace_id": row[6],
+                    "agent_id": row[7],
+                    "observed_at": row[8],
+                    "created_at": row[9],
+                }
+            )
+        return result
+
     def add_claim(self, memory_id: int, claim: dict, **scope) -> None:
         subject = str(claim.get("subject") or "").strip()
         predicate = str(claim.get("predicate") or "").strip()
@@ -811,13 +876,18 @@ class PGVectorBackend(MemoryBackend):
         scope: dict | None = None,
         include_global: bool = True,
     ) -> list[Memory]:
-        """Return complete core memories carrying *tag*, scope-filtered."""
+        """Return a stable insertion-ordered slice carrying *tag*.
+
+        Core membership is a lifecycle decision, not a relevance score. Keep
+        the PostgreSQL backend aligned with SQLite so access/importance
+        updates cannot silently reorder or evict an always-loaded rule.
+        """
         cur = self.conn.cursor()
         where, params = scope_sql(scope, alias="m", include_global=include_global)
         where = where.replace("?", "%s")
         cur.execute(
             f"SELECT m.* FROM memories m WHERE {where} AND m.tags @> %s::jsonb "
-            "ORDER BY m.importance DESC, m.access_count DESC, m.id DESC LIMIT %s",
+            "ORDER BY m.id ASC LIMIT %s",
             (*params, json.dumps([tag]), max(0, int(top_n))),
         )
         return [self._row_to_memory(row) for row in cur.fetchall()]

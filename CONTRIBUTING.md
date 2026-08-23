@@ -44,7 +44,7 @@ python -m ruff check src tests hermes/hooks
 - TDD where feasible, test first, then implement.
 - Keep the public API (`MemoryClient`) stable; add rather than break.
 - Full-source coverage is reported and must not regress from the current
-  evidence-backed baseline (`83%`, 4,391 statements). Every changed behavior
+  evidence-backed baseline (`83%`, 4,866 statements). Every changed behavior
   needs a targeted regression or invariant test; do not inflate coverage with
   tests that only execute lines without checking outcomes. PostgreSQL-only
   branches are verified separately by the pgvector integration job.
@@ -82,7 +82,7 @@ contributor communication; keep it concise and in your own voice.
 Run the full suite (SQLite + unit tests) locally:
 
 ```bash
-python -m pytest          # 466 passed, 3 skipped at the current baseline
+python -m pytest          # 505 passed, 3 skipped at the current baseline
 python -m ruff check src tests hermes/hooks
 ```
 
@@ -92,7 +92,7 @@ Coverage (full-source baseline):
 python -m pytest --cov=luminary_memory --cov-report=term
 ```
 
-The current local baseline is `83%` (`4,391` statements, `738` missed). The
+The current local baseline is `83%` (`4,866` statements, `837` missed). The
 number is intentionally reported honestly while the defensive PostgreSQL and
 failure branches continue to receive integration coverage; the quality gate
 is the invariant-focused test suite plus the CI/verification coverage gate

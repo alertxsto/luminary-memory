@@ -7,7 +7,7 @@ regardless of query match (the DB-backed equivalent of Hermes' `MEMORY.md`).
 All other memories are surfaced through query retrieval only:
 
 ```
-Core memory (auto-loaded every session):   <- always present, subordinate to live instruction
+Core memory (auto-loaded every session):   <- curated default context; explicit live instruction wins
 - <durable rule 1>
 - <durable rule 2>
 
@@ -23,6 +23,12 @@ Core memory (auto-loaded every session):   <- always present, subordinate to liv
 Anti-duplication: memory ids injected by the core block are tracked per
 turn and skipped by the query-recall block, so no memory appears twice in one
 turn's context.
+
+The two surfaces have different semantics. Core memory is curated persistent
+context: stable identity, preferences, and durable rules are applied as default
+context when relevant, and an explicit correction in the current user turn
+wins. Query recall is evidence only; it may be stale or incomplete and is never
+an instruction or a higher-priority system message.
 
 ## Four strategies
 
@@ -81,13 +87,10 @@ the query is expanded with co-occurring entity names from the knowledge
 graph, so relevant memories rank higher (`_expand_query`, best-effort, falls
 back to the raw query on any error).
 
-When the graph yields nothing, **rule-aware expansion (v0.2.15)** kicks in:
-if the query touches the topic of a durable rule (high-importance memory), up
-to two of its keywords are appended so the rule surfaces in semantic recall
-even when the query uses different words. Both expansions keep the original
-query tokens, so recall quality can never get worse than baseline. Static
-aliases also cover common deployment and database terms without requiring an
-external taxonomy service.
+When the graph yields nothing, **content-aware expansion (v0.2.15)** may use
+up to two tokens from a topically related important memory. Both expansions
+keep the original query tokens, so the baseline query remains intact. There
+is no static alias table or language-specific vocabulary classifier.
 
 ## Strict results, evidence, and conflicts
 

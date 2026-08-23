@@ -66,9 +66,19 @@ def load_config(hermes_home: str) -> dict:
                 stored = json.load(fh)
             if isinstance(stored, dict):
                 cfg.update({k: v for k, v in stored.items() if k in _DEFAULTS})
-        except (OSError, ValueError):
-            # Corrupt or unreadable config: fall back to defaults silently.
-            pass
+            else:
+                logger.warning(
+                    "load_config: ignoring non-object config at %s; using defaults",
+                    path,
+                )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            # Keep startup resilient, but make a mode/DB fallback visible in
+            # the provider log instead of letting it masquerade as amnesia.
+            logger.warning(
+                "load_config: ignoring unreadable config at %s (%s); using defaults",
+                path,
+                type(exc).__name__,
+            )
     return cfg
 
 

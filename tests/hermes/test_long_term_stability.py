@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 import time
 
@@ -36,6 +37,21 @@ def _wait_for_count(provider: LuminaryMemoryProvider, minimum: int, timeout: flo
     return False
 
 
+def _enable_curator(provider, monkeypatch):
+    import luminary_memory.ingest.llm as llm_module
+    from luminary_memory.ingest.llm import EnrichedContent
+
+    class _Curator:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich(self, text):
+            return EnrichedContent(content=text, summary=f"curated: {text}", worth_saving=True)
+
+    monkeypatch.setattr(llm_module, "OpenAICompatibleEnricher", _Curator)
+    provider._config.update({"ingest_llm": True, "llm_base_url": "test", "llm_model": "test"})
+
+
 def test_writer_and_prefetch_get_distinct_thread_owned_clients(tmp_path):
     provider = _provider(tmp_path)
     barrier = threading.Barrier(3)
@@ -66,8 +82,9 @@ def test_writer_and_prefetch_get_distinct_thread_owned_clients(tmp_path):
     provider.shutdown()
 
 
-def test_concurrent_turns_and_prefetch_survive_shutdown(tmp_path):
+def test_concurrent_turns_and_prefetch_survive_shutdown(tmp_path, monkeypatch):
     provider = _provider(tmp_path)
+    _enable_curator(provider, monkeypatch)
     provider._config.update({"retain_every_n_turns": 1, "recall_sync": False})
     errors = []
 
@@ -148,13 +165,14 @@ def test_reinitialize_stops_previous_workers_before_starting_new_session(tmp_pat
     provider.shutdown()
 
 
-def test_initialize_after_preflight_shutdown_starts_a_live_writer(tmp_path):
+def test_initialize_after_preflight_shutdown_starts_a_live_writer(tmp_path, monkeypatch):
     provider = LuminaryMemoryProvider()
     provider.shutdown()
     provider.initialize(
         "session-1", hermes_home=str(tmp_path), platform="cli", agent_identity="test"
     )
     provider._client.engine = _FakeEngine()
+    _enable_curator(provider, monkeypatch)
     provider.sync_turn("durable after preflight", "confirmed", session_id="session-1")
     assert _wait_for_count(provider, 1)
     provider.shutdown()
@@ -200,3 +218,109 @@ def test_main_and_worker_clients_share_config_and_llm_enricher(tmp_path, monkeyp
     assert worker.settings.importance_auto is False
     assert worker.settings.consolidate_semantic is False
     provider.shutdown()
+
+
+def test_core_surface_is_stable_and_deduplicated_across_repeated_turns(tmp_path):
+    """Core identity survives repeated prompt builds without duplicate drift."""
+    provider = _provider(tmp_path)
+    provider._config.update({
+        "mode": "hybrid",
+        "recall_sync": True,
+        "core_top_n": 8,
+        "core_budget": 2000,
+    })
+    provider._client.settings.core_top_n = 8
+    provider._client.settings.core_budget = 2000
+    provider._client.settings.rule_auto_replace = False
+    durable = [
+        "owner record alpha remains stable",
+        "owner record beta remains stable",
+        "owner record gamma remains stable",
+    ]
+    for content in durable:
+        provider._client.ingest(content, tags=[provider._core_tag()], source="test")
+
+    first = provider.system_prompt_block()
+    for _ in range(64):
+        assert provider.system_prompt_block() == first
+
+    for content in durable:
+        assert first.count(content) == 1
+
+    # Recall can return the same rows that core loaded.  The turn-local
+    # identity/content sets must make the final context contain each fact once
+    # even after many independent prefetch cycles.
+    for _ in range(32):
+        context = provider.prefetch("owner record alpha", "session-1")
+        assert context.count(durable[0]) == 1
+
+    provider.shutdown()
+
+
+def test_uncurated_turn_stream_never_becomes_durable_across_boundaries(tmp_path):
+    """Long-running hooks preserve continuity without durable promotion."""
+    provider = _provider(tmp_path)
+    provider._config.update({"retain_every_n_turns": 3, "ingest_llm": False})
+
+    for index in range(16):
+        for turn in range(3):
+            provider.sync_turn(
+                f"turn input {index}-{turn}",
+                f"turn output {index}-{turn}",
+                session_id=f"session-{index}",
+            )
+        provider.on_session_switch(f"session-{index + 1}")
+
+    provider.on_session_end([])
+    provider._retain_queue.join()
+
+    assert provider._client.count() == 0
+    rows = provider._client.backend.conn.execute(
+        "SELECT source, COUNT(*) FROM episodes GROUP BY source"
+    ).fetchall()
+    assert dict(rows) == {"hermes-session": 48}
+    provider.shutdown()
+
+
+def test_shutdown_drains_a_slow_curator_before_provider_closes(tmp_path, monkeypatch):
+    """An accepted LLM retain completes before provider shutdown returns."""
+    import luminary_memory.ingest.llm as llm_module
+    from luminary_memory.ingest.llm import EnrichedContent
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class _BlockingCurator:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def enrich(self, text):
+            started.set()
+            release.wait(timeout=5)
+            return EnrichedContent(
+                content=text,
+                summary="late curated result",
+                worth_saving=True,
+            )
+
+    monkeypatch.setattr(llm_module, "OpenAICompatibleEnricher", _BlockingCurator)
+    provider = _provider(tmp_path)
+    provider._config.update({
+        "ingest_llm": True,
+        "llm_base_url": "test",
+        "llm_model": "test",
+        "retain_every_n_turns": 1,
+    })
+    provider.sync_turn("turn that is being curated", "assistant reply", session_id="session-1")
+    assert started.wait(timeout=3)
+
+    shutdown_thread = threading.Thread(target=provider.shutdown)
+    shutdown_thread.start()
+    assert provider._shutting_down.wait(timeout=1)
+    release.set()
+    shutdown_thread.join(timeout=7)
+    assert not shutdown_thread.is_alive()
+
+    with sqlite3.connect(tmp_path / "luminary" / "memory.db") as conn:
+        assert conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 1
+        assert conn.execute("SELECT content FROM memories").fetchone()[0] == "late curated result"

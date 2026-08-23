@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
-
-from luminary_memory.ingest.rules import contains_rule_keyword
 
 logger = logging.getLogger(__name__)
 
@@ -17,16 +16,31 @@ class EnrichedContent:
     entities: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     worth_saving: bool = True
-    importance: float | None = None  # explicit importance hint (rules get high)
+    importance: float | None = None  # explicit structured importance hint
     # Optional structured claims.  The legacy summary fields remain for
     # compatibility; validated claims give the writer a canonical key and a
     # grounded evidence quote instead of treating an embedding as truth.
     claims: list[dict] = field(default_factory=list)
+    # A transport/parse failure is distinct from a valid "nothing durable"
+    # decision. Keeping that distinction lets the provider report reality
+    # without promoting the raw turn into durable memory.
+    error: str | None = None
 
 
 class LLMEnricher:
     def enrich(self, text: str) -> EnrichedContent:
         raise NotImplementedError
+
+    def review_turn(self, turn: str, memories: list) -> str:
+        """Return a grounded reconciliation payload for one completed turn.
+
+        This is deliberately a separate contract from :meth:`enrich`.  The
+        enrichment pass decides whether the current turn deserves a memory;
+        the review pass compares the turn with scoped candidates and may
+        propose an explicitly evidenced capture, supersession, or retraction.
+        Providers that do not implement incremental review safely no-op.
+        """
+        return "{}"
 
     def review_memories(self, memories: list) -> str:
         """Return a JSON actions payload for curating *memories*.
@@ -81,12 +95,202 @@ def _parse_enrichment_payload(raw: str) -> dict:
     return {}
 
 
+def _review_unit_score(value, default: float = 1.0) -> float:
+    try:
+        score = float(value)
+        return max(0.0, min(1.0, score)) if math.isfinite(score) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_review_claim(claim, turn_text: str) -> dict | None:
+    """Validate a claim proposed by the incremental reviewer.
+
+    Evidence is the security boundary here: a claim is usable only when its
+    quote is copied from the current turn.  No vocabulary, language, or
+    keyword policy belongs in this parser.
+    """
+    if not isinstance(claim, dict):
+        return None
+    subject = str(claim.get("subject") or "").strip()
+    predicate = str(claim.get("predicate") or "").strip()
+    obj = str(claim.get("object") or "").strip()
+    quote = str(claim.get("evidence_quote") or "").strip()
+    polarity = str(claim.get("polarity") or "positive").strip().lower()
+    if not subject or not predicate or not obj or not quote:
+        return None
+    if len(subject) > 300 or len(predicate) > 300 or len(obj) > 500 or len(quote) > 1000:
+        return None
+    if quote not in turn_text or polarity not in {"positive", "negative", "unknown"}:
+        return None
+    return {
+        "subject": subject,
+        "predicate": predicate,
+        "object": obj,
+        "polarity": polarity,
+        "confidence": _review_unit_score(claim.get("confidence"), default=1.0),
+        "evidence_quote": quote,
+        "observed_at": claim.get("observed_at"),
+        "valid_from": claim.get("valid_from"),
+        "valid_to": claim.get("valid_to"),
+    }
+
+
+def parse_turn_review_payload(
+    raw: str,
+    turn_text: str,
+    candidate_ids: set[int] | None = None,
+) -> dict:
+    """Return only structurally valid, evidence-grounded review decisions.
+
+    The LLM is untrusted input.  This function constrains IDs to the candidate
+    set, bounds payload sizes, and requires every mutating decision to cite the
+    current turn verbatim.  It intentionally does not classify prose by
+    language or by hardcoded words.
+    """
+    data = _parse_enrichment_payload(raw)
+    if not isinstance(data, dict):
+        return {"captures": [], "actions": [], "rejected": 1}
+
+    allowed_ids = {int(value) for value in candidate_ids or set()}
+    rejected = 0
+    captures: list[dict] = []
+    raw_captures = data.get("captures") or []
+    if not isinstance(raw_captures, list):
+        raw_captures = []
+        rejected += 1
+    for item in raw_captures:
+        if not isinstance(item, dict):
+            rejected += 1
+            continue
+        content_value = item.get("content")
+        evidence_value = item.get("evidence_quote")
+        content = content_value.strip() if isinstance(content_value, str) else ""
+        evidence_quote = evidence_value.strip() if isinstance(evidence_value, str) else ""
+        if (
+            not content
+            or len(content) > 2000
+            or not evidence_quote
+            or len(evidence_quote) > 1000
+            or evidence_quote not in turn_text
+        ):
+            rejected += 1
+            continue
+        tags_value = item.get("tags") or []
+        tags = []
+        if isinstance(tags_value, list):
+            for tag in tags_value[:8]:
+                if isinstance(tag, str) and tag.strip():
+                    tags.append(tag.strip()[:100])
+        claims_value = item.get("claims")
+        if claims_value is None and isinstance(item.get("claim"), dict):
+            claims_value = [item["claim"]]
+        if claims_value is None:
+            claims_value = []
+        if not isinstance(claims_value, list):
+            rejected += 1
+            continue
+        claims = []
+        invalid_claim = False
+        for claim in claims_value[:4]:
+            normalized = _normalize_review_claim(claim, turn_text)
+            if normalized is not None:
+                claims.append(normalized)
+            else:
+                invalid_claim = True
+        if invalid_claim:
+            rejected += 1
+            continue
+        captures.append(
+            {
+                "content": content,
+                "evidence_quote": evidence_quote,
+                "tags": list(dict.fromkeys(tags)),
+                "importance": _review_unit_score(item.get("importance"), default=0.5),
+                "confidence": _review_unit_score(item.get("confidence"), default=1.0),
+                "claims": claims,
+            }
+        )
+
+    actions: list[dict] = []
+    raw_actions = data.get("actions") or []
+    if not isinstance(raw_actions, list):
+        raw_actions = []
+        rejected += 1
+    for item in raw_actions:
+        if not isinstance(item, dict):
+            rejected += 1
+            continue
+        try:
+            memory_id = int(item.get("memory_id", item.get("id")))
+        except (TypeError, ValueError):
+            rejected += 1
+            continue
+        if candidate_ids is not None and memory_id not in allowed_ids:
+            rejected += 1
+            continue
+        action = str(item.get("action") or "").strip().lower()
+        if action == "keep":
+            actions.append({"memory_id": memory_id, "action": "keep"})
+            continue
+        evidence_value = item.get("evidence_quote")
+        evidence_quote = evidence_value.strip() if isinstance(evidence_value, str) else ""
+        reason_value = item.get("reason")
+        reason = reason_value.strip()[:500] if isinstance(reason_value, str) else ""
+        if action == "supersede":
+            content_value = item.get("content")
+            content = content_value.strip() if isinstance(content_value, str) else ""
+            if (
+                not content
+                or len(content) > 2000
+                or not evidence_quote
+                or len(evidence_quote) > 1000
+                or evidence_quote not in turn_text
+            ):
+                rejected += 1
+                continue
+            claim = None
+            if isinstance(item.get("claim"), dict):
+                claim = _normalize_review_claim(item["claim"], turn_text)
+                if claim is None:
+                    rejected += 1
+                    continue
+            actions.append(
+                {
+                    "memory_id": memory_id,
+                    "action": "supersede",
+                    "content": content,
+                    "evidence_quote": evidence_quote,
+                    "reason": reason,
+                    "claim": claim,
+                }
+            )
+            continue
+        if action == "retract":
+            if not evidence_quote or len(evidence_quote) > 1000 or evidence_quote not in turn_text:
+                rejected += 1
+                continue
+            actions.append(
+                {
+                    "memory_id": memory_id,
+                    "action": "retract",
+                    "evidence_quote": evidence_quote,
+                    "reason": reason,
+                }
+            )
+            continue
+        rejected += 1
+
+    return {"captures": captures, "actions": actions, "rejected": rejected}
+
+
 class OpenAICompatibleEnricher(LLMEnricher):
     """Provider-agnostic enricher over any OpenAI-compatible chat/completions endpoint.
 
     Uses stdlib ``urllib.request`` so no new runtime dependency is introduced.
-    Any failure (network, timeout, malformed body) returns a passthrough
-    ``EnrichedContent`` with the original text.
+    Any failure (network, timeout, malformed body) returns the original text
+    with an explicit error marker. The provider can then keep the turn in its
+    session ledger without confusing an outage with a valid curation decision.
     """
 
     def __init__(
@@ -107,8 +311,11 @@ class OpenAICompatibleEnricher(LLMEnricher):
         self.model = model if model is not None else s.llm_model
         self.timeout = int(timeout if timeout is not None else s.llm_timeout)
         self.max_tokens = int(max_tokens if max_tokens is not None else s.llm_max_tokens)
-        self.rule_keywords = rule_keywords if rule_keywords is not None else s.rule_keywords
-        self.rule_importance = float(rule_importance if rule_importance is not None else s.rule_importance)
+        # Keep the legacy constructor arguments accepted for compatibility,
+        # but never infer importance from prose or language-specific markers.
+        # Importance must come from a structured caller value or the normal
+        # estimator applied by MemoryClient.
+        _ = (rule_keywords, rule_importance, s)
 
     def _call_llm(self, messages: list[dict]) -> str:
         """Call the OpenAI-compatible endpoint, return the assistant content."""
@@ -212,22 +419,6 @@ class OpenAICompatibleEnricher(LLMEnricher):
                 claims = []
             if not isinstance(summary, str):
                 summary = None
-            # Auto-importance for rules: only a *curated summary* that reads
-            # like an instruction ("must", "never", "always", "do not", etc.)
-            # is a durable rule the agent must not forget. Keywords are
-            # configurable via LUMINARY_RULE_KEYWORDS (English defaults).
-            #
-            # The rule check runs against the summary (the LLM's distilled
-            # fact), never the raw transcript. A raw turn that merely mentions
-            # a rule keyword is conversation, not a rule — flagging it would
-            # pin noise as high-importance. When enrichment failed (no
-            # summary), there is no curated fact at all, so the memory cannot
-            # be a rule.
-            summary_s = summary if summary and summary.strip() else ""
-            importance: float | None = None
-            if summary_s and contains_rule_keyword(summary_s, self.rule_keywords):
-                importance = self.rule_importance
-
             validated_claims: list[dict] = []
             for claim in claims:
                 if not isinstance(claim, dict):
@@ -267,11 +458,12 @@ class OpenAICompatibleEnricher(LLMEnricher):
                 entities=[str(x) for x in entities if isinstance(x, str) and x.strip()],
                 tags=[str(x).strip() for x in tags if isinstance(x, str) and x.strip()],
                 worth_saving=bool(worth) if worth is not None else True,
-                importance=importance,
+                importance=None,
                 claims=validated_claims,
             )
-        except Exception:  # noqa: BLE001 -- enrichment is best-effort
-            return EnrichedContent(content=text)
+        except Exception as exc:
+            logger.warning("memory enricher failed: %s", type(exc).__name__, exc_info=True)
+            return EnrichedContent(content=text, error=type(exc).__name__)
 
     def review_memories(self, memories: list) -> str:
         """Curate the store: return a JSON actions payload (keep/update/delete)."""
@@ -298,6 +490,63 @@ class OpenAICompatibleEnricher(LLMEnricher):
                         ),
                     },
                     {"role": "user", "content": items},
+                ]
+            )
+        except Exception:  # noqa: BLE001 -- curation is best-effort
+            return "{}"
+
+    def review_turn(self, turn: str, memories: list) -> str:
+        """Reconcile a completed turn against a small scoped memory window."""
+        if not self.base_url:
+            return "{}"
+        try:
+            candidates = [
+                {
+                    "id": int(memory.id),
+                    "content": str(getattr(memory, "content", ""))[:800],
+                    "status": str(getattr(memory, "status", "active")),
+                    "claim_key": getattr(memory, "claim_key", None),
+                    "tags": list(getattr(memory, "tags", []) or [])[:8],
+                    "confidence": getattr(memory, "confidence", None),
+                }
+                for memory in memories
+                if getattr(memory, "id", None) is not None
+            ]
+            return self._call_llm(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an incremental long-term memory curator. Compare one "
+                            "completed conversation turn with the candidate memories. Extract "
+                            "only durable facts, preferences, decisions, identity, constraints, "
+                            "or project conventions that are directly supported by the current "
+                            "turn. Do not save greetings, transient work logs, assistant meta-talk, "
+                            "or duplicates. A current turn may correct an existing claim only when "
+                            "the correction is explicit. Never infer a mutation from similarity. "
+                            "Every capture or mutation must include an exact substring from the "
+                            "current turn as evidence_quote. Actions may target only candidate IDs. "
+                            "Use supersede for a newer value of an existing claim and retract only "
+                            "when the current turn explicitly invalidates it. Keep means no change. "
+                            "Return STRICT JSON with exactly two arrays: captures and actions. "
+                            "Schema: {\"captures\":[{\"content\":\"durable fact\","
+                            "\"evidence_quote\":\"exact current-turn substring\",\"tags\":[],"
+                            "\"importance\":0.0,\"confidence\":0.0,\"claim\":{\"subject\":\"\","
+                            "\"predicate\":\"\",\"object\":\"\",\"polarity\":\"positive|negative|unknown\","
+                            "\"confidence\":0.0,\"evidence_quote\":\"exact substring\"}}],"
+                            "\"actions\":[{\"memory_id\":0,\"action\":\"keep|supersede|retract\","
+                            "\"content\":\"new fact for supersede\",\"evidence_quote\":\"exact substring\","
+                            "\"reason\":\"brief reason\",\"claim\":{}}]}. Omit claim when not needed. "
+                            "No markdown, no extra keys."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {"turn": turn, "candidate_memories": candidates},
+                            ensure_ascii=False,
+                        ),
+                    },
                 ]
             )
         except Exception:  # noqa: BLE001 -- curation is best-effort

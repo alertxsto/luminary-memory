@@ -80,6 +80,19 @@ def temporal_recall(
                     ):
                         filtered_rows.append(row)
                 scan_rows = filtered_rows
+        if needs_local_filter and not scan_rows:
+            # A legacy backend may apply the new global-only default to its
+            # unscoped fallback. Rebuild temporal candidates from full rows so
+            # a valid tenant memory is not lost before scope filtering.
+            scan_rows = [
+                (
+                    getattr(memory, "id", None),
+                    getattr(memory, "observed_at", None) or getattr(memory, "created_at", ""),
+                    getattr(memory, "access_count", 0),
+                )
+                for memory in backend.all()
+                if memory_matches_scope(memory, scope, include_global=include_global)
+            ]
         for row in scan_rows:
             mid, created_at, access_count = row[:3]
             created = _parse_dt(created_at)

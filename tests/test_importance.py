@@ -164,8 +164,8 @@ def test_prune_skips_pinned_rules(tmp_path):
     contents = [x.content for x in mems]
     assert any("em dash" in c for c in contents), "pinned rule must survive"
     assert not any("trash" in c for c in contents), "low-value must be pruned"
-def test_rule_auto_replace_replaces_similar(tmp_path):
-    """Ingesting a similar rule replaces the old one (no contradiction)."""
+def test_similar_memories_require_explicit_supersession(tmp_path):
+    """Similarity alone must never erase an earlier observation."""
     from luminary_memory.api import MemoryClient
 
     class _E:
@@ -178,12 +178,16 @@ def test_rule_auto_replace_replaces_similar(tmp_path):
     mems_before = c.list(limit=0)
     assert len(mems_before) == 1
     assert mems_before[0].content == "never use tables in telegram replies"
-    # Second ingest is similar (collinear embedding) -> should replace in place
+    # Second ingest is similar (collinear embedding), but no explicit
+    # supersession was supplied, so both observations remain inspectable.
     second = c.ingest("always use markdown tables in telegram replies", tags=["rule"])
     mems = c.list(limit=0)
-    assert second == first, "auto-replace must return the original id"
-    assert len(mems) == 1, "store should still have exactly one entry after replace"
-    assert mems[0].content == "always use markdown tables in telegram replies"
+    assert second != first
+    assert len(mems) == 2
+    assert {m.content for m in mems} == {
+        "never use tables in telegram replies",
+        "always use markdown tables in telegram replies",
+    }
     c.close()
 
 
@@ -208,4 +212,3 @@ def test_lifecycle_preserves_pinned_rule_importance(tmp_path):
     assert m_after is not None
     assert m_after.importance == 0.95, "pinned rule importance must not be downgraded by lifecycle"
     c.close()
-

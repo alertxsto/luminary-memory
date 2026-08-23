@@ -110,10 +110,9 @@ class Settings:
     llm_model: str = field(default_factory=lambda: os.environ.get("LUMINARY_LLM_MODEL", "gpt-4o-mini"))
     llm_timeout: int = field(default_factory=lambda: _env_int("LUMINARY_LLM_TIMEOUT", 10))
     llm_max_tokens: int = field(default_factory=lambda: _env_int("LUMINARY_LLM_MAX_TOKENS", 512))
-    rule_keywords: str = field(default_factory=lambda: os.environ.get(
-        "LUMINARY_RULE_KEYWORDS",
-        "NEVER,ALWAYS,MUST,ALWAYS MUST,NEVER EVER,RULE,REQUIRED,MANDATORY,FORBIDDEN,DO NOT,DON'T",
-    ))
+    # Legacy compatibility field. Memory classification is structural and no
+    # longer infers durability from language-specific keyword lists.
+    rule_keywords: str = field(default_factory=lambda: os.environ.get("LUMINARY_RULE_KEYWORDS", ""))
     rule_importance: float = field(default_factory=lambda: _env_float("LUMINARY_RULE_IMPORTANCE", 0.9))
     rule_auto_replace: bool = field(default_factory=lambda: _env_bool("LUMINARY_RULE_AUTO_REPLACE", True))
     rule_auto_replace_threshold: float = field(default_factory=lambda: _env_float("LUMINARY_RULE_AUTO_REPLACE_THRESHOLD", 0.85))

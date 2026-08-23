@@ -137,7 +137,7 @@ def recall(
                     "strategies_hit": result.strategies_hit,
                     "provenance": result.provenance,
                 }
-                console.print(json.dumps(payload, indent=2))
+                typer.echo(json.dumps(payload, indent=2))
                 return
             if not result.memories:
                 reason = f" ({result.reason})" if result.reason else ""
@@ -189,7 +189,7 @@ def activity(
                 "memories": items,
             }
             if json_out:
-                console.print(json.dumps(payload, indent=2))
+                typer.echo(json.dumps(payload, indent=2))
                 return
             if not rows:
                 console.print("🌙 Luminary — no stored memory activity", markup=False)
@@ -247,7 +247,7 @@ def search(
                     }
                     for m, s in rows
                 ]
-                console.print(json.dumps(payload, indent=2))
+                typer.echo(json.dumps(payload, indent=2))
                 return
             for m, score in rows:
                 console.print(f"[dim]{m.id}[/dim] ({score:.4f}) {m.content}")
@@ -286,7 +286,7 @@ def list(
                     }
                     for m in rows
                 ]
-                console.print(json.dumps(payload, indent=2))
+                typer.echo(json.dumps(payload, indent=2))
                 return
             for m in rows:
                 tags = ",".join(m.tags or [])
@@ -310,7 +310,7 @@ def export_cmd(
         client = _client(db_path, backend)
         try:
             result = client.export(path, include_embeddings=include_embeddings)
-            console.print(json.dumps(result, indent=2))
+            typer.echo(json.dumps(result, indent=2))
         finally:
             client.close()
     _safe_run(run)
@@ -327,7 +327,7 @@ def import_cmd(
         client = _client(db_path, backend)
         try:
             result = client.import_memories(path)
-            console.print(json.dumps(result, indent=2))
+            typer.echo(json.dumps(result, indent=2))
         finally:
             client.close()
     _safe_run(run)
@@ -344,7 +344,7 @@ def lifecycle(
     client = _client(db_path, backend)
     try:
         result = client.run_lifecycle(semantic=semantic)
-        console.print(json.dumps(result, indent=2))
+        typer.echo(json.dumps(result, indent=2))
     finally:
         client.close()
 
@@ -357,7 +357,7 @@ def stats(
     """Show store statistics."""
     client = _client(db_path, backend)
     try:
-        console.print(json.dumps(client.stats(), indent=2))
+        typer.echo(json.dumps(client.stats(), indent=2))
     finally:
         client.close()
 
@@ -373,7 +373,7 @@ def health(
     try:
         report = client.health_score()
         if json_output:
-            console.print(json.dumps(report, indent=2))
+            typer.echo(json.dumps(report, indent=2))
             return
         score = report["score"]
         bar = "█" * int(score / 10) + "░" * (10 - int(score / 10))
@@ -411,7 +411,7 @@ def graph(
     try:
         data = client.graph(limit=limit)
         if json_output:
-            console.print(json.dumps(data, indent=2))
+            typer.echo(json.dumps(data, indent=2))
             return
         table = Table(title="Knowledge Graph")
         table.add_column("Entity", style="cyan")

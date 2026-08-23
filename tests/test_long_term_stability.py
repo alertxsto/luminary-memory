@@ -204,7 +204,7 @@ def test_rule_replace_preserves_new_raw_episode_and_claim_lineage(tmp_path):
         enricher=RuleEnricher(),
     )
     first = client.ingest("Policy alpha")
-    second = client.ingest("Policy beta")
+    second = client.ingest("Policy beta", supersedes_id=first)
     assert second == first
     episodes = client.backend.conn.execute(
         "SELECT id, content FROM episodes ORDER BY created_at, id"

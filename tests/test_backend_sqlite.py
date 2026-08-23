@@ -108,11 +108,48 @@ def test_top_by_importance_lean_and_ordered(tmp_path):
     assert [m.content for m in top] == ["high rule", "high rule 2"]
     # embeddings are not loaded (lean scan) — memory has no embedding attr set
     assert all(getattr(m, "embedding", None) is None for m in top)
-
     # min_importance filters below-threshold (0.3 excluded)
     top_all = b.top_by_importance(10, min_importance=0.5)
     assert len(top_all) == 3
     assert all(m.importance >= 0.5 for m in top_all)
+
+
+def test_recent_episodes_are_ordered_and_exactly_scoped(tmp_path):
+    b = _mk(tmp_path)
+    b.record_episode(
+        "s1-old",
+        "older current-session turn",
+        source="hermes-session",
+        metadata={"sequence": 1},
+        user_id="user-1",
+        session_id="s1",
+    )
+    b.record_episode(
+        "s2",
+        "other session turn",
+        source="hermes-session",
+        metadata={"sequence": 9},
+        user_id="user-1",
+        session_id="s2",
+    )
+    b.record_episode(
+        "s1-new",
+        "newer current-session turn",
+        source="hermes-session",
+        metadata={"sequence": 2},
+        user_id="user-1",
+        session_id="s1",
+    )
+
+    rows = b.recent_episodes(
+        limit=10,
+        scope={"user_id": "user-1", "session_id": "s1"},
+        include_global=False,
+    )
+    assert [row["id"] for row in rows] == ["s1-new", "s1-old"]
+    assert all(row["session_id"] == "s1" for row in rows)
+    assert rows[0]["metadata"]["sequence"] == 2
+    b.close()
 
 
 def test_touch_memories_batches_access(tmp_path):
@@ -243,7 +280,7 @@ def test_large_batch_helpers_chunk_sqlite_parameters(tmp_path):
     assert b.count() == 0
 
 
-def test_by_tag_top_returns_core_memories_by_importance(tmp_path):
+def test_by_tag_top_returns_core_memories_in_stable_insert_order(tmp_path):
     b = _mk(tmp_path)
     b.add(Memory(content="rule tabel wajib", tags=["core"], importance=0.9))
     b.add(Memory(content="rule em dash", tags=["core"], importance=0.95))
@@ -256,9 +293,21 @@ def test_by_tag_top_returns_core_memories_by_importance(tmp_path):
     assert "rule tabel wajib" in contents
     assert "fakta biasa" not in contents
     assert "core-x mirip" not in contents, "core-x tag must not match core"
-    # ordered by importance desc
-    imps = [m.importance for m in top]
-    assert imps == sorted(imps, reverse=True)
+    # Core membership is not a relevance leaderboard. Its order is stable
+    # insertion order even when importance changes.
+    assert [m.content for m in top[:2]] == ["rule tabel wajib", "rule em dash"]
+
+
+def test_by_tag_top_order_does_not_change_when_importance_changes(tmp_path):
+    b = _mk(tmp_path)
+    first = b.add(Memory(content="first core rule", tags=["core"], importance=0.1))
+    second = b.add(Memory(content="second core rule", tags=["core"], importance=0.9))
+
+    m = b.get(first)
+    m.importance = 0.99
+    b.update(m)
+
+    assert [m.id for m in b.by_tag_top("core", 2)] == [first, second]
 
 
 def test_by_tag_top_respects_limit(tmp_path):

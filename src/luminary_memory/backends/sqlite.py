@@ -54,8 +54,8 @@ def _sanitize_fts_query(query: str) -> str:
     Terms are joined with ``OR`` so a multi-word query matches memories that
     contain *any* of the terms, and FTS5's ``bm25`` ranking lifts documents
     that match more of them. A default AND join would return zero hits for
-    natural multi-term queries ("laporan pakai tabel") — the exact failure
-    that left keyword recall empty while the rule was in the store.
+    natural multi-term queries — the exact failure that left keyword recall
+    empty while the rule was in the store.
     """
     import re
 
@@ -356,6 +356,63 @@ class SQLiteBackend(MemoryBackend):
         )
         self.conn.commit()
 
+    def recent_episodes(
+        self,
+        limit: int = 10,
+        scope: dict | None = None,
+        include_global: bool = False,
+    ) -> list[dict]:
+        """Return newest episode rows under the requested scope.
+
+        Unlike memory recall, session continuity must never widen an identity
+        boundary. Callers therefore opt into global compatibility explicitly;
+        the provider uses exact scope matching for its current session ledger.
+        """
+        try:
+            effective_limit = max(0, int(limit))
+        except (TypeError, ValueError):
+            effective_limit = 0
+        if effective_limit == 0:
+            return []
+
+        where, params = scope_sql(
+            scope,
+            alias="e",
+            include_global=bool(include_global),
+            active_only=False,
+        )
+        rows = self.conn.execute(
+            "SELECT e.id, e.content, e.source, e.metadata, e.user_id, "
+            "e.session_id, e.workspace_id, e.agent_id, e.observed_at, e.created_at "
+            f"FROM episodes e WHERE {where} "
+            "ORDER BY e.created_at DESC, e.rowid DESC LIMIT ?",
+            (*params, effective_limit),
+        ).fetchall()
+
+        result: list[dict] = []
+        for row in rows:
+            try:
+                metadata = json.loads(row[3] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            result.append(
+                {
+                    "id": row[0],
+                    "content": row[1],
+                    "source": row[2],
+                    "metadata": metadata,
+                    "user_id": row[4],
+                    "session_id": row[5],
+                    "workspace_id": row[6],
+                    "agent_id": row[7],
+                    "observed_at": row[8],
+                    "created_at": row[9],
+                }
+            )
+        return result
+
     def add_claim(self, memory_id: int, claim: dict, **scope) -> None:
         """Write one validated atomic claim and its supporting quote."""
         subject = str(claim.get("subject") or "").strip()
@@ -579,11 +636,15 @@ class SQLiteBackend(MemoryBackend):
         scope: dict | None = None,
         include_global: bool = True,
     ) -> list[Memory]:
-        """Top-N memories carrying *tag*, by importance (desc) then access.
+        """Return a stable insertion-ordered slice of memories carrying *tag*.
 
         Lean scan (no embedding blobs) for the DB-backed core-memory block
         that is auto-loaded into the system prompt every session — the
-        luminary equivalent of a native ``MEMORY.md``.
+        luminary equivalent of a native ``MEMORY.md``. Core membership is a
+        lifecycle decision, not a relevance score: changing importance or
+        access frequency must not silently replace one always-loaded rule with
+        another. ``id`` is the durable insertion order and the deterministic
+        tie-breaker.
         """
         if int(top_n) <= 0:
             return []
@@ -591,7 +652,7 @@ class SQLiteBackend(MemoryBackend):
         rows = self.conn.execute(
             f"SELECT m.id, m.content, m.importance, m.access_count FROM memories m "
             f"WHERE {where} AND m.tags LIKE ? "
-            "ORDER BY importance DESC, access_count DESC, id DESC "
+            "ORDER BY id ASC "
             "LIMIT ?",
             (*scope_params, f'%"{tag}"%', int(max(0, top_n) or 0) or 1),
         ).fetchall()

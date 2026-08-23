@@ -336,6 +336,24 @@ def test_health_score_inspects_long_tail_and_never_read_rows(tmp_path):
     report = c.health_score()
     assert report["dimensions"]["size"]["value"] == 505
     assert report["dimensions"]["staleness"]["value"] == 1.0
+    assert report["dimensions"]["staleness"]["never_accessed_count"] == 505
+    assert report["dimensions"]["staleness"]["not_accessed_30d_count"] == 0
+    assert any("never accessed" in recommendation for recommendation in report["recommendations"])
+    c.close()
+
+
+def test_health_score_does_not_mark_core_rows_stale(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "core-health.db"), engine=_E())
+    c.ingest("always keep the user's identity stable", tags=["core"], importance=0.95)
+
+    report = c.health_score()
+    staleness = report["dimensions"]["staleness"]
+
+    assert staleness["value"] == 0.0
+    assert staleness["health"] == 100.0
+    assert staleness["core_tagged_count"] == 1
+    assert staleness["recall_memory_count"] == 0
+    assert not any("never accessed" in recommendation for recommendation in report["recommendations"])
     c.close()
 
 

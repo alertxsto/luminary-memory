@@ -65,6 +65,7 @@ class TestEnrich:
             result = enricher.enrich("some text")
         assert result.content == "some text"
         assert result.worth_saving is True
+        assert result.error == "URLError"
 
     def test_enrich_wrong_types_normalized(self, enricher):
         payload = json.dumps({"worth_saving": "yes", "summary": 123, "entities": "nope", "tags": None})

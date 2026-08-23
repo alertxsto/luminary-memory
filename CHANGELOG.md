@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- **Active-task session continuity** — every accepted Hermes turn now enters a
+  strictly scoped, non-durable episode ledger before LLM curation. When durable
+  recall abstains, recent current-session turns are injected as untrusted
+  reference context, and ambiguous follow-ups stay within the active task
+  unless the user requests a history-wide operation. No Hermes source patch or
+  language-specific classifier is used.
+- **Autonomous post-turn reconciliation** — Hermes now runs a serialized,
+  provider-owned evidence review after curated automatic retains. It can save a
+  grounded new fact or explicitly supersede/retract a scoped claim without
+  language-specific heuristics, a second memory authority, or a Hermes source
+  patch. Malformed/failed reviews fail closed and leave the writer alive.
+- **Language-neutral graph entities** — graph extraction no longer uses an
+  English stopword list or ASCII-only tokenization; Unicode tokens are retained
+  through a structural filter so retrieval does not privilege one language.
 - **Atomic cross-process exact deduplication** — SQLite and pgvector now
   enforce a scoped unique active-memory invariant, repair legacy duplicates
   during schema initialization, and return the winning row without creating
@@ -40,9 +54,10 @@
 
 - Added scope, lifecycle, hash-repair, claim-rollback, inactive-hook, and
   malformed-Telegram-response invariants to the long-term regression suite.
-- Current verification: `466 passed, 3 skipped`, `83%` full-source coverage,
-  and clean Ruff. The controlled gold fixture remains a regression signal, not
-  a matched Mem0/Hindsight accuracy claim.
+- Current verification: `505 passed, 3 skipped`, `83%` full-source coverage
+  (`4,866` statements, `837` missed), and clean Ruff. The controlled gold
+  fixture remains a regression signal, not a matched Mem0/Hindsight accuracy
+  claim.
 
 ## [0.2.18] - 2026-08-20
 

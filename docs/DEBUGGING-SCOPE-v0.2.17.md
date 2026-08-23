@@ -87,7 +87,7 @@ ruff check .
 python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-gold.json
 ```
 
-The current workspace record is `466 passed, 3 skipped`, 83% full-source
+The current workspace record is `501 passed, 3 skipped`, 83% full-source
 coverage, and a controlled 12-case gold suite with zero cross-scope leakage;
 `ruff check src tests hermes/hooks` is clean. The current implementation audit
 also covers atomic cross-process deduplication, replacement lineage, evidence

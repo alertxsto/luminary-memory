@@ -78,13 +78,22 @@ Set the memory provider in your Hermes `config.yaml`:
 ```yaml
 memory:
   provider: luminary
+  memory_enabled: false
+  user_profile_enabled: false
 ```
+
+The two existing Hermes switches disable the native `MEMORY.md` and `USER.md`
+surfaces. Keep them disabled while Luminary is selected so Hermes does not
+present two persistent memory authorities to the agent. `hermes/install.sh`
+applies this edit automatically.
 
 ## Optional: LLM memory curation
 
-By default every ingest is stored verbatim (zero LLM cost). To have an LLM
-evaluate each turn, dropping chit-chat and storing concise factual summaries
-instead of raw transcripts, enable `ingest_llm` and `auto_maintain`:
+Direct `MemoryClient.ingest()` calls are stored without an LLM by default. For
+automatic Hermes turn batches, the provider requires curation before a batch
+enters durable memory; otherwise the raw transcript is skipped. To have an
+LLM evaluate turns, drop non-durable content, and store concise factual
+summaries, enable `ingest_llm` and optionally `auto_maintain`:
 
 ```bash
 pip install "luminary-memory[hermes]"
@@ -101,9 +110,12 @@ pip install "luminary-memory[hermes]"
 }
 ```
 
-Any OpenAI-compatible endpoint works. `auto_maintain` reviews the store at
-session end, keeping current facts and updating/deleting stale or duplicate
-memories. If the provider's curation call fails or produces no durable summary,
+Any OpenAI-compatible endpoint works. With `ingest_llm`, the provider first
+curates each completed turn and then runs a serialized evidence-backed review
+against exact-scope candidates, so explicit corrections can supersede claims
+without a second memory authority. `auto_maintain` additionally reviews the
+store at session end, keeping current facts and updating/deleting stale or
+duplicate memories. If a provider curation call fails or produces no durable summary,
 the turn is dropped instead of saving a raw transcript.
 
 ## Accuracy-first provider defaults

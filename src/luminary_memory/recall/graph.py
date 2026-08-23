@@ -8,13 +8,7 @@ from luminary_memory.scope import scope_sql
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
 
-_WORD_RE = re.compile(r"[A-Za-z]{3,}")
-_STOP = frozenset({
-    "the", "and", "for", "with", "that", "this", "from", "are", "was", "is",
-    "you", "your", "but", "not", "has", "have", "had", "will", "would",
-    "can", "could", "should", "about", "into", "over", "under", "between",
-    "among", "through", "which", "their", "there", "what", "when", "where",
-})
+_TOKEN_RE = re.compile(r"[^\W_]{3,}", re.UNICODE)
 
 
 def _is_pg(backend) -> bool:
@@ -43,11 +37,13 @@ def extract_entities(m) -> list[str]:
     entities: set[str] = set()
     for tag in getattr(m, "tags", []) or []:
         if tag:
-            entities.add(tag.lower().strip())
+            entities.add(tag.casefold().strip())
     content = getattr(m, "content", "") or ""
-    for word in _WORD_RE.findall(content.lower()):
-        if word not in _STOP:
-            entities.add(word)
+    for token in _TOKEN_RE.findall(content.casefold()):
+        # Keep the filter structural rather than linguistic: no stopword list
+        # should privilege one language or silently discard another script.
+        if any(character.isalpha() for character in token):
+            entities.add(token)
     return sorted(entities)
 
 
@@ -113,9 +109,9 @@ def index_memory_entities(backend, memory) -> None:
 
 def _query_entities(query: str) -> set[str]:
     ents: set[str] = set()
-    for w in _WORD_RE.findall((query or "").lower()):
-        if w not in _STOP:
-            ents.add(w)
+    for token in _TOKEN_RE.findall((query or "").casefold()):
+        if any(character.isalpha() for character in token):
+            ents.add(token)
     return ents
 
 

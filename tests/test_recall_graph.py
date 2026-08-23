@@ -10,6 +10,12 @@ def test_extract_entities_returns_tags_and_keywords(tmp_path):
     assert any(e in ents for e in ["postgres", "pgvector", "embedding", "search"])
 
 
+def test_extract_entities_is_unicode_and_language_neutral(tmp_path):
+    m = Memory(content="ユーザーは夜のテーマを選択", tags=[])
+    ents = extract_entities(m)
+    assert "ユーザーは夜のテーマを選択" in ents
+
+
 def test_graph_recall_finds_related_memories_via_shared_entity(tmp_path):
     b = SQLiteBackend(str(tmp_path / "t.db"))
     id_a = b.add(Memory(content="postgres pgvector stores vectors", tags=["database"]))

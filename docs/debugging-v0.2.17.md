@@ -1,9 +1,9 @@
 # Gateway, Hermes, and Telegram Debugging Guide
 
 This guide preserves the v0.2.17 gateway investigation and records the
-post-v0.2.18 runtime behavior. The current implementation audit is kept
-locally as `IMPLEMENTATION-AUDIT.md`; planning and audit files remain
-local-only under the project `docs/` ignore rule.
+post-v0.2.18 runtime behavior. The regression suite and CI workflow are the
+verification source for the current implementation; the provider log is the
+runtime source for a deployed Hermes installation.
 
 ## 1. Gateway envelope failure and fix
 
@@ -137,8 +137,11 @@ present, so use normal local file permissions and retention.
 
 Pre-compress and core-tool events use the same scope/trace contract. A
 `provider.shutdown.completed` event with `status: "partial"` means a writer or
-prefetch worker remained alive after the join timeout and needs investigation;
-it is not a clean shutdown.
+prefetch worker remained alive after the bounded join and needs investigation;
+it is not a clean shutdown. Accepted retain work is drained before a clean
+close. If the writer remains alive, Luminary keeps the lifecycle fenced and
+will not initialize a new session on that provider instance until the worker
+has stopped.
 
 ## 5. Accuracy/debugging checklist
 
@@ -174,7 +177,7 @@ ruff check .
 python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-gold.json
 ```
 
-The current repository verification record is `466 passed, 3 skipped`, 83%
+The current repository verification record is `501 passed, 3 skipped`, 83%
 full-source coverage, and clean Ruff. The controlled gold run reports
 recall@10 `0.95`, MRR `1.00`, abstention accuracy `1.00`, evidence support
 precision `1.00`, and zero cross-scope leakage. These are regression numbers,

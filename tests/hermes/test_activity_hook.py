@@ -135,6 +135,15 @@ def test_recent_activity_missing_db_returns_none(tmp_path):
     assert h._recent_activity() is None
 
 
+def test_context_db_path_resolves_relative_to_active_hermes_home(tmp_path):
+    h = _load_handler(tmp_path)
+    active_home = tmp_path / "profile-home"
+    resolved = h._resolve_db_path(
+        {"hermes_home": str(active_home), "db_path": "luminary/memory.db"}
+    )
+    assert resolved == str(active_home / "luminary" / "memory.db")
+
+
 # ============================================================================
 # _post — payload, error handling, token/chat missing
 # ============================================================================
