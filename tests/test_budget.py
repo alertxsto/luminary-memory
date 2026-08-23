@@ -41,3 +41,11 @@ def test_truncate_custom_tokenizer():
     result = truncate(memories, token_budget=1, tokenizer=lambda s: list(s))
     # tokenizer counts chars here, budget 1 => first memory too long, falls through
     assert isinstance(result, list)
+
+
+def test_env_float_invalid_returns_default(monkeypatch):
+    """Invalid LUMINARY float env value falls back to the default."""
+    from luminary_memory.config import _env_float
+
+    monkeypatch.setenv("LUMINARY_TEST_FLOAT", "not-a-float")
+    assert _env_float("LUMINARY_TEST_FLOAT", 0.75) == 0.75

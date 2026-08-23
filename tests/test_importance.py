@@ -212,3 +212,21 @@ def test_lifecycle_preserves_pinned_rule_importance(tmp_path):
     assert m_after is not None
     assert m_after.importance == 0.95, "pinned rule importance must not be downgraded by lifecycle"
     c.close()
+
+
+def test_estimate_importance_malformed_timestamp_falls_back_to_now():
+    """A malformed timestamp must not crash importance estimation."""
+    from luminary_memory.lifecycle.importance import _parse_dt
+
+    now = _parse_dt("this-is-not-a-timestamp")
+    assert now is not None
+
+
+def test_estimate_importance_malformed_centrality_ignored():
+    """Non-numeric centrality in metadata must not crash estimation."""
+    from luminary_memory.lifecycle.importance import estimate_importance
+    from luminary_memory.types import Memory
+
+    m = Memory(content="x", metadata={"centrality": "not-a-number"})
+    imp = estimate_importance(m)
+    assert imp >= 0.0
