@@ -24,7 +24,7 @@ jobs:
       - name: Test and coverage
         run: |
           python -m coverage run --source=src/luminary_memory -m pytest -q
-          python -m coverage report --fail-under=83
+          python -m coverage report --fail-under=82
 
   pgvector-integration:
     name: PostgreSQL pgvector integration

@@ -32,7 +32,6 @@ def test_planner_never_skips_semantic_or_keyword():
 
 def test_planner_graph_guard_exception_safe(monkeypatch):
     """Graph entity detection failing must not crash planning."""
-    import luminary_memory.recall.planner as planner_mod
 
     def boom(query):
         raise RuntimeError("graph unavailable")
