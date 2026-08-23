@@ -32,6 +32,10 @@
   in backend queries where supported and defensively again in the orchestrator
   before fusion/fallback. Scope-aware indexes cover ownership, status, claim
   keys, and content hashes.
+- The backend also owns the immutable episode/provenance helpers used by the
+  provider: `record_episode()` stores source turns, `recent_episodes()` reads
+  only a requested exact scope, and event/evidence/claim methods keep the
+  durable row auditable. Episode rows are not semantic recall candidates.
 - Exact active deduplication is a database invariant, not only an API
   pre-check: `uq_memories_active_scope_hash` covers the normalized ownership
   tuple plus `content_hash`. Concurrent writers resolve the winning row and
@@ -45,6 +49,9 @@
 - Best for scale and concurrent access.
 - The same ownership, status, evidence, claim, and supersession fields are
   stored so switching backends does not change the public accuracy contract.
+- Episode-ledger reads/writes and audit/provenance records follow the same
+  ownership boundary, so the Hermes continuity fallback behaves consistently
+  after a backend switch.
 - Integration tests run against a real Postgres service in CI
   (`.github/workflows/ci.yml`); run them locally with `LUMINARY_PG_DSN`
   (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
@@ -70,4 +77,11 @@
 
 ## Adding a new backend
 
-Implement the `MemoryBackend` ABC (`add`, `get`, `update`, `delete`, `all`, `keyword_search`, `vector_search`, `count`) and register it in `backends/__init__.py`.
+Implement the `MemoryBackend` ABC (`add`, `get`, `update`, `delete`, `all`,
+`keyword_search`, `vector_search`, `count`) and register it in
+`backends/__init__.py`. For a provider-capable backend, also implement the
+optional `record_event`, `add_evidence`, `record_episode`,
+`recent_episodes`, `add_claim`, and `sync_claim_status` helpers. A lightweight
+custom backend may use the no-op compatibility defaults, but then Hermes
+session continuity and provenance are explicitly unavailable and must be
+reported as such.

@@ -123,9 +123,31 @@ single persistent surface. Future Hermes upgrades therefore do not require a
 Luminary patch to be merged or rebased. Keep the provider selection and the
 native switches in `config.yaml`, then restart the gateway after an upgrade.
 
+Runtime context remains split into three non-competing surfaces: DB-backed
+`core` rows loaded every session, evidence-aware durable recall for the current
+query, and a bounded untrusted exact-session episode fallback used only when
+durable recall has no usable result. The episode fallback preserves active
+conversation scope; it is not durable semantic memory and never searches other
+sessions.
+
 If the installed Hermes cannot discover the `MemoryProvider` entry point,
 setup must stop with a visible compatibility error. Do not copy Luminary into
 Hermes' source tree or add a private import as a workaround.
+
+If an older store contains imported authority snapshots or uncurated Hermes
+transcripts, inspect and optionally apply the migration helper before relying
+on automatic writes:
+
+```bash
+python scripts/repair_memory_authority.py \
+  --db-path ~/.hermes/luminary/memory.db
+python scripts/repair_memory_authority.py \
+  --db-path ~/.hermes/luminary/memory.db --apply
+```
+
+The dry run is read-only. Applying creates a SQLite backup, archives matching
+rows, and appends audit events; it does not delete rows or classify content by
+language.
 
 ## Manual install (no script)
 

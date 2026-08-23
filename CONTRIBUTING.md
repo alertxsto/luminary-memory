@@ -14,11 +14,15 @@ pip install -e ".[dev]"
 1. Create a branch from `develop`: `git checkout develop && git checkout -b feat/your-change`.
 2. Write a failing test first (`tests/`).
 3. Implement the minimal change.
-4. Run the checks:
+4. Update the tracked guide that owns the changed contract and the matching
+   static website guide in `website/js/docs-guides.js`. Keep ignored planning
+   notes under `docs/` out of the public source.
+5. Run the checks:
 
 ```bash
 python -m pytest
 python -m ruff check src tests hermes/hooks
+node --check website/js/docs-guides.js
 ```
 
 5. Commit with a conventional message.

@@ -87,6 +87,24 @@ surfaces. Keep them disabled while Luminary is selected so Hermes does not
 present two persistent memory authorities to the agent. `hermes/install.sh`
 applies this edit automatically.
 
+If Hermes runs from a dedicated virtual environment, point the installer at
+that interpreter so package installation and capability activation use the
+same runtime:
+
+```bash
+HERMES_PYTHON="$HOME/.hermes/venv/bin/python" bash hermes/install.sh
+```
+
+The installer edits the public Hermes config boundary only. It does not patch
+Hermes source, pin a Hermes release, or create profile configs that do not
+already exist.
+
+At runtime, keep these surfaces distinct: `core` rows are loaded every
+session, durable recall is query-driven and evidence-aware, and a bounded
+untrusted exact-session episode block is used only when durable recall has no
+usable result. The episode block preserves a short follow-up's active task;
+it is not a durable memory and never broadens scope to another session.
+
 ## Optional: LLM memory curation
 
 Direct `MemoryClient.ingest()` calls are stored without an LLM by default. For
@@ -115,8 +133,11 @@ curates each completed turn and then runs a serialized evidence-backed review
 against exact-scope candidates, so explicit corrections can supersede claims
 without a second memory authority. `auto_maintain` additionally reviews the
 store at session end, keeping current facts and updating/deleting stale or
-duplicate memories. If a provider curation call fails or produces no durable summary,
-the turn is dropped instead of saving a raw transcript.
+duplicate memories. If a provider curation call fails or produces no durable
+summary, the turn is not promoted into semantic memory instead of saving a raw
+transcript. When automatic retain is enabled, the accepted turn still remains
+in the exact-session continuity ledger, so a curation rejection and a missing
+durable memory are not the same thing.
 
 ## Accuracy-first provider defaults
 
@@ -131,6 +152,14 @@ explicit abstention instead of a plausible-looking top result:
   "memories": [],
   "provenance": []
 }
+```
+
+For a store created before the single-authority provider path, inspect the
+read-only repair report before enabling more writes:
+
+```bash
+python scripts/repair_memory_authority.py \
+  --db-path ~/.hermes/luminary/memory.db
 ```
 
 ## Configuration

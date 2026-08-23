@@ -1,6 +1,5 @@
 """Tests for the OpenAI-compatible LLM enricher (ingest/llm.py)."""
 import json
-import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -61,11 +60,13 @@ class TestEnrich:
         assert result.content == "some text"
 
     def test_enrich_network_error_falls_back(self, enricher):
-        with patch.object(enricher, "_call_llm", side_effect=urllib.error.URLError("boom")):
+        import requests
+
+        with patch.object(enricher, "_call_llm", side_effect=requests.ConnectionError("boom")):
             result = enricher.enrich("some text")
         assert result.content == "some text"
         assert result.worth_saving is True
-        assert result.error == "URLError"
+        assert result.error == "ConnectionError"
 
     def test_enrich_wrong_types_normalized(self, enricher):
         payload = json.dumps({"worth_saving": "yes", "summary": 123, "entities": "nope", "tags": None})
@@ -79,9 +80,12 @@ class TestEnrich:
 
 class _FakeResp:
     def __init__(self, payload: dict):
-        self._data = json.dumps(payload).encode()
+        self._data = payload
 
-    def read(self):
+    def raise_for_status(self):
+        return None
+
+    def json(self):
         return self._data
 
     def __enter__(self):
@@ -94,31 +98,31 @@ class _FakeResp:
 class TestCallLlm:
     def test_returns_choices_content(self, enricher):
         resp = _FakeResp({"choices": [{"message": {"content": "the answer"}}]})
-        with patch("urllib.request.urlopen", return_value=resp) as mock:
+        with patch("requests.post", return_value=resp) as mock:
             content = enricher._call_llm([{"role": "user", "content": "hi"}])
         assert content == "the answer"
         # URL + auth + user-agent
-        req = mock.call_args.args[0]
-        assert req.full_url == "https://example.com/v1/chat/completions"
-        assert req.headers["Authorization"] == "Bearer test-key"
-        # urllib normalizes header keys (User-Agent -> User-agent)
-        ua = req.headers.get("User-Agent") or req.headers.get("User-agent") or req.headers.get("user-agent")
+        args = mock.call_args.args
+        kwargs = mock.call_args.kwargs
+        assert args[0] == "https://example.com/v1/chat/completions"
+        assert kwargs["headers"]["Authorization"] == "Bearer test-key"
+        ua = kwargs["headers"].get("User-Agent") or kwargs["headers"].get("user-agent")
         assert ua and "luminary-memory" in ua
 
     def test_empty_choices_returns_empty(self, enricher):
         resp = _FakeResp({"choices": []})
-        with patch("urllib.request.urlopen", return_value=resp):
+        with patch("requests.post", return_value=resp):
             assert enricher._call_llm([{"role": "user", "content": "hi"}]) == ""
 
     def test_missing_message_content_returns_empty(self, enricher):
         resp = _FakeResp({"choices": [{"message": {}}]})
-        with patch("urllib.request.urlopen", return_value=resp):
+        with patch("requests.post", return_value=resp):
             assert enricher._call_llm([{"role": "user", "content": "hi"}]) == ""
 
     def test_http_error_propagates(self, enricher):
-        with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(
-            "url", 500, "err", {}, None
-        )), pytest.raises(urllib.error.HTTPError):
+        import requests
+
+        with patch("requests.post", side_effect=requests.HTTPError("500 err")), pytest.raises(requests.HTTPError):
             enricher._call_llm([{"role": "user", "content": "hi"}])
 
 
@@ -140,7 +144,9 @@ class TestReviewMemories:
         assert e.review_memories([MagicMock(id=1, content="x")]) == "{}"
 
     def test_review_network_error_returns_empty(self, enricher):
-        with patch.object(enricher, "_call_llm", side_effect=urllib.error.URLError("boom")):
+        import requests
+
+        with patch.object(enricher, "_call_llm", side_effect=requests.ConnectionError("boom")):
             assert enricher.review_memories([MagicMock(id=1, content="x")]) == "{}"
 
 

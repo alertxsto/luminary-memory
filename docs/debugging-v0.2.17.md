@@ -34,17 +34,37 @@ behavior; it prevents gateway failure from polluting recall.
 ## 2. Current Hermes context flow
 
 The old “core + persistent importance context + recall” description is no
-longer current. Since v0.2.18, the provider has two context sources:
+longer current. Since v0.2.18, the provider has three separate context
+surfaces:
 
 | Source | Selection | Destination |
 |---|---|---|
-| Core memory | DB rows tagged `core`, bounded by `core_top_n`/`core_budget` | System prompt every session |
-| Query recall | Scope/status/validity-aware fused candidates, bounded by `recall_limit`/`token_budget` | Turn context or explicit tool result |
+| Core memory | Active DB rows tagged `core`, selected in stable insertion/id order and bounded by `core_top_n`/`core_budget` | System prompt every session |
+| Query recall | Scope/status/validity/evidence-aware fused candidates, bounded by `recall_limit`/`token_budget` | Turn context or explicit tool result |
+| Session continuity | Recent immutable episodes from the exact current `session_id`, only when durable recall has no usable block | Bounded untrusted reference block |
 
 Importance boosts query ranking and lifecycle decisions; it does not silently
-pin arbitrary rows into the prompt. Both sources are wrapped as untrusted
-reference data, subordinate to the user's current instruction, and deduped by
-ID plus content hash.
+pin arbitrary rows into the prompt. Core is curated default context; query
+recall and session continuity are reference data. The current user request
+always wins. Durable recall and core are deduped by ID plus content hash, while
+session continuity is a separate episode surface and is never promoted merely
+because it was injected.
+
+### Context-loss checks
+
+When Hermes appears to “forget” the active task, inspect the boundaries in this
+order:
+
+1. Confirm the provider received the same `session_id`, user, workspace, and
+   agent identity on the current turn and on the prefetch operation.
+2. Check for `session_episode.recorded` and `session_context.completed` in the
+   per-home JSONL log. Missing episode events mean the issue is admission or
+   backend support, not ranking.
+3. Check `recall.completed` for `status`, `reason`, `confidence`, and scope. An
+   intentional abstention should fall through to the exact-session block;
+   unrelated historical rows must not be used as a substitute.
+4. Confirm the system block's active-objective instruction is present and that
+   the current request was not explicitly history-wide.
 
 ## 3. Telegram activity hook flow
 
@@ -168,6 +188,18 @@ diagnostic `include_conflicted` path and resolve through explicit
 supersession—do not solve a provenance problem by raising semantic
 auto-replacement.
 
+For a store that predates the single-authority provider path, first run the
+read-only authority audit and inspect its JSON before applying anything:
+
+```bash
+python scripts/repair_memory_authority.py \
+  --db-path ~/.hermes/luminary/memory.db
+```
+
+Applying the plan requires an explicit `--apply`; it creates a consistent
+SQLite backup and archives identified rows with audit events rather than
+deleting them.
+
 ## 6. Verification commands
 
 ```bash
@@ -177,7 +209,7 @@ ruff check .
 python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-gold.json
 ```
 
-The current repository verification record is `501 passed, 3 skipped`, 83%
+The current repository verification record is `505 passed, 3 skipped`, 83%
 full-source coverage, and clean Ruff. The controlled gold run reports
 recall@10 `0.95`, MRR `1.00`, abstention accuracy `1.00`, evidence support
 precision `1.00`, and zero cross-scope leakage. These are regression numbers,

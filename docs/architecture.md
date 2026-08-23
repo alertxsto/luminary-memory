@@ -22,6 +22,13 @@ sync_turn ──► exact-session episode ledger (continuity only)
                                                        (exact scope + current-turn evidence)
 ```
 
+The episode ledger and durable-memory writer are separate by design. An
+accepted automatic turn is recorded as an immutable, exact-session source
+episode before curation. That episode can support a short follow-up in the
+same session, but it is not a semantic memory, is not returned by normal
+recall, and does not count as a durable fact. Only a grounded curated summary
+or an explicit write enters the durable memory path.
+
 ## Ingest
 
 1. **Whitelist filter**, rejects disallowed text before it reaches any index.
@@ -56,12 +63,14 @@ sync_turn ──► exact-session episode ledger (continuity only)
 8. **Batched access bookkeeping**, recalled memories are marked accessed with
    one batched update and importance is re-estimated for the next query.
 
-The Hermes provider adds a second, asynchronous reconciliation pass after the
+The Hermes provider adds a second, serialized reconciliation pass after the
 normal retain task when `ingest_llm` is enabled. It receives only the current
-turn and a bounded candidate window, then applies structured decisions through
-the same writer queue. A correction must be explicit, evidence-grounded, and
-claim-aware; similarity or language-specific keywords never authorize an
-overwrite. The old row remains in the audit/version chain after supersession.
+turn and a bounded exact-scope candidate window, then applies structured
+decisions through the same writer queue. A correction must be explicit,
+evidence-grounded, and claim-aware; similarity or language-specific keywords
+never authorize an overwrite. The old row remains in the audit/version chain
+after supersession. A failed or malformed review is skipped and cannot kill
+the retain worker.
 
 ## Injection (Hermes provider)
 
@@ -101,12 +110,33 @@ silently combining two memory authorities.
 
 ## Backends
 
-A `MemoryBackend` ABC defines CRUD + `keyword_search` + `vector_search`. Two implementations:
+A `MemoryBackend` ABC defines CRUD, keyword/vector search, scope-aware recent
+reads, and optional provenance helpers for events, evidence, claims, and
+immutable source episodes. Bulk write/read helpers are used by lifecycle and
+deduplication paths. Two implementations:
 
 - **SQLite**, stdlib, FTS5 for keyword, in-process cosine for vector.
 - **pgvector**, PostgreSQL + pgvector for HNSW vector search.
 
 See [backends.md](backends.md).
+
+## Authority and migration boundary
+
+The Hermes provider is the only persistent authority when
+`memory.provider: luminary` is active and the existing Hermes
+`memory_enabled` and `user_profile_enabled` switches are false. Luminary does
+not merge native files, import them implicitly, or patch Hermes source. For a
+store that already contains imported authority snapshots or uncurated Hermes
+transcripts, run the read-only repair plan first:
+
+```bash
+python scripts/repair_memory_authority.py --db-path ~/.hermes/luminary/memory.db
+python scripts/repair_memory_authority.py --db-path ~/.hermes/luminary/memory.db --apply
+```
+
+`--apply` creates a SQLite backup and archives the selected rows with an audit
+event; it does not delete them. The repair command is a migration aid, not a
+new runtime memory authority.
 
 ## Lifecycle
 

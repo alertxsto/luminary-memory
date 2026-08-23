@@ -127,7 +127,7 @@ The Luminary equivalent of Hermes `MEMORY.md`, stored in the DB.
 
 | Field | Env var | Default | Meaning |
 |-------|---------|---------|---------|
-| `core_tag` | `LUMINARY_CORE_TAG` | `core` | Tag marking DB-backed core memories. Everything carrying this tag is auto-loaded into the system prompt every session. |
+| `core_tag` | `LUMINARY_CORE_TAG` | `core` | Tag marking DB-backed core memories. Active rows carrying this tag are eligible for the every-session prompt block, bounded by `core_top_n` and `core_budget`. |
 | `core_top_n` | `LUMINARY_CORE_TOP_N` | `12` | Max core memories injected into the system prompt. |
 | `core_budget` | `LUMINARY_CORE_BUDGET` | `8000` | Max character budget for the core-memory block. |
 
@@ -191,7 +191,7 @@ forward-compatible. This is what the dashboard (`Settings → Memory`) and
 | `max_memories` | `1000` | Hard cap on store size; oldest/lowest importance pruned when exceeded. | ✅ |
 | `token_budget` | `2048` | Recall context token budget. | ✅ |
 | `auto_recall` | `true` | Enable per-turn background recall. | ✅ |
-| `auto_retain` | `true` | Queue completed turn batches for curation; uncurated automatic transcripts are not promoted into durable memory. | ✅ |
+| `auto_retain` | `true` | Record accepted turns in the exact-session continuity ledger and queue completed batches for curation; uncurated automatic transcripts are not promoted into durable memory. | ✅ |
 | `recall_sync` | `false` | Synchronous (live) recall instead of warm prefetch. | ✅ |
 | `retain_every_n_turns` | `1` | Batch N turns into one store write. | ✅ |
 | `retain_user_prefix` | `User` | Structural prefix supplied to the optional curator for user content. | ✅ |
@@ -208,7 +208,7 @@ forward-compatible. This is what the dashboard (`Settings → Memory`) and
 | `core_tag` | `core` | Tag marking DB-backed core memories. | ✅ |
 | `core_top_n` | `12` | Max core memories injected into the system prompt. | ✅ |
 | `core_budget` | `8000` | Max characters of core memory injected. | ✅ |
-| `extract_on_session_end` | `false` | Compatibility/dashboard flag reserved for future session-end extraction integrations; current provider retention is flushed at session end and still requires the normal curation path. | ✅ |
+| `extract_on_session_end` | `false` | Compatibility/dashboard flag; the current provider does not run a second extraction mode from this key. Session end drains accepted retains and may run `auto_maintain`. | ✅ |
 | `importance_recall_boost` | `1.0` | Ranking multiplier for memories at importance ≥ 0.8 — durable rules surface first in recall. | ✅ |
 | `recall_min_score` | `0.0` | Score floor for recall results (0 = off; weak results may be empty). | ✅ |
 
@@ -258,3 +258,19 @@ The provider runtime does not import Hermes' private Python modules. Its
 optional setup callback is only a convenience for Hermes CLIs that expose that
 callback; the on-disk activation helper and the installer remain the portable
 path across Hermes updates.
+
+## Exact-session continuity is not another config layer
+
+When Hermes `auto_retain` is enabled, each accepted completed turn is written
+to the backend's immutable episode ledger with the current `session_id`,
+ownership scope, and sequence metadata before the durable curation queue runs.
+If durable recall returns no usable block, the provider may read only the
+current session's recent episodes (up to four rows, bounded by the existing
+`token_budget` and an internal character ceiling) as untrusted reference
+context. The current user request remains authoritative.
+
+This fallback is intentionally not exposed as a new toggle or provider key:
+turns in the ledger are continuity evidence, not semantic memories, and they
+are never used to widen a query into another session, user, workspace, or
+agent. Set `auto_retain=false` only when automatic episode admission and
+automatic durable curation should both be disabled.

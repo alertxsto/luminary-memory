@@ -1,7 +1,6 @@
 def test_call_llm_sends_max_tokens(tmp_path, monkeypatch):
     """The enricher must send max_tokens in the request body (issue #8:
     Command Code returns empty content without it)."""
-    import json as _json
     from unittest.mock import patch as _patch
 
     from luminary_memory.ingest.llm import OpenAICompatibleEnricher
@@ -9,25 +8,27 @@ def test_call_llm_sends_max_tokens(tmp_path, monkeypatch):
     captured = {}
 
     class _FakeResp:
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            return False
-        def read(self):
-            return _json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
 
-    class _FakeUrlopen:
-        def __call__(self, req, timeout=None):
-            captured["body"] = _json.loads(req.data.decode())
+    class _FakePost:
+        def __call__(self, url, json=None, headers=None, timeout=None):
+            captured["body"] = json
+            captured["url"] = url
+            captured["headers"] = headers
             return _FakeResp()
 
     e = OpenAICompatibleEnricher(
         base_url="https://fake.example/v1", api_key="k", model="m", max_tokens=512
     )
-    with _patch("urllib.request.urlopen", _FakeUrlopen()):
+    with _patch("requests.post", _FakePost()):
         out = e._call_llm([{"role": "user", "content": "hi"}])
     assert out == "ok"
     assert captured["body"]["max_tokens"] == 512
+
+
 def test_importance_is_not_inferred_from_language_markers():
     """Durability must come from structured signals, not prose markers."""
     from luminary_memory.ingest.llm import OpenAICompatibleEnricher
@@ -50,31 +51,29 @@ def test_rule_importance_only_from_curated_summary():
     from luminary_memory.ingest.llm import OpenAICompatibleEnricher
 
     class _FakeResp:
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            return False
-        def read(self):
+        def raise_for_status(self):
+            return None
+        def json(self):
             # LLM returns a summary that is NOT a rule, even though the raw
             # turn text contains "PLAN".
-            return _json.dumps({
+            return {
                 "choices": [{"message": {"content": _json.dumps({
                     "worth_saving": True,
                     "summary": "User delegated plan progress check to Command Code CLI",
                     "entities": ["plan"],
                     "tags": ["planning"],
-                })}}],
-            }).encode()
+                })}}]
+            }
 
-    class _FakeUrlopen:
-        def __call__(self, req, timeout=None):
+    class _FakePost:
+        def __call__(self, url, json=None, headers=None, timeout=None):
             return _FakeResp()
 
     e = OpenAICompatibleEnricher(
         base_url="https://fake.example/v1", api_key="k", model="m",
         rule_keywords="MUST,ALWAYS,NEVER",
     )
-    with _patch("urllib.request.urlopen", _FakeUrlopen()):
+    with _patch("requests.post", _FakePost()):
         out = e.enrich("User: we must check before pushing anything\nAssistant: sure, checking now")
     # Raw text contains "must" (a rule keyword) but the curated summary does
     # not read like an instruction -> must NOT be flagged.
@@ -92,22 +91,20 @@ def test_raw_rule_keyword_in_transcript_not_flagged():
     from luminary_memory.ingest.llm import OpenAICompatibleEnricher
 
     class _FakeResp:
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            return False
-        def read(self):
-            return _json.dumps({
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {
                 "choices": [{"message": {"content": _json.dumps({
                     "worth_saving": True,
                     "summary": "User asked about the deploy status report",
                     "entities": ["report"],
                     "tags": ["status"],
-                })}}],
-            }).encode()
+                })}}]
+            }
 
-    class _FakeUrlopen:
-        def __call__(self, req, timeout=None):
+    class _FakePost:
+        def __call__(self, url, json=None, headers=None, timeout=None):
             return _FakeResp()
 
     e = OpenAICompatibleEnricher(
@@ -115,7 +112,7 @@ def test_raw_rule_keyword_in_transcript_not_flagged():
         rule_keywords="MUST,ALWAYS,NEVER",
     )
     # Raw transcript literally contains "must" but summary is benign.
-    with _patch("urllib.request.urlopen", _FakeUrlopen()):
+    with _patch("requests.post", _FakePost()):
         out = e.enrich("User: we must check CI before merging\nAssistant: got it")
     assert out.importance is None, "raw must in transcript must not pin a rule"
 
@@ -128,29 +125,27 @@ def test_rule_like_summary_still_uses_normal_importance_estimation():
     from luminary_memory.ingest.llm import OpenAICompatibleEnricher
 
     class _FakeResp:
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            return False
-        def read(self):
-            return _json.dumps({
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {
                 "choices": [{"message": {"content": _json.dumps({
                     "worth_saving": True,
                     "summary": "User must always use markdown tables in Telegram replies",
                     "entities": ["table"],
                     "tags": ["formatting"],
-                })}}],
-            }).encode()
+                })}}]
+            }
 
-    class _FakeUrlopen:
-        def __call__(self, req, timeout=None):
+    class _FakePost:
+        def __call__(self, url, json=None, headers=None, timeout=None):
             return _FakeResp()
 
     e = OpenAICompatibleEnricher(
         base_url="https://fake.example/v1", api_key="k", model="m",
         rule_keywords="MUST,ALWAYS,NEVER",
     )
-    with _patch("urllib.request.urlopen", _FakeUrlopen()):
+    with _patch("requests.post", _FakePost()):
         out = e.enrich("User: always use markdown tables in Telegram replies")
     assert out.importance is None
 
@@ -168,12 +163,10 @@ def test_unwrap_data_envelope():
     from luminary_memory.ingest.llm import OpenAICompatibleEnricher
 
     class _FakeResp:
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            return False
-        def read(self):
-            return _json.dumps({
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {
                 "data": {
                     "choices": [{"message": {"content": _json.dumps({
                         "worth_saving": True,
@@ -182,16 +175,16 @@ def test_unwrap_data_envelope():
                         "tags": ["deploy"],
                     })}}],
                 }
-            }).encode()
+            }
 
-    class _FakeUrlopen:
-        def __call__(self, req, timeout=None):
+    class _FakePost:
+        def __call__(self, url, json=None, headers=None, timeout=None):
             return _FakeResp()
 
     e = OpenAICompatibleEnricher(
         base_url="https://fake.example/v1", api_key="k", model="m",
     )
-    with _patch("urllib.request.urlopen", _FakeUrlopen()):
+    with _patch("requests.post", _FakePost()):
         out = e.enrich("deploy target changed")
     assert out.summary == "Deploy target moved to production cluster"
     assert out.worth_saving is True
@@ -201,67 +194,61 @@ def test_unwrap_data_envelope():
 def test_unwrap_data_envelope_plain_shape():
     """An endpoint that does NOT wrap in a 'data' envelope must keep working
     (backward compatible), reading choices straight from the payload root."""
-    import json as _json
     from unittest.mock import patch as _patch
 
     from luminary_memory.ingest.llm import OpenAICompatibleEnricher
 
     class _FakeResp:
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            return False
-        def read(self):
-            return _json.dumps({
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {
                 "choices": [{"message": {"content": "plain ok"}}],
-            }).encode()
+            }
 
-    class _FakeUrlopen:
-        def __call__(self, req, timeout=None):
+    class _FakePost:
+        def __call__(self, url, json=None, headers=None, timeout=None):
             return _FakeResp()
 
     e = OpenAICompatibleEnricher(
         base_url="https://fake.example/v1", api_key="k", model="m",
     )
-    with _patch("urllib.request.urlopen", _FakeUrlopen()):
+    with _patch("requests.post", _FakePost()):
         out = e._call_llm([{"role": "user", "content": "hi"}])
     assert out == "plain ok"
 
 
 def test_call_llm_retries_on_transient_error():
     """Verify that a transient network error triggers a 1x retry that can succeed."""
-    import json as _json
     from unittest.mock import patch as _patch
+
+    import requests
 
     from luminary_memory.ingest.llm import OpenAICompatibleEnricher
 
     attempts = 0
 
-    class _RetryUrlopen:
-        def __call__(self, req, timeout=None):
+    class _RetryPost:
+        def __call__(self, url, json=None, headers=None, timeout=None):
             nonlocal attempts
             attempts += 1
             if attempts == 1:
-                raise OSError("temporary glitch")
+                raise requests.ConnectionError("temporary glitch")
 
             class _FakeResp:
-                def __enter__(self):
-                    return self
-
-                def __exit__(self, *a):
-                    return False
-
-                def read(self):
-                    return _json.dumps({
+                def raise_for_status(self):
+                    return None
+                def json(self):
+                    return {
                         "choices": [{"message": {"content": "retry succeeded"}}],
-                    }).encode()
+                    }
 
             return _FakeResp()
 
     e = OpenAICompatibleEnricher(
         base_url="https://fake.example/v1", api_key="k", model="m",
     )
-    with _patch("urllib.request.urlopen", _RetryUrlopen()), \
+    with _patch("requests.post", _RetryPost()), \
          _patch("time.sleep"):
         out = e._call_llm([{"role": "user", "content": "hi"}])
     assert attempts == 2

@@ -287,10 +287,11 @@ def parse_turn_review_payload(
 class OpenAICompatibleEnricher(LLMEnricher):
     """Provider-agnostic enricher over any OpenAI-compatible chat/completions endpoint.
 
-    Uses stdlib ``urllib.request`` so no new runtime dependency is introduced.
-    Any failure (network, timeout, malformed body) returns the original text
-    with an explicit error marker. The provider can then keep the turn in its
-    session ledger without confusing an outage with a valid curation decision.
+    Uses ``requests`` for the HTTP transport (browser-like User-Agent and
+    connection pooling). Any failure (network, timeout, malformed body)
+    returns the original text with an explicit error marker. The provider
+    can then keep the turn in its session ledger without confusing an
+    outage with a valid curation decision.
     """
 
     def __init__(
@@ -319,43 +320,48 @@ class OpenAICompatibleEnricher(LLMEnricher):
 
     def _call_llm(self, messages: list[dict]) -> str:
         """Call the OpenAI-compatible endpoint, return the assistant content."""
-        import urllib.request
+        import requests
 
         url = f"{self.base_url}/chat/completions"
-        body = json.dumps({
+        body = {
             "model": self.model,
             "messages": messages,
             "temperature": 0,
             "max_tokens": self.max_tokens,
-        }).encode()
+        }
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "luminary-memory",
+            "User-Agent": "luminary-memory/3 (+https://github.com/alertxsto/luminary-memory)",
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
         for attempt in range(2):
             try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    raw = resp.read()
-                    payload = json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw))
-                    # Some OpenAI-compatible gateways (e.g. the cline gateway) wrap the
-                    # standard ChatCompletion shape inside a top-level "data" envelope:
-                    #   {"data": {"choices": [...]}}
-                    # Unwrap it so we always read "choices" from the payload root.
-                    if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
-                        payload = payload["data"]
-                    try:
-                        choices = payload.get("choices") or []
-                        if choices:
-                            return (choices[0].get("message") or {}).get("content") or ""
-                    except Exception:  # noqa: BLE001, S110
-                        pass
-                    return ""
-            except Exception as exc:
+                resp = requests.post(
+                    url,
+                    json=body,
+                    headers=headers,
+                    timeout=self.timeout,
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+                # Some OpenAI-compatible gateways (e.g. the cline gateway) wrap the
+                # standard ChatCompletion shape inside a top-level "data" envelope:
+                #   {"data": {"choices": [...]}}
+                # Unwrap it so we always read "choices" from the payload root.
+                if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+                    payload = payload["data"]
+                try:
+                    choices = payload.get("choices") or []
+                    if choices:
+                        return (choices[0].get("message") or {}).get("content") or ""
+                except Exception:  # noqa: BLE001, S110
+                    pass
+                return ""
+            except requests.RequestException as exc:
                 if attempt == 0:
                     import time
+
                     time.sleep(0.3)
                     continue
                 logger.warning("enricher call failed after retry: %s", exc)

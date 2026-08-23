@@ -7,6 +7,11 @@ deletion.
 Two maintenance layers keep the store lean: deterministic passes
 (`run_lifecycle()`) and LLM-driven curation (`run_maintenance()`).
 
+The Hermes exact-session episode ledger is not part of either semantic
+maintenance pass. Episodes are immutable continuity evidence and are read only
+for the current session fallback; they are not ranked, consolidated, or
+pruned as durable memories by `run_lifecycle()`.
+
 ## `run_lifecycle()`, deterministic passes
 
 ### cleanup, TTL expiry
@@ -149,6 +154,29 @@ luminary-memory health --json    # raw JSON
 
 Empty store scores 100 (nothing wrong); low-scoring dimensions produce
 recommendations.
+
+## Repairing an old authority collision
+
+If a store was populated while an imported memory snapshot, native Hermes
+memory, and Luminary automatic transcripts were being treated as one source,
+use the dedicated SQLite repair utility before enabling more automatic writes:
+
+```bash
+# Read-only inventory; prints JSON and makes no changes.
+python scripts/repair_memory_authority.py \
+  --db-path ~/.hermes/luminary/memory.db
+
+# Explicit migration; creates a consistent backup first.
+python scripts/repair_memory_authority.py \
+  --db-path ~/.hermes/luminary/memory.db --apply
+```
+
+The utility identifies rows from imported authority snapshots and structurally
+uncurated Hermes turn batches using source, tags, metadata, scope, and shape.
+It does not classify by language or keywords. `--apply` archives matching rows,
+removes an accidental `core` tag where appropriate, and appends an audit event;
+it never hard-deletes the row. Review the dry-run JSON and backup path before
+continuing with normal lifecycle scheduling.
 
 
 ## Backup before lifecycle

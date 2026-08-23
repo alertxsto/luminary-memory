@@ -28,7 +28,7 @@ Agents are only as good as what they remember. A stateless agent re-learns the s
 
 Strategies fuse via **weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1)** → **scope/status/time filtering** → **conservative confidence and abstention** → **adaptive cutoff** → **Jaccard deduplication** → **token budget**. Short queries may be expanded with graph entities or stored content tokens before embedding; there is no language-specific alias classifier.
 
-**Important rules always in context.** Durable rules tagged `core` are auto-loaded into the system prompt every session (the DB-backed `MEMORY.md`). All other memories are surfaced through query retrieval: relevant facts are recalled on demand (ranked by query relevance) and merged with the core block under anti-duplication. When durable recall abstains, the Hermes provider can also expose a bounded exact-session continuity block so an ambiguous follow-up stays attached to its active task without turning raw conversation into durable memory.
+**Important rules always in context.** Durable rules tagged `core` are auto-loaded into the system prompt every session (the DB-backed `MEMORY.md`). All other durable memories are surfaced through query retrieval: relevant facts are recalled on demand (ranked by query relevance) and merged with the core block under anti-duplication. When durable recall abstains, the Hermes provider can also expose a bounded exact-session continuity block so an ambiguous follow-up stays attached to its active task without turning raw conversation into durable memory.
 
 ---
 
@@ -177,11 +177,15 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 > only for callers that already depend on the compatibility matcher; it does not
 > classify memory by language or vocabulary.
 
-> Provider-specific settings (Hermes dashboard): `max_memories`,
-> `mode`, `recall_limit`, `auto_recall`, `recall_sync`, `auto_retain`,
+> Provider-specific settings (Hermes dashboard): `max_memories`, `mode`,
+> `recall_limit`, `auto_recall`, `recall_sync`, `auto_retain`,
 > `retain_every_n_turns`, `retain_user_prefix` / `retain_assistant_prefix`,
 > `ingest_llm`, `auto_maintain`, `consolidate_semantic`, `importance_auto`,
-> `recall_indicator`, `retain_indicator` (live in `~/.hermes/luminary/config.json`).
+> `core_tag`, `core_top_n`, `core_budget`, `importance_recall_boost`,
+> `recall_min_score`, `extract_on_session_end` (compatibility flag),
+> `recall_indicator`, `retain_indicator` (live in
+> `~/.hermes/luminary/config.json`). The exact defaults and dashboard schema
+> are maintained in [docs/config-reference.md](docs/config-reference.md).
 > See [hermes/SKILL.md](hermes/SKILL.md) for the full provider config table.
 
 ---
@@ -203,7 +207,7 @@ after, and a background lifecycle keeps the store lean.
    core memory ──► auto-loaded every session (tag 'core') ─┘ (merged, anti-duplicated)
                                                             │
    ingest(text) ──► whitelist ──► (LLM curation) ──► embed (ONNX 384-d) ─┘
-   Hermes sync_turn ──► serialized retain ──► incremental review ──► capture / supersede / retract
+   Hermes sync_turn ──► exact-session episode ledger ──► serialized retain ──► incremental review ──► capture / supersede / retract
                                                             │
    lifecycle() ──► cleanup (TTL) ──► consolidate (semantic + Jaccard, pinned exempt) ──► prune (importance, pinned exempt)
    maintenance() ──► LLM reviews store ──► keep │ update │ delete stale facts
@@ -224,6 +228,7 @@ after, and a background lifecycle keeps the store lean.
 | **Importance boost** | Memories at importance ≥ 0.8 get a ranking bonus, lifting durable rules above weak-but-recent noise |
 | **Adaptive cutoff** | Cliff detection keeps only the relevant cluster: a sparse store returns 3 strong matches instead of padding to 20, while a dense relevant store keeps everything (no over-filtering) |
 | **Token budget** | Hard cap so memory injection never blows up the context window |
+| **Session continuity** | Hermes may inject only a bounded, untrusted recent-episode block from the exact active session when durable recall has no usable result |
 
 **Why it stays clean:**
 
@@ -257,6 +262,7 @@ after, and a background lifecycle keeps the store lean.
 | [Backends](docs/backends.md) | SQLite vs pgvector |
 | [Configuration reference](docs/config-reference.md) | Library env vars + provider config |
 | [Hermes integration](docs/hermes-integration.md) | Provider, config, installer |
+| [Hermes install kit](hermes/README.md) | Capability-based install, upgrade, repair utility |
 | [Debugging Guide](docs/debugging-v0.2.17.md) | Gateway envelopes, hook internals, verification |
 | [Benchmarks](benchmarks/RESULTS.md) | Pipeline smoke + independent gold-set metrics (not a competitor proof) |
 

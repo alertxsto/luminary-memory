@@ -9,8 +9,8 @@
       label: "START HERE",
       title: "Quickstart",
       source: "docs/quickstart.md",
-      blurb: "Install the library, write a first fact, recall it, run lifecycle maintenance, and wire Hermes without hiding the authority boundary.",
-      facts: ["Python API + CLI", "SQLite default", "Backup and restore"]
+      blurb: "Install the library, write a first fact, recall it, run lifecycle maintenance, and wire Hermes without hiding the authority boundary or confusing continuity with durable memory.",
+      facts: ["Python API + CLI", "SQLite default", "Scoped continuity"]
     },
     {
       id: "docs-index",
@@ -18,8 +18,8 @@
       label: "MAP",
       title: "Documentation map",
       source: "docs/index.md",
-      blurb: "The public reading order for the library, CLI, agent tools, lifecycle, backend, Hermes, and benchmark notes.",
-      facts: ["Public source map", "Reading order", "Tracked files"]
+      blurb: "The public reading order for the library, CLI, agent tools, lifecycle, backend, Hermes, repair utility, and benchmark notes.",
+      facts: ["Public source map", "Reading order", "Source contracts"]
     },
     {
       id: "architecture",
@@ -27,8 +27,8 @@
       label: "SYSTEM",
       title: "Architecture",
       source: "docs/architecture.md",
-      blurb: "The complete loop from ingest and evidence to four-strategy recall, post-turn reconciliation, core injection, backends, and lifecycle passes.",
-      facts: ["Weighted RRF", "Scope before candidates", "Evidence-backed review"]
+      blurb: "The complete loop from ingest and evidence to four-strategy recall, exact-session continuity, post-turn reconciliation, core injection, backends, and lifecycle passes.",
+      facts: ["Three context surfaces", "Scope before candidates", "Evidence-backed review"]
     },
     {
       id: "api",
@@ -36,7 +36,7 @@
       label: "LIBRARY",
       title: "Python API",
       source: "docs/api.md",
-      blurb: "Client methods, ingest metadata, recall results, conflict handling, core memory, lifecycle, health, and export interfaces.",
+      blurb: "Client methods, ingest metadata, recall results, conflict handling, scope boundaries, core memory, lifecycle, health, and export interfaces.",
       facts: ["MemoryClient", "Evidence fields", "Health report"]
     },
     {
@@ -45,7 +45,7 @@
       label: "RETRIEVAL",
       title: "Recall",
       source: "docs/recall.md",
-      blurb: "How semantic, keyword, temporal, graph, confidence, abstention, deduplication, and token budgets shape a result.",
+      blurb: "How semantic, keyword, temporal, graph, confidence, abstention, continuity fallback, deduplication, and token budgets shape a result.",
       facts: ["Strict recall", "Abstention", "Provenance"]
     },
     {
@@ -54,8 +54,8 @@
       label: "MAINTENANCE",
       title: "Lifecycle",
       source: "docs/lifecycle.md",
-      blurb: "TTL cleanup, near-duplicate consolidation, importance estimation, pruning, and optional LLM maintenance.",
-      facts: ["Cleanup", "Consolidate", "Prune"]
+      blurb: "TTL cleanup, near-duplicate consolidation, importance estimation, pruning, optional LLM maintenance, and authority repair.",
+      facts: ["Cleanup", "Consolidate", "Repair before apply"]
     },
     {
       id: "config",
@@ -72,7 +72,7 @@
       label: "STORAGE",
       title: "Backends",
       source: "docs/backends.md",
-      blurb: "SQLite and pgvector behavior, schema expectations, indexing, and the backend contract.",
+      blurb: "SQLite and pgvector behavior, exact deduplication, episode/provenance storage, schema expectations, indexing, and the backend contract.",
       facts: ["FTS5", "Cosine search", "pgvector option"]
     },
     {
@@ -90,8 +90,8 @@
       label: "AGENT SURFACE",
       title: "Agent tools",
       source: "docs/agent-tools.md",
-      blurb: "Tool schemas and safety boundaries for recall, ingest, list, and the explicit core-memory operations.",
-      facts: ["luminary_recall", "luminary_ingest", "Core tools"]
+      blurb: "Exact tool schemas and safety boundaries for recall, ingest, list, and the explicit core-memory operations.",
+      facts: ["Exact schemas", "Scoped writes", "Core tools"]
     },
     {
       id: "hermes",
@@ -99,8 +99,8 @@
       label: "ADAPTER",
       title: "Hermes integration",
       source: "docs/hermes-integration.md",
-      blurb: "Public provider entry point, auto-recall, scoped retain-and-review, the no-source-patch installer, and capability-based upgrades.",
-      facts: ["CLI / gateway", "Evidence-backed review", "No version pin"]
+      blurb: "Public provider entry point, three context surfaces, scoped retain-and-review, the no-source-patch installer, and capability-based upgrades.",
+      facts: ["CLI / gateway", "Session continuity", "No version pin"]
     },
     {
       id: "debugging",
@@ -109,8 +109,8 @@
       title: "Debugging guides",
       source: "docs/debugging-v0.2.17.md",
       related: ["docs/DEBUGGING-SCOPE-v0.2.17.md"],
-      blurb: "A practical path for tracing missing recall, scope leakage, provider startup, logs, and integration behavior.",
-      facts: ["Transparency log", "Scope checks", "Failure modes"]
+      blurb: "A practical path for tracing missing recall, active-session loss, scope leakage, provider startup, logs, repair, and integration behavior.",
+      facts: ["Continuity checks", "Transparency log", "Repair dry run"]
     },
     {
       id: "benchmarks",
@@ -129,8 +129,8 @@
       title: "Hermes install kit",
       source: "hermes/README.md",
       related: ["hermes/SKILL.md", "hermes/hooks/luminary-activity/README.md"],
-      blurb: "One-shot provider install, optional activity hook, skill guidance, and the config contract that keeps one persistent authority.",
-      facts: ["Install script", "Activity hook", "Skill"]
+      blurb: "One-shot provider install, optional activity hook, skill guidance, runtime selection, and the config contract that keeps one persistent authority.",
+      facts: ["Install script", "Activity hook", "Upgrade-safe boundary"]
     },
     {
       id: "project",

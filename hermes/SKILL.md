@@ -43,8 +43,8 @@ particular Hermes version.
 | Path | When | Trigger |
 |------|------|---------|
 | **Auto-recall** | Every turn | `memory.provider: luminary`, background recall injected into context (🌙 indicator) |
-| **Auto-retain** | After each turn | provider queues a scoped write; optional curation stores a concise summary |
-| **Explicit tools** | On demand | `luminary_recall` / `luminary_ingest` / `luminary_list` |
+| **Auto-retain** | After each turn | provider records an exact-session episode, then queues a scoped durable curation write; optional review stores only grounded changes |
+| **Explicit tools** | On demand | `luminary_recall` / `luminary_ingest` / `luminary_list` plus the three explicit core-memory tools |
 
 ## Agent Usage, Explicit Tools
 
@@ -116,9 +116,9 @@ Provider config lives in `~/.hermes/luminary/config.json` (auto-created,
 | `recall_sync` | `false` | `true` = recall synchronously against the current message (higher relevance, adds latency) |
 | `recall_limit` | `10` | Max memories injected per recall |
 | `token_budget` | `2048` | Max tokens of injected memory |
-| `auto_retain` | `true` | Queue completed turns for curation; raw automatic transcripts are not promoted |
+| `auto_retain` | `true` | Record accepted turns in the exact-session continuity ledger and queue completed turns for curation; raw automatic transcripts are not promoted |
 | `retain_every_n_turns` | `1` | Save every N turns (higher = fewer, batched saves) |
-| `ingest_llm` | `false` | **LLM memory curation**, drops chit-chat, stores factual summary instead of raw transcript |
+| `ingest_llm` | `false` | **LLM memory curation + incremental reconciliation**, drops chit-chat, stores a factual summary instead of a raw transcript, and checks the same turn for evidence-backed captures/corrections |
 | `llm_base_url` / `llm_model` / `llm_api_key` | `""` | OpenAI-compatible enricher endpoint/model/key |
 | `auto_maintain` | `false` | **LLM store review at session end**, keeps/updates/deletes stale or duplicate facts (needs `ingest_llm`) |
 | `consolidate_semantic` | `true` | **Semantic consolidation**, merge near-duplicates via embedding cosine (fallback Jaccard) during lifecycle |
@@ -130,6 +130,11 @@ Provider config lives in `~/.hermes/luminary/config.json` (auto-created,
 | `core_tag` | `core` | **Core memory**, tag marking rules auto-loaded into the system prompt every session (DB-backed MEMORY.md) |
 | `core_top_n` | `12` | Max core memories in the system prompt |
 | `core_budget` | `8000` | Max chars of core memory in the system prompt |
+
+`extract_on_session_end` remains a dashboard/config compatibility key; the
+current provider does not activate a separate extraction mode from it. Session
+end always drains accepted retains, and `auto_maintain` is the optional
+store-wide LLM review.
 
 **Persistent context (removed in v0.2.18):** the importance-based
 persistent-context family (`context_top_n`, `context_budget`,
@@ -174,8 +179,11 @@ Without it (default), automatic turns are skipped by the durable-memory writer
 with zero LLM cost; explicit writes remain available.
 
 If curation is enabled in the Hermes provider but the enricher fails or returns
-no durable summary, that turn is dropped rather than stored as a raw transcript.
-This keeps the provider's write path conservative.
+no durable summary, that turn is not promoted into semantic memory rather than
+stored as a raw transcript. When `auto_retain` is enabled, the turn still
+exists in the exact-session episode ledger for short-term continuity. A
+bounded, untrusted continuity block is used only when durable recall has no
+usable result and never reads another session.
 
 After a curated retain, the same writer queue performs an incremental
 evidence-backed review of the current turn against a bounded exact-scope
@@ -185,6 +193,12 @@ mutates a memory; candidate IDs and exact current-turn evidence are required.
 Malformed or failed reviews are logged as degraded and cannot kill later
 retains. This reuses `ingest_llm`; it does not add another provider setting or
 patch Hermes source.
+
+The system prompt also carries an active-objective guard: resolve short
+follow-ups against the immediately preceding conversation, keep the current
+task/session scope unless the user asks for history-wide context, and ask one
+clarifying question when the intent remains materially ambiguous. Memory text
+is reference data; the current user request and system instructions win.
 
 Example, save less often, no indicators:
 
@@ -280,7 +294,7 @@ or gateway logs if a value does not persist.
 |---------|-------------|
 | No 🌙 indicator | `recall_indicator` off, or store empty, or provider not active (`hermes memory status`) |
 | Recall returns nothing | Store empty; or `auto_recall` / mode `tools` disables auto-injection (use the tool) |
-| Turns not saved | `auto_retain` off, or `retain_every_n_turns` batching, wait N turns |
+| Durable turn not saved | `auto_retain` off, `ingest_llm` rejected the turn, or `retain_every_n_turns` is still buffering; inspect `retain.*` and `session_episode.*` events separately |
 | Slow first recall | ONNX model loads on first use (one-time cost) |
 | Errors | Check `~/.hermes/luminary/luminary.log` |
 
@@ -311,4 +325,7 @@ mkdir -p ~/.hermes/skills/luminary-memory && cp hermes/SKILL.md ~/.hermes/skills
 
 - Default backend SQLite (zero config); pgvector via `LUMINARY_BACKEND=pgvector`.
 - Recall runs four strategies (semantic, keyword, temporal, graph) fused by weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1).
-- The store is local; no data leaves the machine. Zero LLM tokens per turn.
+- Durable storage and ordinary retrieval stay local; retrieval uses zero LLM
+  tokens. If `ingest_llm` or `auto_maintain` is enabled, the configured
+  OpenAI-compatible endpoint receives the data needed for optional curation
+  and review.

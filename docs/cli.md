@@ -67,6 +67,10 @@ An empty store is explicit rather than silently producing a blank screen:
 🌙 Luminary — no stored memory activity
 ```
 
+`activity` reads persisted active durable-memory rows for operator visibility.
+It does not report raw Hermes session episodes, recall hits, or LLM review
+decisions that did not create a durable row.
+
 ### add
 
 ```bash
@@ -170,6 +174,26 @@ luminary-memory version
 ```
 
 Prints the installed version and Python runtime.
+
+## Authority repair (SQLite migration utility)
+
+The repair utility is intentionally a script rather than a normal write command
+so an operator must choose the database and explicitly opt into mutation:
+
+```bash
+# Read-only JSON plan
+python scripts/repair_memory_authority.py \
+  --db-path ~/.hermes/luminary/memory.db
+
+# Create a backup and archive the selected rows
+python scripts/repair_memory_authority.py \
+  --db-path ~/.hermes/luminary/memory.db --apply
+```
+
+It identifies imported authority snapshots and structurally uncurated Hermes
+turn batches using provenance/scope metadata. `--apply` archives rows and
+records audit events; it never hard-deletes them. Review the dry-run output and
+backup path before resuming automatic writes.
 
 ## Exit codes
 

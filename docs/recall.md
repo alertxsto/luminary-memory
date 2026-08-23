@@ -4,7 +4,8 @@
 
 Rules tagged `core` are injected into the system prompt **every session**,
 regardless of query match (the DB-backed equivalent of Hermes' `MEMORY.md`).
-All other memories are surfaced through query retrieval only:
+Ordinary durable memories are surfaced through query retrieval; Hermes may use
+the separate continuity fallback described below:
 
 ```
 Core memory (auto-loaded every session):   <- curated default context; explicit live instruction wins
@@ -13,6 +14,9 @@ Core memory (auto-loaded every session):   <- curated default context; explicit 
 
 # Luminary Memory (persistent cross-session context)   <- query-recall block
 - <query-relevant memory>                  <- skips anything already injected above
+
+# Luminary Session Continuity (Hermes only, fallback)  <- exact-session reference
+- <recent current-session episode>
 ```
 
 > Persistent-context injection (top-N by importance every turn) was **removed
@@ -20,15 +24,25 @@ Core memory (auto-loaded every session):   <- curated default context; explicit 
 > it does not pin memory into the prompt as rules that override a live user
 > instruction. Use the `core` tag for rules that must always be present.
 
-Anti-duplication: memory ids injected by the core block are tracked per
-turn and skipped by the query-recall block, so no memory appears twice in one
-turn's context.
+Anti-duplication: memory ids and content hashes injected by the core block are
+tracked per turn and skipped by the query-recall block, so the same durable
+memory does not appear twice in one turn's context. The continuity block is
+separately marked untrusted and is never treated as a durable recall hit.
 
-The two surfaces have different semantics. Core memory is curated persistent
-context: stable identity, preferences, and durable rules are applied as default
-context when relevant, and an explicit correction in the current user turn
-wins. Query recall is evidence only; it may be stale or incomplete and is never
-an instruction or a higher-priority system message.
+Core and query recall have different semantics. Core memory is curated
+persistent context: stable identity, preferences, and durable rules are
+applied as default context when relevant, and an explicit correction in the
+current user turn wins. Core rows are selected in stable insertion/id order and
+bounded by `core_top_n`/`core_budget`. Query recall is evidence only; it may be
+stale or incomplete and is never an instruction or a higher-priority system
+message.
+
+The Hermes provider has one additional continuity-only path: if the durable
+recall block is empty, it may inject a bounded untrusted reference block from
+recent immutable episodes with the exact current `session_id`. This path does
+not participate in semantic ranking, does not read another session, and does
+not promote raw turns into durable memory. It exists to keep an ambiguous
+follow-up attached to the active task.
 
 ## Four strategies
 

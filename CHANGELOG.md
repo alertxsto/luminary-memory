@@ -49,6 +49,18 @@
   not stringify token-bearing request URLs.
 - **CI coverage of the actual integration surface** — `develop` pushes now
   trigger CI and Ruff checks include the Telegram hook.
+- **Hermes activation boundary** — the installer and standalone activation
+  helper update only the documented top-level `memory` block, preserve
+  unrelated YAML and existing profiles, use the selected Hermes interpreter,
+  and fail visibly when the public provider capability is unavailable.
+- **Authority repair utility** — added a dry-run-first SQLite migration helper
+  that identifies imported authority snapshots and structurally uncurated
+  Hermes rows, creates a consistent backup before `--apply`, archives instead
+  of deleting, and records an audit event.
+- **Documentation contract sync** — tracked guides and the static website now
+  describe the three context surfaces, exact tool schemas, stable core ordering,
+  provider/runtime boundary, hook cursor resolution, and the current `505`
+  regression baseline.
 
 ### Tests & documentation
 

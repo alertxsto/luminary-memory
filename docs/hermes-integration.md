@@ -40,14 +40,38 @@ They are written automatically by `hermes/install.sh` and by Hermes setup when
 it supports the optional provider setup hook. Keeping them off is what makes
 Luminary the sole persistent memory surface; no Hermes core file is modified.
 
+The provider has three deliberately separate context surfaces:
+
+1. **Core memory** — active DB rows tagged `core`, selected in stable insertion
+   order and bounded by `core_top_n`/`core_budget`; loaded in the system prompt
+   every session.
+2. **Durable query recall** — strict, evidence-aware semantic, keyword, graph,
+   and temporal retrieval for the current request.
+3. **Exact-session continuity** — at most the recent current-session episode
+   window, injected only when durable recall produces no usable block. It is an
+   untrusted reference, never semantic memory, never a cross-session fallback,
+   and not an additional configuration surface.
+
 On the next session Hermes will:
 
 - **Auto-recall every turn**, the current user message is used to recall relevant memories from the local store, injected as a `# Luminary Memory (persistent cross-session context)` reference block. The block is filtered by session/user/workspace/agent scope and may explicitly abstain.
 - **Core rules auto-load every session**, durable rules tagged `core` (the DB-backed `MEMORY.md`) are always in the system prompt, independent of query match. All other memories come from query recall, merged under anti-duplication so nothing appears twice.
-- **Auto-retain and reconcile every completed turn**, completed turns are queued under session lineage tags (`session:<id>`, `parent:<id>`, `platform:<p>`, `agent:<identity>`). A normal curation pass produces a concise fact, then a serialized incremental reviewer compares the turn with scoped active/conflicted candidates. Raw turns are kept only in the exact-session episode ledger for short-term continuity; they are never promoted to semantic durable memory unless curation produces a grounded fact. Explicit ingest/core/delegation writes remain available.
+- **Auto-retain and reconcile every completed turn**, accepted turns first enter a
+  strictly scoped episode ledger, then are queued under session lineage tags
+  (`session:<id>`, `parent:<id>`, `platform:<p>`, `agent:<identity>`). A normal
+  curation pass produces a concise fact, then a serialized incremental reviewer
+  compares the turn with scoped active/conflicted candidates. Raw turns are
+  kept only as exact-session continuity evidence; they are never promoted to
+  semantic durable memory unless curation produces a grounded fact. Explicit
+  ingest/core/delegation writes remain available.
 - **Preserve the active task on ambiguous follow-ups**, when durable recall abstains, Luminary can inject a bounded, untrusted reference block from the current session's recent episodes. This keeps a scoped request attached to its immediately active topic instead of silently widening it to the entire session library. The current user request remains authoritative.
 - **Expose explicit tools**, `luminary_recall` / `luminary_ingest` / `luminary_list` are registered for the model in `tools` and `hybrid` modes.
 - **Report a deterministic indicator**, a `🌙 Luminary, recalled N memories` status line appears whenever recall injected context.
+
+`auto_retain=false` disables both automatic episode admission and automatic
+curation for that provider instance. `retain_every_n_turns` only controls when
+the buffered batch enters the durable curation queue; each accepted turn is
+still recorded individually in the exact-session ledger first.
 
 Luminary does not edit Hermes' native data files or source tree. The runtime
 uses only the provider entry point and the public `MemoryProvider` lifecycle,
@@ -64,6 +88,21 @@ keep the `memory.provider` selection and the two native switches in
 or changes the provider entry-point contract must be handled as an explicit
 compatibility issue; it must not be papered over with a private import or a
 version check in Luminary.
+
+If an existing store contains rows imported from another authority or raw
+Hermes turn batches from an earlier configuration, inspect the repair plan
+before enabling a new deployment:
+
+```bash
+python scripts/repair_memory_authority.py \
+  --db-path ~/.hermes/luminary/memory.db
+python scripts/repair_memory_authority.py \
+  --db-path ~/.hermes/luminary/memory.db --apply
+```
+
+The first command is read-only. `--apply` creates a consistent SQLite backup,
+archives only structurally identified historical/uncurated rows, and appends
+an audit event; it does not delete data or infer facts from a language list.
 
 ### Configuration
 
@@ -82,7 +121,7 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `token_budget` | `2048` | Recall context budget |
 | `auto_recall` | `true` | Enable per-turn background recall |
 | `recall_sync` | `false` | Synchronous (live) recall instead of warm prefetch |
-| `auto_retain` | `true` | Queue completed turn batches for the curation gate; raw turns remain session-scoped continuity evidence but are not promoted without curation |
+| `auto_retain` | `true` | Record accepted turns in the exact-session continuity ledger and queue completed batches for the curation gate; raw turns are not promoted without curation |
 | `retain_every_n_turns` | `1` | Batch N turns into one store write |
 | `ingest_llm` | `false` | **LLM memory curation and incremental reconciliation**, the enricher decides whether a turn is worth saving, stores a factual summary instead of the raw transcript, and checks the same turn for grounded captures/corrections |
 | `llm_base_url` | `""` | OpenAI-compatible endpoint for the enricher (e.g. `https://api.cline.bot/v1`, `https://api.commandcode.ai/provider/v1`, Groq, Ollama) |
@@ -93,7 +132,7 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `retain_indicator` | `true` | Show `🌙 Luminary, memory saved` |
 | `retain_user_prefix` | `User` | Prefix used when formatting retained user turns |
 | `retain_assistant_prefix` | `Assistant` | Prefix used when formatting retained assistant turns |
-| `extract_on_session_end` | `false` | Run an extraction pass at session end (requires `ingest_llm`) |
+| `extract_on_session_end` | `false` | Compatibility/dashboard flag; the current provider does not run a second extraction mode from this key. Session-end behavior is queue drain plus optional `auto_maintain` |
 | `auto_maintain` | `false` | **LLM store review at session end**, keeps/updates/deletes stale, contradicted, or duplicate facts (requires `ingest_llm`) |
 | `consolidate_semantic` | `true` | **Embedding-cosine consolidation** in lifecycle, merges paraphrases (falls back to Jaccard when embeddings are degenerate/missing) |
 | `importance_auto` | `true` | **Auto importance estimation**, scores each memory from access, recency, and graph centrality on ingest/lifecycle |
@@ -128,8 +167,9 @@ incomplete, not an instruction and never a higher-priority system message.
 
 Managed via tools (`luminary_core_add` / `luminary_core_remove` /
 `luminary_core_list`) or by ingesting with the `core` tag. The block is capped
-by `core_top_n` memories and `core_budget` characters. Core memories are
-pinned (importance ≥ 0.9, exempt from prune/consolidate).
+by `core_top_n` memories and `core_budget` characters and selected in stable
+ascending store-id/insertion order. Core memories are pinned (importance ≥
+0.9, exempt from prune/consolidate).
 
 **Sourcing (v0.2.15):** core content comes **only** from the database —
 `by_tag_top(tag)` reads memories carrying the `core` tag. It is **never**
@@ -164,6 +204,15 @@ returns:
   becomes the stored content, instead of the raw `User: ... / Assistant: ...`
   transcript.
 - **`entities` / `tags`**, attached as metadata/tags for richer recall.
+
+The enricher talks to the configured `llm_base_url` over HTTP with
+`requests` (User-Agent `luminary-memory/<version>`, one immediate retry on
+transient failure). `requests` is used instead of `urllib.request` because
+some OpenAI-compatible gateways sit behind Cloudflare, which blocks the
+plain `urllib` User-Agent with HTTP 1010; `requests` sends a browser-like
+User-Agent and keeps a connection pool, so curation calls get through.
+Errors are surfaced as `enricher_failed` in the event log instead of being
+silently swallowed, so an outage never masquerades as "nothing worth saving".
 
 Without `ingest_llm` (default), automatic turn batches are treated as
 uncurated observations and skipped by the durable-memory writer, with zero LLM
