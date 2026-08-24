@@ -200,14 +200,12 @@
   color: var(--muted);
   background: transparent;
   text-align: left;
-  transition: color .2s ease, padding .2s ease, background .2s ease;
+  transition: color .2s ease, background .2s ease;
 }
 
 .docs-nav-item:hover,
 .docs-nav-item:focus-visible,
 .docs-nav-item.is-active {
-  padding-right: .55rem;
-  padding-left: .55rem;
   color: var(--moon);
   background: var(--accent-soft);
 }
@@ -388,6 +386,51 @@
   font-size: .78rem;
   line-height: 1.55;
   text-align: left;
+}
+
+.reader-parameter-table {
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.reader-parameter-table th,
+.reader-parameter-table td {
+  overflow-wrap: anywhere;
+}
+
+.reader-parameter-table:not(.has-input) th:nth-child(1),
+.reader-parameter-table:not(.has-input) td:nth-child(1) {
+  width: 21%;
+}
+
+.reader-parameter-table:not(.has-input) th:nth-child(2),
+.reader-parameter-table:not(.has-input) td:nth-child(2) {
+  width: 17%;
+}
+
+.reader-parameter-table:not(.has-input) th:nth-child(3),
+.reader-parameter-table:not(.has-input) td:nth-child(3) {
+  width: 20%;
+}
+
+.reader-parameter-table.has-input th:nth-child(1),
+.reader-parameter-table.has-input td:nth-child(1) {
+  width: 18%;
+}
+
+.reader-parameter-table.has-input th:nth-child(2),
+.reader-parameter-table.has-input td:nth-child(2) {
+  width: 13%;
+}
+
+.reader-parameter-table.has-input th:nth-child(3),
+.reader-parameter-table.has-input td:nth-child(3) {
+  width: 18%;
+}
+
+.reader-parameter-table.has-input th:nth-child(4),
+.reader-parameter-table.has-input td:nth-child(4) {
+  width: 22%;
 }
 
 .reader-table caption {

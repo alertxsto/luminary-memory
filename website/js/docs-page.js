@@ -76,16 +76,23 @@
         return "<td>" + escapeHTML(row[index] === undefined ? "—" : row[index]) + "</td>";
       }).join("") + "</tr>";
     }).join("") + "</tbody>";
-    return "<div class=\"reader-table-wrap\"><table class=\"reader-table\">" + caption + head + body + "</table></div>";
+    var tableClass = "reader-table" + (table.className ? " " + escapeHTML(table.className) : "");
+    return "<div class=\"reader-table-wrap\"><table class=\"" + tableClass + "\">" + caption + head + body + "</table></div>";
   }
 
   function renderParameters(parameters) {
     if (!Array.isArray(parameters) || !parameters.length) return "";
+    var hasInputs = parameters.some(function (parameter) {
+      return parameter.input && parameter.input !== "—";
+    });
     return renderTable({
       caption: "Parameters and defaults",
-      columns: ["Name", "Type", "Default", "What it controls"],
+      className: hasInputs ? "reader-parameter-table has-input" : "reader-parameter-table",
+      columns: hasInputs ? ["Name", "Type", "Default", "Input", "What it controls"] : ["Name", "Type", "Default", "What it controls"],
       rows: parameters.map(function (parameter) {
-        return [parameter.name, parameter.type, parameter.defaultValue, parameter.description];
+        return hasInputs
+          ? [parameter.name, parameter.type, parameter.defaultValue, parameter.input, parameter.description]
+          : [parameter.name, parameter.type, parameter.defaultValue, parameter.description];
       })
     });
   }
