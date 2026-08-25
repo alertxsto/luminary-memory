@@ -362,6 +362,7 @@
 .reader-section pre {
   margin: 1.2rem 0 0;
   padding: 1rem 1.1rem;
+  overflow-x: auto;
   border-left: 2px solid var(--accent);
   color: var(--muted);
   background: rgba(16, 19, 26, .72);
@@ -624,14 +625,17 @@
   }
 
   .reader-section pre {
+    width: calc(100% + 2rem);
     margin-right: -1rem;
     margin-left: -1rem;
     padding-right: 1rem;
     padding-left: 1rem;
+    border-left: 0;
     font-size: .68rem;
   }
 
   .reader-table-wrap {
+    width: calc(100% + 2rem);
     margin-right: -1rem;
     margin-left: -1rem;
     padding-right: 1rem;
