@@ -560,6 +560,87 @@
   color: var(--muted);
 }
 
+/* ── Contents toggle button (mobile only) ────────────────────────────────── */
+
+.docs-menu-toggle {
+  display: none; /* shown only in ≤680px media query */
+  align-items: center;
+  gap: .5rem;
+  padding: .35rem .75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  color: var(--accent-light);
+  background: rgba(255, 255, 255, .03);
+  font-family: var(--mono);
+  font-size: .62rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color .2s ease, color .2s ease;
+}
+
+.docs-menu-toggle:hover,
+.docs-menu-toggle:focus-visible {
+  border-color: var(--accent);
+  color: var(--moon);
+  outline: 0;
+}
+
+/* ── In-article TOC ─────────────────────────────────────────────────────── */
+
+.reader-toc {
+  margin: 1.5rem 0 0;
+  padding: 1rem 1.1rem;
+  border-left: 2px solid var(--accent);
+  background: rgba(16, 19, 26, .45);
+}
+
+.reader-toc-heading {
+  margin: 0 0 .65rem;
+  color: var(--accent-light);
+  font-family: var(--mono);
+  font-size: .6rem;
+  font-weight: 500;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.reader-toc-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: .15rem;
+}
+
+.reader-toc-link {
+  display: block;
+  width: 100%;
+  min-height: 2rem;
+  padding: .3rem 0;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font-size: .8rem;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  transition: color .15s ease;
+}
+
+.reader-toc-link:hover,
+.reader-toc-link:focus-visible {
+  color: var(--accent-light);
+  outline: 0;
+}
+
+/* ── Drawer backdrop ────────────────────────────────────────────────────── */
+
+.docs-drawer-backdrop {
+  display: none; /* activated via .is-visible in ≤680px */
+}
+
 @media (max-width: 800px) {
   .docs-nav-main {
     display: none;
@@ -650,6 +731,75 @@
     border: 1px solid var(--line-strong);
     border-radius: 3px;
     background: rgba(255, 255, 255, .03);
+  }
+
+  /* ── Drawer: Contents toggle button ───────────────────────────────────── */
+
+  .docs-menu-toggle {
+    display: inline-flex;
+  }
+
+  /* ── Drawer: .docs-index becomes a fixed off-canvas overlay ───────────── */
+
+  .docs-layout {
+    display: block; /* single column — article is primary */
+  }
+
+  .docs-index {
+    /* Override position:static from ≤800px; become a fixed left-side drawer */
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 200;
+    width: min(80vw, 22rem);
+    height: 100dvh;
+    padding: 1.5rem 1.2rem 2rem;
+    overflow-y: auto;
+    border-right: 1px solid var(--line-strong);
+    background: var(--ink);
+    /* Start off-canvas to the left */
+    transform: translateX(-100%);
+    transition: transform .25s cubic-bezier(.25, .46, .45, .94);
+    /* Restore sticky used by desktop — not needed here, position:fixed handles it */
+  }
+
+  .docs-index.is-open {
+    transform: translateX(0);
+  }
+
+  /* ── Drawer backdrop ───────────────────────────────────────────────────── */
+
+  .docs-drawer-backdrop {
+    /* In the DOM it's inside .docs-layout, but we position it fixed to cover
+       the full viewport and sit between the body content and the drawer. */
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 190;
+    background: rgba(6, 7, 10, .65);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s ease;
+  }
+
+  .docs-drawer-backdrop.is-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* ── Drawer: reader full-width, no side decorations ───────────────────── */
+
+  .docs-reader {
+    padding-left: 0;
+    border-left: 0;
+    /* The ≤800px rule adds border-top; keep it as the visual separator */
+  }
+
+  /* ── TOC: larger tap targets on mobile ─────────────────────────────────── */
+
+  .reader-toc-link {
+    min-height: 44px;
+    padding: .55rem 0;
   }
 }
 
