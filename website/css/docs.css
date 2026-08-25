@@ -582,6 +582,11 @@
   .docs-search {
     width: 100%;
     max-width: none;
+    /* In the column toolbar (<=800px) the base flex: 1 1 20rem treats
+       flex-basis as HEIGHT, stretching the search box to 20rem tall.
+       Collapse it so the box stays a slim input row on mobile. */
+    flex: none;
+    align-self: stretch;
   }
 
   .docs-layout {
