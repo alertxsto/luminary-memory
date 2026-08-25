@@ -606,6 +606,48 @@
   }
 }
 
+/* ── Mobile proportion fixes (≤680px) ───────────────────────────────────── */
+/* Fix 1: Compact hero padding — measured 489px (96px top + 64px bottom).   */
+/* Reduce to ~3.5rem / 2.5rem so the hero no longer eats the full screen.   */
+@media (max-width: 680px) {
+  .docs-hero {
+    padding: 3.5rem 0 2.5rem;
+  }
+
+  /* Fix 2: h1 too large at 54.4px (3 lines). Clamp down so it fits 2 lines. */
+  /* The ≤800px block already sets clamp(3.4rem,14vw,6rem); this overrides it */
+  /* with a tighter ceiling so the heading doesn't dominate the hero.          */
+  .docs-page-intro h1 {
+    font-size: clamp(2.6rem, 11vw, 4rem);
+  }
+
+  /* Also pull the sub-copy down slightly so the hero stays balanced. */
+  .docs-page-intro > p:last-child {
+    font-size: .9rem;
+  }
+
+  /* Fix 3: Index list measured at 1037px — tighter row padding shrinks it.   */
+  /* Each nav item padding drops from .85rem → .65rem (saves ~16px × N rows). */
+  .docs-nav-item {
+    padding: .65rem 0;
+  }
+
+  /* Reduce the column gap in the 2-col grid (set by ≤800px block) so rows    */
+  /* don't have a lot of dead space between left and right halves.             */
+  .docs-index-list {
+    gap: 0 .5rem;
+  }
+
+  /* Fix 5 (low priority): Give the search field a subtle background/border   */
+  /* so it reads as an input on mobile rather than plain text.                */
+  .docs-search {
+    padding: .5rem .6rem;
+    border: 1px solid var(--line-strong);
+    border-radius: 3px;
+    background: rgba(255, 255, 255, .03);
+  }
+}
+
 @media (max-width: 480px) {
   .docs-page-filters {
     gap: .75rem;
