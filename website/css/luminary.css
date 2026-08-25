@@ -1696,8 +1696,8 @@ h1 {
   }
 
   .hero-grid {
-    padding-top: 4.8rem;
-    padding-bottom: 4rem;
+    padding-top: 3.5rem;
+    padding-bottom: 2.75rem;
   }
 
   h1 {
@@ -1712,6 +1712,7 @@ h1 {
   .install-note {
     align-items: flex-start;
     flex-wrap: wrap;
+    margin-top: 1.5rem;
   }
 
   .install-note code {
@@ -1793,6 +1794,7 @@ h1 {
 
   .principle-row p {
     grid-row: 2;
+    font-size: .85rem;
   }
 
   .principle-row code {
@@ -1854,6 +1856,8 @@ h1 {
   .doc-row {
     grid-template-columns: 1fr auto;
     gap: .8rem;
+    padding-top: 1.05rem;
+    padding-bottom: 1.05rem;
   }
 
   .doc-label {
@@ -1861,7 +1865,7 @@ h1 {
   }
 
   .doc-row > div > p {
-    font-size: .76rem;
+    font-size: .84rem;
   }
 
   .doc-open {
@@ -1882,6 +1886,18 @@ h1 {
     align-items: flex-start;
     flex-direction: column;
     gap: .55rem;
+  }
+}
+
+@media (max-width: 480px) {
+  /* FIX 2 floor — keep doc descriptions readable at very narrow widths */
+  .doc-row > div > p {
+    font-size: .82rem;
+  }
+
+  /* FIX 3 floor — keep principle text readable at very narrow widths */
+  .principle-row p {
+    font-size: .85rem;
   }
 }
 
