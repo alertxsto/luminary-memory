@@ -614,6 +614,7 @@ h1 {
 }
 
 .record-path {
+  position: relative;
   display: grid;
   gap: .85rem;
   margin: 0;
@@ -621,7 +622,18 @@ h1 {
   list-style: none;
 }
 
+.record-path::before {
+  position: absolute;
+  top: .55rem;
+  bottom: .55rem;
+  left: .275rem;
+  width: 1px;
+  content: "";
+  background: rgba(138, 180, 232, .35);
+}
+
 .record-path li {
+  position: relative;
   display: grid;
   grid-template-columns: 1rem minmax(0, 1fr);
   gap: .65rem;
@@ -640,16 +652,6 @@ h1 {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.record-path li:not(:last-child) .path-mark::after {
-  position: absolute;
-  top: .55rem;
-  left: .22rem;
-  width: 1px;
-  height: 1.15rem;
-  content: "";
-  background: var(--line-strong);
-}
-
 .record-path strong {
   display: block;
   color: var(--text);
@@ -665,6 +667,7 @@ h1 {
 
 .record-sheet figcaption {
   margin-top: 1.5rem;
+  padding-left: 1.65rem;
   color: var(--quiet);
   font-family: var(--mono);
   font-size: .64rem;
