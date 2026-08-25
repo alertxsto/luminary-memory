@@ -54,11 +54,13 @@
               <button class="docs-page-filter" type="button" aria-pressed="false" data-doc-page-filter="operate">Operate</button>
               <button class="docs-page-filter" type="button" aria-pressed="false" data-doc-page-filter="integrate">Integrate</button>
             </div>
+            <button class="docs-menu-toggle" type="button" id="docs-menu-toggle" aria-controls="docs-page-nav" aria-expanded="false" aria-label="Open reading index">Contents</button>
           </div>
           <p class="docs-page-count" id="docs-page-count" aria-live="polite" aria-atomic="true"></p>
 
           <div class="docs-layout">
-            <aside class="docs-index" aria-label="Field note index">
+            <div class="docs-drawer-backdrop" id="docs-drawer-backdrop" aria-hidden="true"></div>
+            <aside class="docs-index" id="docs-index" aria-label="Field note index">
               <p class="docs-index-heading">Reading index</p>
               <nav class="docs-index-list" id="docs-page-nav"></nav>
             </aside>
