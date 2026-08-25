@@ -28,12 +28,13 @@ html {
   scroll-behavior: smooth;
   background: var(--ink);
   color-scheme: dark;
+  overflow-x: clip;
 }
 
 body {
   min-width: 18rem;
   margin: 0;
-  overflow-x: hidden;
+  overflow-x: clip;
   color: var(--text);
   background:
     radial-gradient(circle at 78% 7%, rgba(138, 180, 232, .08), transparent 30rem),
@@ -149,12 +150,15 @@ pre {
   background: var(--moon);
   font-family: var(--mono);
   font-size: .72rem;
-  transform: translateY(-160%);
+  transform: translateY(-200%);
   transition: transform .2s ease;
+  /* Fix D: hide at rest so it doesn't render visibly on mobile */
+  visibility: hidden;
 }
 
 .skip-link:focus {
   transform: translateY(0);
+  visibility: visible;
 }
 
 .site-header {
@@ -1098,11 +1102,14 @@ h1 {
 
 .code-panel {
   min-height: 13rem;
+  min-width: 0;
+  overflow: hidden;
   border-top: 1px solid var(--line);
 }
 
 .code-panel pre {
   padding: 1.25rem 0 .8rem;
+  overflow-x: auto;
   color: var(--muted);
   font-size: .75rem;
   line-height: 1.9;
@@ -1565,7 +1572,7 @@ h1 {
   .proof-layout,
   .quickstart-grid,
   .integration-rail {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .hero-grid {
@@ -1586,13 +1593,23 @@ h1 {
     border-left: 0;
   }
 
+  /* Fix C: ensure direct grid children of layout grids can shrink below intrinsic width */
+  .quickstart-sheet,
+  .config-sheet,
+  .proof-reading,
+  .integration-copy,
+  .section-copy,
+  .code-example {
+    min-width: 0;
+  }
+
   .reading-message {
     margin: 2.5rem 0 2.5rem;
   }
 
   .section-heading,
   .docs-heading {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 1.5rem;
   }
 
@@ -1792,6 +1809,13 @@ h1 {
     grid-template-columns: 1.8rem minmax(0, 1fr);
     gap: .65rem;
     padding: .75rem 0;
+  }
+
+  .command-list code {
+    display: block;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
   }
 
   .command-list .copy-button {

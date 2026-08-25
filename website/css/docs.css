@@ -585,7 +585,7 @@
   }
 
   .docs-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 3rem;
   }
 
@@ -609,6 +609,12 @@
 @media (max-width: 480px) {
   .docs-page-filters {
     gap: .75rem;
+  }
+
+  .docs-moon {
+    right: -9rem;
+    width: clamp(24rem, 75vw, 30rem);
+    opacity: .14;
   }
 
   .docs-index-list {
