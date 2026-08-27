@@ -226,9 +226,10 @@
         },
         {
           title: "Integrate and contribute",
-          paragraphs: ["Hermes Integration and the Hermes Install Kit document the capability boundary, hook, and upgrade path. Security, contribution, changelog, and benchmark notes remain linked as tracked references."],
+          paragraphs: ["Hermes Integration, the Native Memory Migration note, and the Hermes Install Kit document the capability boundary, authority handoff, hook, and upgrade path. Security, contribution, changelog, and benchmark notes remain linked as tracked references."],
           table: table("Integration references", ["Note", "Tracked source", "Use it for"], [
             ["Hermes integration", "docs/hermes-integration.md", "Provider runtime and three surfaces"],
+            ["Native memory migration", "scripts/migrate_native_memory.py", "Lossless MEMORY.md/USER.md handoff"],
             ["Hermes install kit", "hermes/README.md", "Installer, hook, skill, repair"],
             ["Debugging scope", "docs/DEBUGGING-SCOPE-v0.2.17.md", "Historical investigation and shipped invariants"],
             ["Benchmarks", "benchmarks/README.md", "Matched measurement protocol"],
@@ -692,6 +693,53 @@
       ]
     },
 
+    "native-migration": {
+      kicker: "Authority / migration",
+      lead: "Carry Hermes' native context into Luminary core without editing Hermes source or running two persistent authorities at once.",
+      sections: [
+        {
+          title: "Why this utility exists",
+          paragraphs: ["When Luminary becomes Hermes' provider, the native MEMORY.md and USER.md prompt surfaces are disabled. Those files can still contain workflow, identity, or skill-routing context that an older Luminary store does not have. This utility preserves that context as two lossless, DB-backed core snapshots instead of asking an LLM to summarize it."],
+          bullets: ["Native files remain untouched.", "Snapshots use stable source ids for the MEMORY and USER targets.", "The resulting rows are explicit core memory, not a hidden native fallback."]
+        },
+        {
+          title: "Read the plan before applying",
+          paragraphs: ["The command is read-only by default. Review the JSON inventory, source paths, hashes, line counts, and section counts before opting into a database write."],
+          code: "python scripts/migrate_native_memory.py --hermes-home ~/.hermes\n\n# after reviewing the plan\npython scripts/migrate_native_memory.py --hermes-home ~/.hermes --apply",
+          returns: ["Existing snapshots with the same source id are reported as unchanged or updated.", "Missing or empty native files are skipped without inventing content."]
+        },
+        {
+          title: "Backup and idempotence",
+          paragraphs: ["Apply mode creates a consistent SQLite backup before inserting or updating snapshots. It never deletes a row and never rewrites the native source files. Re-running after a native file changes updates that target by its stable source id; re-running without changes is a no-op."],
+          table: table("Safety contract", ["Operation", "Behavior"], [
+            ["Read-only run", "Prints a redacted migration plan and changes nothing."],
+            ["Apply", "Backs up the SQLite store, then inserts or updates snapshots."],
+            ["Native files", "Read only; no edit, archive, or delete."],
+            ["Existing row", "Promote an exact duplicate or update its snapshot metadata."],
+            ["Core limits", "Native snapshots are included in full so the source is not silently truncated."]
+          ]),
+          warnings: ["Stop the gateway or other writers while applying the migration, then review the backup path and output before resuming automatic writes."]
+        },
+        {
+          title: "Command arguments",
+          parameters: [
+            parameter("--hermes-home PATH", "path", "$HERMES_HOME or ~/.hermes", "Resolve native files, provider config, and the default Luminary store."),
+            parameter("--native-dir PATH", "path", "<hermes-home>", "Read MEMORY.md and USER.md from an explicit directory."),
+            parameter("--db-path PATH", "path", "<hermes-home>/luminary/memory.db", "Override the SQLite database target."),
+            parameter("--core-tag TAG", "string", "provider config or core", "Tag inserted snapshots as DB-backed core memory."),
+            parameter("--apply", "flag", "off", "Create a backup and apply the snapshot migration."),
+            parameter("--backup-path PATH", "path", "timestamped .bak", "Choose the backup destination in apply mode.")
+          ]
+        },
+        {
+          title: "Verify the authority handoff",
+          paragraphs: ["After apply, keep Hermes' native memory switches disabled, restart the gateway, and start a fresh session. Confirm the active provider database and inspect core rows through the normal operator surfaces."],
+          code: "luminary-memory list --db-path ~/.hermes/luminary/memory.db --limit 20\nluminary-memory stats --db-path ~/.hermes/luminary/memory.db\n\n# Hermes config.yaml\nmemory:\n  provider: luminary\n  memory_enabled: false\n  user_profile_enabled: false",
+          tips: ["A migration copies source context once. It does not create a live merge between Hermes files and Luminary.", "If the provider cannot be discovered after an upgrade, fix capability activation first instead of enabling the native surfaces as an implicit fallback."]
+        }
+      ]
+    },
+
     debugging: {
       kicker: "Operate / troubleshooting",
       lead: "Trace a missing result from scope to candidate generation, evidence, provider startup, and delivery.",
@@ -851,11 +899,23 @@
           paragraphs: ["The public package and website are aligned to v0.3.0. This release is the strict CLI/Hermes accuracy path: scope isolation, evidence/provenance, conflict history, abstention, scoped transparency events, and exact-session continuity fallback."],
           table: table("Release checks", ["Surface", "Current contract"], [
             ["Version", "0.3.0 / Python 3.11+"],
-            ["Regression baseline", "505 passed, 3 skipped; 83% full-source coverage"],
+            ["Release baseline", "505 passed, 3 skipped; 83% full-source coverage"],
+            ["Current workspace check", "534 passed, 3 skipped; 83% full-source coverage"],
             ["Accuracy boundary", "Controlled gold fixture is a regression signal, not a competitor ranking"],
             ["Native Hermes memory", "Disabled through documented config switches when Luminary is active"]
           ]),
           tips: ["Update CHANGELOG.md, the tracked Markdown guide, and the website guide together when a public contract changes."]
+        },
+        {
+          title: "Recent release history",
+          paragraphs: ["The release baseline comes from CHANGELOG.md. The current workspace check above includes the additional migration and regression coverage present in this working tree; it is not a new release claim."],
+          table: table("Recent shipped changes", ["Release", "Date", "Scope"], [
+            ["0.3.0", "2026-08-24", "Scoped, evidenced, auditable CLI/Hermes path with session continuity and post-turn reconciliation."],
+            ["0.2.18", "2026-08-20", "Importance became retrieval-only; core memory replaced persistent-context injection; strict accuracy path shipped."],
+            ["0.2.17", "2026-08-19", "Gateway envelope parsing, retry-safe curation, and Telegram activity hardening."],
+            ["0.2.16", "2026-08-19", "Provider configuration coverage and importance recall tuning exposed in the dashboard."]
+          ]),
+          tips: ["Use CHANGELOG.md for the complete historical record and this reader for the current implementation map."]
         },
         {
           title: "Verification commands",
