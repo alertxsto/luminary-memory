@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Field notes | Luminary Memory</title>
-  <meta name="description" content="Reference documentation for Luminary Memory: API parameters, configuration, CLI, agent tools, Hermes integration, and troubleshooting.">
+  <title>Documentation map | Luminary Memory</title>
+  <meta name="description" content="Source-grounded documentation for Luminary Memory: API, configuration, recall, lifecycle, CLI, agent tools, Hermes integration, and operational boundaries.">
   <meta name="theme-color" content="#06070a">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2306070a'/%3E%3Ccircle cx='15' cy='16' r='9' fill='%23e9f6ff'/%3E%3Ccircle cx='19' cy='13' r='9' fill='%2306070a'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -14,6 +14,14 @@
   <link rel="stylesheet" href="css/docs.css">
 </head>
 <body class="docs-page">
+  <!--
+    THESIS: The docs read like a measured evidence specimen, not a dashboard or terminal.
+    OWN-WORLD: Ink-black field, moonlit blue, Inter and JetBrains Mono, open rules, and a restrained construction grid that makes the index measurable.
+    STORY: Start with the contract, choose a source by job, then move from overview to exact behavior without losing provenance.
+    FIRST VIEWPORT: Compact masthead, title, live source count, search, and a field index with the selected article opening beside it on desktop and immediately below it on mobile.
+    FORM: Candidate 5, measured typographic specimen, surface seed 0b8e047e.
+    FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+  -->
   <a class="skip-link" href="#docs-reader">Skip to documentation</a>
 
   <div class="docs-moon" aria-hidden="true"><img src="assets/full-moon.jpg" alt=""></div>
@@ -35,37 +43,68 @@
       </div>
     </header>
 
-    <main>
+    <main id="docs-main">
       <section class="docs-hero" aria-labelledby="docs-page-title">
-        <div class="container docs-page-intro">
-          <p class="docs-kicker">Reference / implementation notes</p>
-          <h1 id="docs-page-title">Read the whole<br><span>record.</span></h1>
-          <p>A focused reading layer for builders and operators. Search exact parameters, defaults, return shapes, tips, boundaries, and examples without leaving the site.</p>
+        <div class="container docs-hero-grid">
+          <div class="docs-page-intro">
+            <p class="docs-kicker"><span>Read / reference</span><span>v0.3.0</span></p>
+            <h1 id="docs-page-title">Build from the<br><span>source map.</span></h1>
+            <p>Exact contracts for builders, operators, and integrations. Search the behavior, then follow the evidence back to its tracked source.</p>
+          </div>
+
+          <aside class="docs-hero-ledger" aria-label="Documentation inventory">
+            <div class="docs-hero-ledger-top"><span>Public surface</span><span id="docs-total-count">0 notes</span></div>
+            <div class="docs-hero-ledger-rule" aria-hidden="true"></div>
+            <p class="docs-hero-ledger-title">One reader.<br><span>Three jobs.</span></p>
+            <dl class="docs-hero-stats">
+              <div><dt>Build</dt><dd id="docs-build-count">0</dd><span>contracts</span></div>
+              <div><dt>Operate</dt><dd id="docs-operate-count">0</dd><span>checks</span></div>
+              <div><dt>Integrate</dt><dd id="docs-integrate-count">0</dd><span>boundaries</span></div>
+            </dl>
+            <p class="docs-hero-ledger-note">The reader keeps the source path, scope, and implementation boundary visible while you move through the detail.</p>
+          </aside>
         </div>
+        <div class="container docs-hero-foot"><span>01 / source map</span><span>source paths stay attached</span></div>
       </section>
 
       <section class="docs-reader-section" aria-label="Documentation reader">
         <div class="container">
+          <div class="docs-section-heading">
+            <div>
+              <p class="docs-section-kicker">Documentation index</p>
+              <h2>Choose a job.<br><span>Keep the boundary.</span></h2>
+            </div>
+            <p class="docs-section-note">Every note is a compact reading layer over the repository's tracked contracts. Use the index to move by job, or search for an exact term, setting, command, or surface.</p>
+          </div>
+
           <div class="docs-page-toolbar">
-            <label class="docs-search"><span aria-hidden="true">⌕</span><span class="sr-only">Search field notes</span><input id="docs-page-search" type="search" placeholder="Search field notes" autocomplete="off"></label>
+            <div class="docs-toolbar-main">
+              <label class="docs-search">
+                <span class="docs-search-mark" aria-hidden="true">/</span>
+                <span class="sr-only">Search field notes</span>
+                <input id="docs-page-search" type="search" placeholder="Search source notes" autocomplete="off">
+              </label>
+              <button class="docs-menu-toggle" type="button" id="docs-menu-toggle" aria-controls="docs-index" aria-expanded="false" aria-label="Open source index">
+                <span>Contents</span><span class="docs-menu-count" id="docs-selected-label">Quickstart</span>
+              </button>
+            </div>
             <div class="docs-page-filters" role="group" aria-label="Filter field notes">
               <button class="docs-page-filter is-active" type="button" aria-pressed="true" data-doc-page-filter="all">All</button>
               <button class="docs-page-filter" type="button" aria-pressed="false" data-doc-page-filter="build">Build</button>
               <button class="docs-page-filter" type="button" aria-pressed="false" data-doc-page-filter="operate">Operate</button>
               <button class="docs-page-filter" type="button" aria-pressed="false" data-doc-page-filter="integrate">Integrate</button>
             </div>
-            <button class="docs-menu-toggle" type="button" id="docs-menu-toggle" aria-controls="docs-page-nav" aria-expanded="false" aria-label="Open reading index">Contents</button>
           </div>
-          <p class="docs-page-count" id="docs-page-count" aria-live="polite" aria-atomic="true"></p>
+          <div class="docs-page-status"><p class="docs-page-count" id="docs-page-count" aria-live="polite" aria-atomic="true"></p><p class="docs-copy-status" id="docs-copy-status" aria-live="polite" aria-atomic="true"></p></div>
 
           <div class="docs-layout">
             <div class="docs-drawer-backdrop" id="docs-drawer-backdrop" aria-hidden="true"></div>
-            <aside class="docs-index" id="docs-index" aria-label="Field note index">
-              <p class="docs-index-heading">Reading index</p>
+            <aside class="docs-index" id="docs-index" aria-label="Source index">
+              <div class="docs-index-top"><div><p class="docs-index-heading">Source inventory</p><p class="docs-index-note">Tracked paths, grouped by the work they support.</p></div><button class="docs-index-close" type="button" id="docs-index-close" aria-label="Close source index">×</button></div>
               <nav class="docs-index-list" id="docs-page-nav"></nav>
             </aside>
             <article class="docs-reader" id="docs-reader" tabindex="-1" aria-live="polite">
-              <p class="docs-loading">Loading the field notes...</p>
+              <p class="docs-loading">Loading the source notes...</p>
             </article>
           </div>
         </div>

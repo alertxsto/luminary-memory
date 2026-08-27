@@ -103,6 +103,16 @@
       facts: ["CLI / gateway", "Session continuity", "No version pin"]
     },
     {
+      id: "native-migration",
+      category: "integrate",
+      label: "AUTHORITY",
+      title: "Native memory migration",
+      source: "scripts/migrate_native_memory.py",
+      related: ["docs/hermes-integration.md", "hermes/README.md"],
+      blurb: "A read-only-first utility for carrying Hermes MEMORY.md and USER.md into lossless Luminary core snapshots without editing native files or creating a second runtime authority.",
+      facts: ["Read-only by default", "SQLite backup", "Idempotent snapshots"]
+    },
+    {
       id: "debugging",
       category: "operate",
       label: "TROUBLESHOOTING",
