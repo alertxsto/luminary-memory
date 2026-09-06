@@ -26,6 +26,30 @@ jobs:
           python -m coverage run --source=src/luminary_memory -m pytest -q
           python -m coverage report --fail-under=82
 
+  opencode:
+    name: OpenCode package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Python package and test dependencies
+        run: pip install -e ".[dev]"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Test OpenCode package
+        working-directory: opencode
+        run: bun install --frozen-lockfile=false && bun test
+      - name: Build OpenCode package
+        working-directory: opencode
+        run: bun run build
+      - name: Verify npm package contents
+        working-directory: opencode
+        run: npm run pack:check
+
   pgvector-integration:
     name: PostgreSQL pgvector integration
     runs-on: ubuntu-latest

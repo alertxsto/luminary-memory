@@ -1,0 +1,23 @@
+{
+  "name": "opencode-luminary-memory",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "OpenCode plugin and skill for Luminary Memory",
+  "main": "./dist/plugin.js",
+  "exports": {
+    ".": "./dist/plugin.js"
+  },
+  "files": [
+    "dist",
+    "skills/luminary-memory/SKILL.md",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "build": "bun build src/plugin.ts src/context.ts src/tools.ts --outdir dist --target bun",
+    "pack:check": "node scripts/verify-package.mjs"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.18.29"
+  }
+}

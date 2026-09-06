@@ -43,6 +43,7 @@ hermes = []
 
 [project.scripts]
 luminary-memory = "luminary_memory.cli:app"
+luminary-memory-opencode = "luminary_memory.opencode.sidecar:main"
 
 [project.entry-points."hermes_agent.memory_providers"]
 luminary = "luminary_memory.hermes"

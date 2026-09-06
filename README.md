@@ -188,6 +188,13 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 > are maintained in [docs/config-reference.md](docs/config-reference.md).
 > See [hermes/SKILL.md](hermes/SKILL.md) for the full provider config table.
 
+## OpenCode integration
+
+OpenCode support is provided by the separate `opencode-luminary-memory` npm
+package. It uses the local Python sidecar, SQLite by default, scoped automatic
+recall, and explicit-only durable writes. See the [OpenCode installation and
+compatibility guide](docs/opencode-integration.md).
+
 ---
 
 ## Architecture
