@@ -4,6 +4,11 @@ Lifecycle is deterministic and scope-aware. It maintains the store without
 turning an unresolved conflict or a provenance record into an accidental
 deletion.
 
+The deterministic library lifecycle is available through Python and the CLI.
+The OpenCode adapter does not schedule `run_lifecycle()`, `run_maintenance()`,
+or automatic session-end work; its sidecar closes the `MemoryClient` per
+operation.
+
 Two maintenance layers keep the store lean: deterministic passes
 (`run_lifecycle()`) and LLM-driven curation (`run_maintenance()`).
 
@@ -82,7 +87,7 @@ print(client.run_maintenance())
 # {'reviewed': 4, 'deleted': 2, 'updated': 0}
 ```
 
-### Automatic maintenance in the Hermes provider
+### Automatic maintenance in the Hermes provider (Hermes only)
 
 With `auto_maintain: true` in `~/.hermes/luminary/config.json` (plus
 `ingest_llm: true`), the provider runs `run_maintenance()` automatically at
@@ -155,7 +160,13 @@ luminary-memory health --json    # raw JSON
 Empty store scores 100 (nothing wrong); low-scoring dimensions produce
 recommendations.
 
-## Repairing an old authority collision
+## OpenCode operational boundary
+
+OpenCode users run CLI/Python lifecycle operations separately. `ingest_llm` and
+`auto_maintain` are not OpenCode plugin settings, and OpenCode has no Hermes
+writer queue, episode ledger, or automatic maintenance worker.
+
+## Repairing an old authority collision (Hermes only)
 
 If a store was populated while an imported memory snapshot, native Hermes
 memory, and Luminary automatic transcripts were being treated as one source,

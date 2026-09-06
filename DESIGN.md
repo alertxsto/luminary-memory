@@ -60,7 +60,8 @@ Monospace is supplementary and must never make the page feel like a terminal.
 - Open rows, top and bottom rules, and alignment create hierarchy. Containers
   use square corners or no corners; rounded cards are not the default grammar.
 - The narrative is hero, evidence path, operating principles, quickstart,
-  system shape, Hermes boundary, field notes, and closing statement.
+  system shape, Hermes and OpenCode boundaries, field notes, and closing
+  statement.
 - Quickstart commands are copyable documentation rows, not terminal mockups.
 - Documentation is a searchable field-note index rendered from
   `website/js/docs-content.js` and `website/js/docs-guides.js` at
@@ -81,6 +82,8 @@ Monospace is supplementary and must never make the page feel like a terminal.
   concrete implementation language.
 - **Hermes rail:** the provider boundary is paired with a plain configuration
   sheet and an explicit compatibility note.
+- **OpenCode rail:** the npm plugin and local Python sidecar are paired with
+  explicit-only writes, strict automatic recall, and a protocol/skill note.
 - **Field-note list:** docs use rows, filters, search, tracked source paths, and
   a live result count.
 
@@ -106,9 +109,10 @@ Monospace is supplementary and must never make the page feel like a terminal.
 Site claims remain grounded in tracked source documentation. Illustrative
 observations are labelled as observations; benchmark superiority is not
 claimed; Hermes is described as a public capability boundary rather than a
-version promise. The static docs reader carries concise local guides and names
-the canonical `develop` source path for provenance without sending readers to
-GitHub.
+version promise; OpenCode is described as an npm plugin plus Python sidecar,
+not as Hermes provider behavior. The static docs reader carries concise local
+guides and names the canonical `develop` source path for provenance without
+sending readers to GitHub. Tracked provenance includes `opencode/`.
 
 ## Finish review
 

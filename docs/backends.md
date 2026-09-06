@@ -26,16 +26,14 @@
 - Best for single-user, edge, and stores under ~100k memories (vector search
   is a linear scan). Each thread uses its own connection and the backend
   enables SQLite WAL with a busy timeout on writable file stores, so Hermes'
-  background reader/writer paths can coexist. WAL setup is best-effort for
+  provider background paths can coexist. WAL setup is best-effort for
   in-memory, read-only, or otherwise restricted paths.
 - Accuracy filters (`scope`, `status`, validity windows, and tags) are applied
   in backend queries where supported and defensively again in the orchestrator
   before fusion/fallback. Scope-aware indexes cover ownership, status, claim
   keys, and content hashes.
-- The backend also owns the immutable episode/provenance helpers used by the
-  provider: `record_episode()` stores source turns, `recent_episodes()` reads
-  only a requested exact scope, and event/evidence/claim methods keep the
-  durable row auditable. Episode rows are not semantic recall candidates.
+- The backend also owns provenance helpers and, for the Hermes provider,
+  immutable episode helpers. Episode rows are not semantic recall candidates.
 - Exact active deduplication is a database invariant, not only an API
   pre-check: `uq_memories_active_scope_hash` covers the normalized ownership
   tuple plus `content_hash`. Concurrent writers resolve the winning row and
@@ -68,6 +66,15 @@
 | Zero setup, one agent | SQLite |
 | Large store, many queries | pgvector |
 | Concurrent agents | pgvector |
+
+## OpenCode sidecar
+
+The OpenCode sidecar uses the same Python backend clients for `health`,
+`recall`, `ingest`, and `list`, but its protocol exposes no episode operations.
+SQLite is the default. `LUMINARY_DB_PATH` selects the local database, and the
+backend is inherited from the Python environment/settings rather than an
+OpenCode `mode` or Hermes config file. The local process boundary is Python
+module `luminary_memory.opencode.sidecar` over JSONL.
 
 ## Migrating from SQLite to pgvector
 

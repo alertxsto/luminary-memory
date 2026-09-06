@@ -1,89 +1,83 @@
 # Agent tools
 
-When `mode` is `tools` or `hybrid`, the Luminary provider registers six tools
-that the model can call explicitly, in addition to the automatic recall/retain
-that runs every turn.
+This page separates the two shipped adapter surfaces. OpenCode has exactly two
+explicit tools and strict automatic recall. The Hermes provider has a separate,
+larger tool/configuration surface.
 
-## luminary_recall
+## OpenCode tools
 
-```json
-{"name": "luminary_recall", "description": "Recall relevant memories from the Luminary store for a query.", "parameters": {"query": "string (required)", "limit": "integer (optional; provider default 10)"}}
-```
+### `luminary_recall(query, tags?)`
 
-Runs the full scoped four-strategy fused recall (semantic + keyword + temporal
-+ graph). The JSON result contains `status`, `reason`, `confidence`,
-`memories`, `scores`, and `provenance`; weak or unsupported queries can return
-an empty `abstain` result. Core matches are omitted from the tool payload when
-they are already present in the system prompt and are reported through
-`deduplicated_core_ids`.
+Searches scoped durable reference material. `query` is required and `tags` is
+optional. Empty queries return a structured error. Results include status,
+confidence, memories, scores, and provenance; recalled text is untrusted
+reference material. The plugin supplies OpenCode-derived scope.
 
-## luminary_ingest
+### `luminary_ingest(content, tags?)`
 
-```json
-{"name": "luminary_ingest", "description": "Store a new memory in the Luminary store.", "parameters": {"content": "string (required)", "tags": "array of strings (optional)"}}
-```
+The only OpenCode durable write path. `content` is required, tags are optional
+and cleaned, and empty content returns a structured error. Ordinary chat, hooks,
+and inferred preferences never authorize a write. The plugin supplies
+ownership scope; the model cannot override it or provide ownership fields. The
+sidecar returns `{status, accepted, id}` or a structured error.
 
-The provider supplies the source (`hermes-tool`) and current ownership scope;
-the tool does not accept arbitrary `source` or `importance` arguments. Exact
-duplicates are suppressed, whitelist rejection is reported, and the write
-records evidence/provenance through the normal client path. This explicit tool
-remains writable even when automatic turn curation is disabled.
+OpenCode automatic recall is hook-based and strict. It tracks only the latest
+query, caps injected reference context at five memories and 5000 characters,
+and requires confidence `0.34` or higher. It injects no block on abstention,
+empty results, or sidecar failure.
 
-## luminary_list
+## Hermes provider tools
 
-```json
-{"name": "luminary_list", "description": "List recent memories from the Luminary store (read-only).", "parameters": {"limit": "integer (optional, default 20)"}}
-```
+The following tools are Hermes-only and are not registered by OpenCode.
 
-Returns only `id`, `content`, and `tags`, most recent first. It is an
-inspection view, not a recall query and not an episode-ledger reader.
+### `luminary_recall`
 
-## luminary_core_add
+Runs the scoped four-strategy fused recall. The JSON result contains `status`,
+`reason`, `confidence`, `memories`, `scores`, and `provenance`.
 
-```json
-{"name": "luminary_core_add", "description": "Pin a durable rule into core memory (auto-loaded every session).", "parameters": {"content": "string (required)"}}
-```
+### `luminary_ingest`
 
-Pins a memory as `core` and raises it to the configured pin threshold (default
-`0.9`). Core memories are loaded into the
-system prompt at the start of every session — the DB-backed equivalent of
-`MEMORY.md`. The Hermes provider disables destructive semantic replacement, so
-similar but contradictory rules remain auditable until explicitly superseded.
+Stores a new durable memory through the Hermes provider. The provider supplies
+source and ownership scope; exact duplicates are suppressed.
 
-## luminary_core_remove
+### `luminary_list`
 
-```json
-{"name": "luminary_core_remove", "description": "Unpin a rule from core memory.", "parameters": {"id": "integer (required) — the memory id returned by luminary_core_list"}}
-```
+Lists recent memories for inspection. It is not a recall query and not an
+episode-ledger reader.
 
-Removes the `core` tag from a memory (keeps it in the store, just stops
-auto-loading it every session).
+### `luminary_core_add`, `luminary_core_remove`, `luminary_core_list`
 
-## luminary_core_list
+Manage DB-backed `core` memories that Hermes auto-loads into its system prompt.
+These core tools are not present in OpenCode.
 
-```json
-{"name": "luminary_core_list", "description": "List current core memories.", "parameters": {"limit": "integer (optional, default 50)"}}
-```
-
-Returns `id`, `content`, and `importance` for active memories carrying the
-configured core tag, in stable ascending store-id/insertion order. The result
-is bounded by the supplied limit; the prompt itself is additionally bounded by
-`core_top_n` and `core_budget`.
-
----
-
-## Tool availability by mode
+## Hermes tool availability by mode
 
 | Mode | Auto-recall | Auto-retain | Tools registered |
 |------|-------------|-------------|------------------|
-| `context` | ✅ | ✅ | ❌ (no tools) |
-| `tools` | ❌ | ✅ | ✅ (all 6) |
-| `hybrid` | ✅ | ✅ | ✅ (all 6) |
+| `context` | Yes | Yes | None |
+| `tools` | No | Yes | All six |
+| `hybrid` | Yes | Yes | All six |
 
-## Accuracy behavior
+## OpenCode/Hermes capability matrix
 
-Provider tool calls inherit the provider's current scope and strict recall
-policy. `luminary_recall` returns status, confidence, and provenance; an
-unrelated or weakly supported query may return `abstain` with no memories.
-`luminary_ingest` records evidence and ownership metadata, and exact duplicate
-writes are suppressed within the same scope.
+| Capability | OpenCode | Hermes provider |
+| --- | --- | --- |
+| Automatic recall | Yes, strict latest-query hook | Configurable |
+| Explicit recall | `luminary_recall` | `luminary_recall` |
+| Explicit ingest | `luminary_ingest` | `luminary_ingest` |
+| List | Sidecar operation only, no tool | `luminary_list` |
+| Core tools | No | Yes |
+| Auto-retain | No | Yes/configurable |
+| Episode fallback | No | Yes |
+| LLM maintenance | No | Optional |
+
+## Error and scope behavior
+
+OpenCode tool calls carry normalized `worktree` or `directory`, agent name,
+session id, and a local identity (`userID`, then `LUMINARY_USER_ID`, then
+`USER`/`USERNAME`/`HOME`) in client/protocol context. Durable recall and ingest
+use only `user_id`/`workspace_id`/`agent_id`; the sidecar removes `session_id`
+from current durable recall/ingest/list scope. No current OpenCode sidecar
+operation exposes exact-session continuity or episode operations. The model
+cannot supply ownership fields. Sidecar failures return structured errors; they
+do not fail the OpenCode request.

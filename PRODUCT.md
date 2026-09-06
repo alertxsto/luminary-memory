@@ -10,6 +10,8 @@ keeps durable core memories separate from ordinary query recall.
 
 - Agent builders who need durable memory without a hosted memory vendor.
 - Operators running Hermes through CLI, Telegram, gateways, or scheduled jobs.
+- OpenCode users and operators who need scoped local recall with an npm plugin
+  and Python sidecar.
 - Contributors who need a small, inspectable Python codebase and explicit
   lifecycle behavior.
 
@@ -32,18 +34,24 @@ be diagnosed without logging private memory text.
 - Hermes integration through the public provider entry point. The installer
   selects Luminary and disables Hermes' two native persistent surfaces through
   existing config keys; it does not patch Hermes source or pin a Hermes version.
+- OpenCode integration through an npm plugin and local Python JSONL sidecar:
+  strict latest-query automatic recall, `luminary_recall` and
+  `luminary_ingest`, scoped local identity, and graceful local failure.
 
 ## Design boundaries
 
 - Retrieval does not require an LLM. Optional LLM calls are limited to write-time
   curation and maintenance.
-- Automatic turn retention is conservative: without curation, raw transcript
-  batches are not promoted as durable facts.
+- Automatic turn retention is conservative for Hermes: without curation, raw
+  transcript batches are not promoted as durable facts. OpenCode has no
+  automatic turn retention; only explicit ingest writes.
 - The runtime must not hardcode a natural language, person, or provider-specific
   identity. Identity comes from scope and the stored evidence.
-- Compatibility is based on the public Hermes provider capability contract. If a
-  host cannot expose that contract, the integration should fail visibly rather
-  than start two competing memory authorities.
+- Compatibility is based on the public Hermes provider capability contract for
+  Hermes. OpenCode compatibility is its plugin API/configuration, skill
+  discovery, scope mapping, and Python sidecar protocol. If a host cannot
+  expose the relevant contract, the integration should fail visibly rather
+  than silently create competing authorities.
 
 ## Website direction
 

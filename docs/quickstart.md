@@ -60,6 +60,48 @@ luminary-memory stats
 luminary-memory health
 ```
 
+## OpenCode integration
+
+Requirements: an OpenCode installation with plugin support, Python 3.11+, and
+`luminary-memory` installed in the Python environment used by the plugin.
+Install the matching Python artifact:
+
+```bash
+python -m pip install "luminary-memory==0.3.0"
+```
+
+Configure the npm plugin in the project `opencode.json` (OpenCode discovers
+plugins from this file and installs npm packages through Bun):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-luminary-memory@0.1.0"]
+}
+```
+
+If package skills are not discovered, copy
+`opencode/skills/luminary-memory/SKILL.md` to
+`.opencode/skills/luminary-memory/SKILL.md`. The plugin starts
+`python -m luminary_memory.opencode.sidecar` locally over JSONL. Use
+`LUMINARY_DB_PATH` or plugin `clientOptions.databasePath` to select SQLite; use
+`clientOptions.pythonExecutable` to select Python.
+
+Verify the sidecar directly:
+
+```bash
+printf '%s\n' '{"protocol_version":"1","request_id":"health-1","operation":"health","scope":{"user_id":"local:example-user","workspace_id":"/absolute/project","agent_id":"opencode"},"payload":{}}' \
+  | python -m luminary_memory.opencode.sidecar
+```
+
+OpenCode automatic recall uses only the latest cached query, requests strict
+recall, and injects at most five memories in a 5000-character untrusted
+reference block when confidence is at least `0.34`. The only tools are
+`luminary_recall` and `luminary_ingest`; only explicit ingest writes durable
+memory, so normal chat is not persisted. A sidecar, timeout, malformed-output,
+or database failure skips automatic recall or returns a structured tool error
+while the OpenCode request continues.
+
 ## Backup & restore
 
 ```bash
@@ -71,7 +113,7 @@ luminary-memory import --path backup.json
 restores them (recomputing embeddings when absent).
 
 
-## Hermes Agent Integration
+## Hermes Agent Integration (Hermes provider only)
 
 Set the memory provider in your Hermes `config.yaml`:
 
@@ -105,7 +147,7 @@ untrusted exact-session episode block is used only when durable recall has no
 usable result. The episode block preserves a short follow-up's active task;
 it is not a durable memory and never broadens scope to another session.
 
-## Optional: LLM memory curation
+## Optional: LLM memory curation (Hermes provider only)
 
 Direct `MemoryClient.ingest()` calls are stored without an LLM by default. For
 automatic Hermes turn batches, the provider requires curation before a batch
@@ -139,7 +181,7 @@ transcript. When automatic retain is enabled, the accepted turn still remains
 in the exact-session continuity ledger, so a curation rejection and a missing
 durable memory are not the same thing.
 
-## Accuracy-first provider defaults
+## Accuracy-first provider defaults (Hermes and CLI)
 
 Hermes and the CLI enable strict recall, require evidence/provenance, and
 disable destructive rule replacement. An unrelated query therefore returns an
@@ -187,4 +229,7 @@ export LUMINARY_AGENT_ID=coding-agent
 export LUMINARY_SESSION_ID=session-42
 ```
 
-See the [README](../README.md) for the full table.
+See the [README](../README.md) for the full library table and
+[OpenCode configuration](config-reference.md#opencode-plugin-configuration) for
+the adapter options. The Hermes `config.json` and `HERMES_HOME` paths above do
+not configure OpenCode.

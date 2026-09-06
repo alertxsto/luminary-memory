@@ -24,11 +24,11 @@ Agents are only as good as what they remember. A stateless agent re-learns the s
 - **Keyword**, FTS5 BM25 (SQLite, zero config)
 - **Temporal**, recency decay × access count
 - **Graph**, entity co-occurrence with automatic curation
-- **Active-task session continuity**, exact-session episodes preserve short-term context when durable recall abstains without promoting raw turns into semantic memory or widening scope across users, agents, or sessions.
+- **Active-task session continuity (Hermes only)**, exact-session episodes preserve short-term context when durable recall abstains without promoting raw turns into semantic memory or widening scope across users, agents, or sessions.
 
 Strategies fuse via **weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1)** → **scope/status/time filtering** → **conservative confidence and abstention** → **adaptive cutoff** → **Jaccard deduplication** → **token budget**. Short queries may be expanded with graph entities or stored content tokens before embedding; there is no language-specific alias classifier.
 
-**Important rules always in context.** Durable rules tagged `core` are auto-loaded into the system prompt every session (the DB-backed `MEMORY.md`). All other durable memories are surfaced through query retrieval: relevant facts are recalled on demand (ranked by query relevance) and merged with the core block under anti-duplication. When durable recall abstains, the Hermes provider can also expose a bounded exact-session continuity block so an ambiguous follow-up stays attached to its active task without turning raw conversation into durable memory.
+**Important rules always in context (library/Hermes).** Durable rules tagged `core` are auto-loaded into the system prompt every session (the DB-backed `MEMORY.md`). All other durable memories are surfaced through query retrieval. The Hermes provider can additionally expose a bounded exact-session continuity block. OpenCode injects only its bounded, untrusted automatic-recall block and has no core auto-load or episode fallback.
 
 ---
 
@@ -88,7 +88,7 @@ This is capability-based integration, not a version pin. Hermes must expose the
 should stop with a visible diagnostic rather than silently running two memory
 systems. No Hermes version number is embedded in Luminary's runtime path.
 
-From the next session: **auto-recall** injects relevant memories every turn,
+From the next Hermes session: **auto-recall** injects relevant memories every turn,
 the **auto-retain** hook evaluates completed turns for durable storage and
 serialized self-improvement review, and the model can call
 `luminary_recall` / `luminary_ingest` / `luminary_list` on demand.
@@ -191,17 +191,24 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 ## OpenCode integration
 
 OpenCode support is provided by the separate `opencode-luminary-memory` npm
-package. It uses the local Python sidecar, SQLite by default, scoped automatic
-recall, and explicit-only durable writes. See the [OpenCode installation and
-compatibility guide](docs/opencode-integration.md).
+package plus the `luminary-memory` Python package. Add
+`"opencode-luminary-memory@0.1.0"` to the `plugin` array in `opencode.json`;
+OpenCode/Bun installs the npm package and the plugin starts a local Python JSONL
+sidecar. Automatic recall is hook-based, latest-query scoped, strict, and
+untrusted. Only `luminary_recall` and `luminary_ingest` are exposed, and only
+the explicit ingest tool writes; ordinary chat never writes. OpenCode does not
+implement Hermes auto-retain, episode fallback, core tools, indicators,
+automatic maintenance, or Hermes dashboard configuration. See the
+[integration guide](docs/opencode-integration.md), [package README](opencode/README.md),
+and [OpenCode skill](opencode/skills/luminary-memory/SKILL.md).
 
 ---
 
 ## Architecture
 
-Memory is a **loop**, not a pipeline you run once. Every turn, luminary
-recalls what is relevant before the agent answers, then ingests what mattered
-after, and a background lifecycle keeps the store lean.
+For the library and Hermes provider, memory is a **loop**, not a pipeline you
+run once. OpenCode has a narrower path: hook-based automatic recall plus an
+explicit ingest tool; it has no automatic write or background lifecycle.
 
 ```
         ┌───────────────────────────── LOOP ─────────────────────────────┐
@@ -262,13 +269,14 @@ after, and a background lifecycle keeps the store lean.
 | [Quickstart](docs/quickstart.md) | Install and first use |
 | [Architecture](docs/architecture.md) | Pipelines and data flow |
 | [Python API](docs/api.md) | `MemoryClient` reference |
-| [Agent Tools](docs/agent-tools.md) | 6 tools reference + parameter schema |
+| [Agent Tools](docs/agent-tools.md) | OpenCode and Hermes tool references |
 | [CLI](docs/cli.md) | All subcommands |
 | [Recall](docs/recall.md) | Four strategies + fusion |
 | [Lifecycle](docs/lifecycle.md) | Cleanup, consolidation, pruning, LLM maintenance |
 | [Backends](docs/backends.md) | SQLite vs pgvector |
 | [Configuration reference](docs/config-reference.md) | Library env vars + provider config |
 | [Hermes integration](docs/hermes-integration.md) | Provider, config, installer |
+| [OpenCode integration](docs/opencode-integration.md) | npm plugin, sidecar, hooks, tools |
 | [Hermes install kit](hermes/README.md) | Capability-based install, upgrade, repair utility |
 | [Debugging Guide](docs/debugging-v0.2.17.md) | Gateway envelopes, hook internals, verification |
 | [Benchmarks](benchmarks/RESULTS.md) | Pipeline smoke + independent gold-set metrics (not a competitor proof) |

@@ -2,8 +2,10 @@
 
 ## Pipelines
 
-Memory is a **loop**, not a one-shot pipeline: recall happens before the
-agent answers, ingest after, lifecycle in the background.
+For the library and Hermes provider, memory is a **loop**, not a one-shot
+pipeline: recall happens before the agent answers, ingest after, lifecycle in
+the background. OpenCode is narrower: automatic recall plus explicit ingest;
+it has no automatic write or scheduled lifecycle.
 
 ```
 ingest(text) ──► whitelist ──► (LLM enrich, optional) ──► hash/evidence/claims ──► embed ──► backend + indexes
@@ -28,6 +30,32 @@ episode before curation. That episode can support a short follow-up in the
 same session, but it is not a semantic memory, is not returned by normal
 recall, and does not count as a durable fact. Only a grounded curated summary
 or an explicit write enters the durable memory path.
+
+## OpenCode plugin path
+
+```
+OpenCode chat.message -> latest query cache
+  -> experimental.chat.system.transform
+  -> strict sidecar recall -> bounded untrusted reference block
+
+OpenCode luminary_ingest tool -> sidecar ingest -> durable MemoryClient write
+```
+
+There is no automatic OpenCode ingest path. The plugin starts the local Python
+module `luminary_memory.opencode.sidecar` and keeps requests on a serialized
+JSONL boundary.
+
+## OpenCode boundary and failure behavior
+
+The Bun/TypeScript plugin maps local identity, normalized workspace, agent, and
+carries the session id in client/protocol context. The Python sidecar creates a
+scoped `MemoryClient` per operation, removes `session_id` for durable `recall`,
+`ingest`, and `list`, uses SQLite by default, and closes it after the operation.
+The protocol is version `1` and supports `health`, `recall`, `ingest`, and
+`list`. A missing
+Python dependency, timeout, malformed response, or database failure preserves
+the OpenCode request: automatic recall injects nothing and explicit tools
+return structured errors.
 
 ## Ingest
 
@@ -72,7 +100,7 @@ never authorize an overwrite. The old row remains in the audit/version chain
 after supersession. A failed or malformed review is skipped and cannot kill
 the retain worker.
 
-## Injection (Hermes provider)
+## Injection (Hermes provider only)
 
 The provider injects up to three context surfaces per turn (anti-duplicated by
 id and content hash, so identical text never appears twice even under
@@ -93,7 +121,7 @@ authority; recalled memory and quoted session text are reference data.
 The importance-based persistent-context block (top-N pinned every turn) was
 **removed in v0.2.18**; importance now drives retrieval and pruning only.
 
-### Hermes boundary and upgrades
+### Hermes boundary and upgrades (Hermes provider only)
 
 The integration is capability-based, not version-pinned. Luminary is discovered
 through Hermes' `hermes_agent.memory_providers` entry-point group and implements
@@ -120,7 +148,7 @@ deduplication paths. Two implementations:
 
 See [backends.md](backends.md).
 
-## Authority and migration boundary
+## Authority and migration boundary (Hermes provider only)
 
 The Hermes provider is the only persistent authority when
 `memory.provider: luminary` is active and the existing Hermes
@@ -146,7 +174,8 @@ Three maintenance passes, orchestrated by `run_lifecycle()`:
 - **consolidate**, merge near-duplicates (Jaccard or embedding-cosine, semantic by default). Pinned rules (importance ≥ 0.9) are never deleted as duplicates.
 - **prune**, drop low-importance or least-recently-used memories (importance auto-estimated from access, recency, centrality). Pinned rules are exempt. Prune and importance re-estimation are batched at the backend level.
 
-Optional **LLM maintenance** (`run_maintenance()`, or provider `auto_maintain`)
+Optional **LLM maintenance** (`run_maintenance()` in the library, or provider
+`auto_maintain` in Hermes)
 reviews the whole store and keeps/updates/deletes facts semantically.
 `health_score()` reports store quality (0-100) across five dimensions.
 

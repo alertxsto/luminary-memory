@@ -12,23 +12,26 @@ A lightweight, self-hosted memory layer for AI agents.
 
 - **Store** durable facts, preferences, and environment details across sessions.
 - **Recall** the right context for the current task, not just the last few messages.
-- **Maintain** the store automatically (dedupe, expire, prune).
+- **Maintain** the store automatically (library and Hermes provider; the OpenCode adapter does not schedule maintenance).
 
 ## Key features
 
 - Four retrieval strategies fused into one ranked recall via weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1) + query expansion.
-- **First-class Hermes Agent memory provider**, auto-recall every turn and
+- **First-class Hermes Agent memory provider (Hermes only)**, auto-recall every turn and
   evaluate automatic turn batches for durable storage
   (`memory.provider: luminary`); zero LLM tokens for retrieval. Every accepted
   automatic turn also has a strictly scoped, non-durable episode record for
   same-session continuity. The installer disables Hermes' native memory
   surfaces so Luminary is the only persistent authority. Explicit writes
   remain available without curation.
-- **Core memory**, DB-backed equivalent of `MEMORY.md` (tag `core`), auto-loaded into the system prompt every session — durable rules never need a query match.
+- **Core memory (library/Hermes)**, DB-backed equivalent of `MEMORY.md` (tag `core`), auto-loaded into the system prompt every session — durable rules never need a query match.
 - **Adaptive importance (v0.2.15)**, memories that keep getting recalled are re-estimated immediately, so frequently-used facts rank higher in the next turn's query recall; pinned rules never downgrade.
 - **Content-aware query expansion (v0.2.15)**, when the graph has no entity to expand a short query, tokens from a topically related important memory may be appended without a static alias table.
 - **Content-level anti-duplication (v0.2.15)**, core and recall share one dedup set (ids + content hashes) so identical text appears exactly once per turn.
-- **LLM memory curation and reconciliation**, optional `ingest_llm` drops chit-chat, stores factual summaries, and checks each turn for evidence-backed captures/corrections; `auto_maintain` still prunes stale/duplicate facts at session end.
+- **LLM memory curation and reconciliation (Hermes provider only)**, optional
+  `ingest_llm` drops chit-chat, stores factual summaries, and checks each turn
+  for evidence-backed captures/corrections; `auto_maintain` still prunes
+  stale/duplicate facts at session end.
 - **Three distinct context surfaces**, core rules are always loaded, durable
   recall is query-driven, and the Hermes provider may fall back to a bounded
   untrusted block from the exact current session only when durable recall has
@@ -41,9 +44,13 @@ A lightweight, self-hosted memory layer for AI agents.
 - Configurable token budget so memory never overflows the agent's context.
 - Database-enforced exact deduplication across concurrent writers, with
   legacy duplicate migration and replacement lineage.
-- Redacted Hermes JSONL logs with trace IDs, scope, status/reason, counts,
+- Hermes JSONL logs with trace IDs, scope, status/reason, counts,
   confidence, and latency for long-running troubleshooting.
 - Clean Python API + CLI.
+- **OpenCode adapter**, an npm plugin with a local Python JSONL sidecar, strict
+  latest-query automatic recall, scoped identity, and exactly two explicit tools:
+  `luminary_recall` and `luminary_ingest`. Writes are explicit-only; sidecar
+  failures degrade without failing the OpenCode request.
 - **Automated contribution tooling**, CI (3.11/3.12 + pgvector), triage auto-labeling, stale bot, contributor account check.
 
 The public tracked guides describe the shipped contracts. Local planning and
@@ -62,6 +69,8 @@ working material, not part of the source-facing documentation set.
 - [Lifecycle](lifecycle.md)
 - [Backends](backends.md)
 - [Hermes integration](hermes-integration.md)
+- [OpenCode integration](opencode-integration.md)
+- [OpenCode package](../opencode/README.md)
 - [Hermes install kit](../hermes/README.md)
 - [Benchmark protocol and results](../benchmarks/README.md)
 - [v0.2.17 Debugging & Integration Guide](debugging-v0.2.17.md)

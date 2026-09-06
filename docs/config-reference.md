@@ -1,16 +1,18 @@
 # Configuration reference
 
 This page documents **every** configuration input for luminary-memory, where it
-can be set, its default, and what changing it actually does. It is the single
-authoritative list, generated from the two real sources of truth:
+can be set, its default, and what changing it actually does. It has three
+integration layers:
 
 - `src/luminary_memory/config.py` → `Settings` dataclass (library-level, read
   from `LUMINARY_*` environment variables).
 - `src/luminary_memory/hermes/config.py` → `_DEFAULTS` (Hermes provider config,
   persisted to `$HERMES_HOME/luminary/config.json` and surfaced in the
   dashboard).
+- `opencode/package.json` and `opencode/src/plugin.ts` → the OpenCode npm
+  plugin configuration and plugin options.
 
-There are two layers by design:
+There are three layers by design:
 
 1. **Library settings** (`Settings` + `LUMINARY_*` env vars) control the core
    engine: recall, embeddings, consolidation, pruning, LLM enrichment.
@@ -18,6 +20,9 @@ There are two layers by design:
    hooks into Hermes: which AI agent session triggers auto-recall and automatic
    turn curation,
    what gets injected into the system prompt, and LLM endpoint settings.
+3. **OpenCode plugin config** (`opencode.json` plus plugin options) controls
+   package discovery, sidecar selection, and OpenCode scope mapping. It does not
+   enable Hermes provider features.
 
 ---
 
@@ -27,6 +32,7 @@ There are two layers by design:
 |-------|-----------|------|
 | Library settings (`Settings`) | `LUMINARY_*` env vars | [section below](#library-settings-settings) |
 | Provider config (`_DEFAULTS`) | `$HERMES_HOME/luminary/config.json` + dashboard | [section below](#provider-config-defaults) |
+| OpenCode plugin configuration | `opencode.json`, plugin options, `.opencode/` | [section below](#opencode-plugin-configuration) |
 | Dashboard-only secrets | `LUMINARY_LLM_API_KEY` | [section below](#secrets) |
 
 ---
@@ -175,7 +181,56 @@ behavioral estimator, and conflicting claims require an explicit supersession.
 
 ---
 
-# Provider config (`_DEFAULTS`)
+## OpenCode plugin configuration
+
+OpenCode uses JSON or JSONC configuration. Add the published npm package to the
+project `opencode.json`; OpenCode installs it through Bun:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-luminary-memory@0.1.0"]
+}
+```
+
+Project plugins may also live in `.opencode/plugins/`; global plugins use
+`~/.config/opencode/plugins/`. Skills use `.opencode/skills/<name>/SKILL.md` or
+`~/.config/opencode/skills/<name>/SKILL.md`; copy the package skill there when
+package skill discovery is unavailable. Keep `opencode-luminary-memory@0.1.0` paired
+with `luminary-memory==0.3.0`; the sidecar protocol is version `1`.
+
+The plugin options are:
+
+| Option | Meaning |
+| --- | --- |
+| `userID` | Local identity override used as `user_id`. |
+| `clientOptions.pythonExecutable` | Python executable for the sidecar. |
+| `clientOptions.databasePath` | Sets `LUMINARY_DB_PATH` for the sidecar. |
+| `clientOptions.sidecarModule` | Python module, default `luminary_memory.opencode.sidecar`. |
+| `clientOptions.cwd` | Sidecar working directory. |
+| `clientOptions.timeoutMs` | Per-request timeout, default 10000 ms. |
+| `clientOptions.transport` | Injected transport for development/tests only. |
+
+OpenCode automatic recall is fixed by the plugin to `limit=5` and `strict=true`.
+It has no `mode`, `auto_recall`, `auto_retain`, `recall_sync`,
+`retain_every_n_turns`, `auto_maintain`, indicator, or core-tool settings.
+`LUMINARY_DB_PATH` and the library `LUMINARY_*` settings still configure the
+Python sidecar engine.
+
+OpenCode maps normalized `worktree` or `directory` to `workspace_id`, the
+OpenCode agent name to `agent_id`, and carries the session id as `session_id` in
+protocol/client context. Durable `recall`, `ingest`, and `list` use only
+`user_id`/`workspace_id`/`agent_id`; `session_id` is removed from those
+operations. No current OpenCode sidecar operation (`health`, `recall`, `ingest`,
+or `list`, as applicable) exposes exact-session continuity or episode
+operations. The local identity
+precedence is plugin `userID`, then `LUMINARY_USER_ID`, then
+`USER`/`USERNAME`/`HOME`, all prefixed with `local:` when derived from the
+environment. The model cannot override ownership fields.
+
+---
+
+# Provider config (`_DEFAULTS`) (Hermes only)
 
 Persisted to `$HERMES_HOME/luminary/config.json` (created on first save, mode
 `0600`). Missing keys fall back to these defaults, so the file is optional and
@@ -234,7 +289,7 @@ because the tools call straight into `MemoryClient`.
 If you depend on a specific value, set it in **both** places, or keep one layer
 at default and tune the other.
 
-## Hermes activation boundary
+## Hermes activation boundary (Hermes only)
 
 These three values live in Hermes' `$HERMES_HOME/config.yaml`, not in
 Luminary's `$HERMES_HOME/luminary/config.json`:
@@ -259,7 +314,7 @@ optional setup callback is only a convenience for Hermes CLIs that expose that
 callback; the on-disk activation helper and the installer remain the portable
 path across Hermes updates.
 
-## Exact-session continuity is not another config layer
+## Exact-session continuity is not another config layer (Hermes only)
 
 When Hermes `auto_retain` is enabled, each accepted completed turn is written
 to the backend's immutable episode ledger with the current `session_id`,

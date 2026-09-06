@@ -9,6 +9,16 @@ git clone <repo> && cd luminary-memory
 pip install -e ".[dev]"
 ```
 
+OpenCode package development uses the repository's supported Bun/Node setup:
+
+```bash
+cd opencode
+bun install
+bun test
+bun run build
+bun run pack:check
+```
+
 ## Development workflow
 
 1. Create a branch from `develop`: `git checkout develop && git checkout -b feat/your-change`.
@@ -17,15 +27,21 @@ pip install -e ".[dev]"
 4. Update the tracked guide that owns the changed contract and the matching
    static website guide in `website/js/docs-guides.js`. Keep ignored planning
    notes under `docs/` out of the public source.
-5. Run the checks:
+5. If the plugin, protocol, scope, tool, skill, or package contract changes,
+   update `opencode/README.md`, `docs/opencode-integration.md`, and
+   `opencode/skills/luminary-memory/SKILL.md`. Verify package discovery and
+   install claims against official OpenCode documentation; do not add
+   undocumented CLI commands.
+6. Run the checks:
 
 ```bash
 python -m pytest
 python -m ruff check src tests hermes/hooks
 node --check website/js/docs-guides.js
+cd opencode && bun test && bun run build && bun run pack:check
 ```
 
-5. Commit with a conventional message.
+7. Commit with a conventional message.
 
 ## Branch model
 
@@ -45,6 +61,8 @@ node --check website/js/docs-guides.js
 
 - Python 3.11+, type-hinted.
 - `ruff` clean, `pytest` green.
+- OpenCode package tests, build, and package verification must pass when its
+  files or contract change.
 - TDD where feasible, test first, then implement.
 - Keep the public API (`MemoryClient`) stable; add rather than break.
 - Full-source coverage is reported and must not regress from the current

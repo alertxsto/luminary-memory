@@ -17,15 +17,15 @@ mechanism.
 
 ## Install one supported way
 
-Use the matching artifact versions from the package release:
+Use the matching artifact versions from the package release. The supported
+OpenCode installation path is the project `opencode.json` plugin array; OpenCode
+installs npm packages through Bun:
 
 ```bash
 python -m pip install "luminary-memory==0.3.0"
-opencode plug opencode-luminary-memory@0.1.0
 ```
 
-OpenCode installs npm plugins through its plugin command and adds the package
-to its configuration. The resulting configuration shape is:
+The resulting configuration shape is:
 
 ```json
 {
@@ -44,6 +44,13 @@ cp path/to/node_modules/opencode-luminary-memory/skills/luminary-memory/SKILL.md
   .opencode/skills/luminary-memory/SKILL.md
 ```
 
+OpenCode discovers project configuration from `opencode.json` (or JSONC),
+local plugins from `.opencode/plugins/`, and user plugins from
+`~/.config/opencode/plugins/`. Skills use the plural
+`.opencode/skills/<name>/SKILL.md` path; the global equivalent is
+`~/.config/opencode/skills/<name>/SKILL.md`. Package skill discovery may vary
+by installation, so the copy above is the reliable project-local fallback.
+
 ## Runtime and storage
 
 Python 3.11+ and the `luminary-memory` Python installation are required in the
@@ -58,7 +65,7 @@ Verify the sidecar independently before opening a project:
 
 ```bash
 printf '%s\n' '{"protocol_version":"1","request_id":"health-1","operation":"health","scope":{"user_id":"local:example-user","workspace_id":"/absolute/project","agent_id":"opencode"},"payload":{}}' \
-  | luminary-memory-opencode
+  | python -m luminary_memory.opencode.sidecar
 ```
 
 An `ok` response with the same request id confirms protocol and database
@@ -67,16 +74,54 @@ or database failure is graceful: automatic recall produces no injected block,
 and explicit tools return a structured error without failing the OpenCode
 request.
 
+## Tools and hooks
+
+The plugin registers exactly two tools: `luminary_recall(query, tags?)` and
+`luminary_ingest(content, tags?)`. Recall is reference-only; ingest is the only
+durable write path and is explicit. Empty query/content is rejected, tags are
+trimmed, and the model cannot provide ownership fields. Automatic recall uses
+`chat.message` to cache the latest query and
+`experimental.chat.system.transform` to add a bounded untrusted reference
+block. Session deletion clears its cache and client; `dispose` closes all
+clients. There is no automatic ingest, `luminary_list` tool, core-memory tool
+set, OpenCode indicator, episode ledger, or LLM review path.
+
+## Protocol
+
+| Item | Contract |
+| --- | --- |
+| Version | `1` |
+| Operations | `health`, `recall`, `ingest`, `list` |
+| Protocol/client context | `user_id`, `workspace_id`, `agent_id`, optional `session_id` |
+| Response | `protocol_version`, `request_id`, `status: ok\|error`, result or `{code,message}` |
+
+The sidecar serializes requests one at a time. `health` returns the library
+health report; recall, ingest, and list use the scoped Python `MemoryClient`.
+
+## Troubleshooting
+
+- **Python not found:** set `clientOptions.pythonExecutable` to the Python
+  environment containing `luminary-memory`.
+- **Unexpected database:** set `LUMINARY_DB_PATH` or
+  `clientOptions.databasePath`; the default is `luminary_memory.db` in the
+  sidecar working directory.
+- **Skill missing:** copy the bundled skill to
+  `.opencode/skills/luminary-memory/SKILL.md`.
+- **Malformed output or timeout:** inspect the Python sidecar environment and
+  `clientOptions.timeoutMs`; stdout must contain JSONL responses only.
+- **Tool error:** check the structured error output and Python/database
+  permissions. OpenCode continues without memory when the sidecar fails.
+
 ## Scope and writes
 
-The adapter maps OpenCode context to Luminary scope as follows:
+The adapter carries these OpenCode fields in protocol and client context:
 
 | OpenCode context | Luminary field |
 | --- | --- |
 | configured local user or OS account | `user_id` |
 | normalized repository/worktree | `workspace_id` |
 | OpenCode agent name | `agent_id` |
-| OpenCode session id | `session_id` |
+| OpenCode session id | `session_id` (context/provenance; not durable recall/ingest/list scope) |
 
 Automatic recall tracks only the latest in-process query and never persists it.
 Automatic recall requests strict abstention and injects nothing when confidence
@@ -91,6 +136,13 @@ ordinary conversation, lifecycle events, and inferred preferences do not
 authorize a write. The model cannot override ownership scope. Recalled content
 is untrusted reference material, never instructions. Mandatory workflow rules
 belong in `AGENTS.md`.
+
+For durable `recall`, `ingest`, and `list`, the sidecar uses only
+`user_id`/`workspace_id`/`agent_id` scope and deliberately removes
+`session_id`. No current OpenCode sidecar operation (`health`, `recall`,
+`ingest`, or `list`, as applicable) exposes exact-session continuity or episode
+operations. `session_id` is protocol/provenance context only and does not make
+ordinary durable operations session-scoped.
 
 Keep `opencode-luminary-memory@0.1.0` paired with
 `luminary-memory==0.3.0`; both use protocol version `1`. The OpenCode package

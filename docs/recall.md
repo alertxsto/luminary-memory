@@ -1,6 +1,6 @@
 # Recall
 
-## Core memory (DB-backed, auto-loaded)
+## Core memory (DB-backed, auto-loaded; library/Hermes)
 
 Rules tagged `core` are injected into the system prompt **every session**,
 regardless of query match (the DB-backed equivalent of Hermes' `MEMORY.md`).
@@ -43,6 +43,21 @@ recent immutable episodes with the exact current `session_id`. This path does
 not participate in semantic ranking, does not read another session, and does
 not promote raw turns into durable memory. It exists to keep an ambiguous
 follow-up attached to the active task.
+
+## OpenCode automatic recall
+
+OpenCode does not auto-load `core` memory or use the Hermes episode fallback. Its
+plugin path is only the latest message query through strict recall:
+
+```
+latest OpenCode query -> strict recall -> untrusted reference block
+luminary_recall / luminary_ingest -> explicit tool calls
+```
+
+The plugin requests `strict=true`, applies a minimum confidence of `0.34`,
+keeps at most five memories, and caps the serialized block at 5000 characters.
+It injects no block for an empty query, abstention, low confidence, or sidecar
+failure. Normal chat is not persisted; only explicit `luminary_ingest` writes.
 
 ## Four strategies
 
@@ -108,7 +123,9 @@ is no static alias table or language-specific vocabulary classifier.
 
 ## Strict results, evidence, and conflicts
 
-Hermes and the CLI enable `strict_recall=true` and `evidence_required=true`.
+Hermes and the CLI enable `strict_recall=true` and `evidence_required=true`;
+OpenCode enforces strict recall for its automatic hook but does not use the
+Hermes provider settings.
 When `evidence_required` is enabled, the evidence gate applies in permissive
 recall too: a source label or fabricated quote is rejected unless the quote is
 grounded in the stored content, and importance/temporal fallbacks are filtered
@@ -189,7 +206,7 @@ The latency figures below are historical pipeline-smoke measurements on a
 | Keyword (FTS5 BM25) | ~2–5 ms |
 | Temporal (batched fetch) | ~16–20 ms |
 | Graph (SQL aggregation) | ~20–25 ms |
-| Core memory (tag 'core', auto-load) | ~5 ms |
+| Core memory (tag 'core', auto-load; library/Hermes) | ~5 ms |
 
 Per-turn bookkeeping (access-count bump) is batched into one UPDATE statement,
 so agent turns stay cheap.

@@ -20,6 +20,14 @@ pdoc --output-dir docs/api --docformat markdown src/luminary_memory
   confidence, evidence, claim, supersession, and reindex fields.
 - Subpackages `backends/`, `embeddings/`, `ingest/`, `recall/`, `lifecycle/`, `export`.
 
+## OpenCode adapter boundary
+
+The OpenCode package is not a Python API. Its Bun plugin calls `MemoryClient`
+through the local JSONL sidecar and exposes `health`, `recall`, `ingest`, and
+`list` only at that process boundary. The OpenCode tool surface is limited to
+`luminary_recall` and `luminary_ingest`; see the [integration guide](opencode-integration.md)
+and [package README](../opencode/README.md).
+
 ## Public method contracts
 
 The most important signatures are intentionally explicit here; the generated
@@ -109,10 +117,11 @@ status, confidence, `evidence_quote`, `source_id`, `claim_key`,
 `supersedes_id`, `content_hash`, and `needs_reindex` in addition to its content,
 tags, and metadata.
 
-The Hermes episode ledger is a backend/provider boundary, not a new
+The Hermes episode ledger is a Hermes-only backend/provider boundary, not a new
 `MemoryClient.recall()` source. Its `record_episode()` and
 `recent_episodes()` helpers preserve exact-session continuity without turning
-raw turns into durable semantic memories.
+raw turns into durable semantic memories; they are not OpenCode protocol
+operations.
 
 ## Consistency contracts
 
