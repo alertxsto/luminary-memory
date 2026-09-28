@@ -19,6 +19,25 @@ class MemoryBackend(ABC):
         default implementation.
         """
         return self.add(m), True
+
+    def supersede_and_add(
+        self, predecessor: Memory, successor: Memory, retired_at: str
+    ) -> int:
+        """Retire *predecessor* and insert *successor* as one atomic change.
+
+        Implementations must verify that the predecessor is still eligible at
+        the moment of the write and roll back completely if the successor
+        cannot be inserted, so a failed version write never leaves the store
+        with a retired claim and no replacement.
+
+        Backends without transaction support fall back to the non-atomic
+        sequence; the API validates eligibility before calling.
+        """
+        predecessor.status = "superseded"
+        predecessor.valid_to = predecessor.valid_to or retired_at
+        self.update(predecessor)
+        return self.add(successor)
+
     @abstractmethod
     def get(self, id: int) -> Memory | None: ...
     @abstractmethod

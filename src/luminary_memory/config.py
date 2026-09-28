@@ -126,6 +126,50 @@ class Settings:
     pg_hnsw_m: int = field(default_factory=lambda: _env_int("LUMINARY_PG_HNSW_M", 16))
     pg_hnsw_ef_construction: int = field(default_factory=lambda: _env_int("LUMINARY_PG_HNSW_EF_CONSTRUCTION", 64))
 
+    def __post_init__(self) -> None:
+        """Reject ranking configuration that cannot produce a valid result.
+
+        A bad environment value must surface as a configuration error at
+        construction, not as a division-by-zero or a silently ignored gate
+        deep inside recall.
+        """
+        import math as _math
+
+        def _finite(name: str, value) -> float:
+            try:
+                number = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{name} must be a finite number") from exc
+            if not _math.isfinite(number):
+                raise ValueError(f"{name} must be a finite number")
+            return number
+
+        def _unit(name: str, value, *, allow_zero: bool = True) -> float:
+            number = _finite(name, value)
+            if number < 0.0 or number > 1.0 or (not allow_zero and number == 0.0):
+                raise ValueError(f"{name} must be between 0 and 1")
+            return number
+
+        # bool is an int subclass; an accidental True must not pass as rrf_k=1.
+        if isinstance(self.rrf_k, bool) or not isinstance(self.rrf_k, int) or self.rrf_k < 0:
+            raise ValueError("rrf_k must be a non-negative integer")
+        if isinstance(self.token_budget, bool) or not isinstance(self.token_budget, int) or self.token_budget < 0:
+            raise ValueError("token_budget must be a non-negative integer")
+        _unit("dedup_jaccard_threshold", self.dedup_jaccard_threshold)
+        _unit("recall_cliff_threshold", self.recall_cliff_threshold)
+        _unit("recall_min_score", self.recall_min_score)
+        _unit("abstention_min_confidence", self.abstention_min_confidence)
+        _unit("abstention_min_margin", self.abstention_min_margin)
+        _unit("query_planner_keyword_threshold", self.query_planner_keyword_threshold)
+        _unit("rule_auto_replace_threshold", self.rule_auto_replace_threshold)
+        weights = self.strategy_weights or {}
+        if not isinstance(weights, dict):
+            raise ValueError("strategy_weights must be a mapping of strategy name to weight")
+        for name, value in weights.items():
+            # A zero or negative weight silently disables a retrieval strategy;
+            # a non-finite weight poisons every fused score.
+            _unit(f"strategy_weights[{name}]", value, allow_zero=False)
+
     def as_dict(self) -> dict[str, Any]:
         """Return settings as a plain dict (useful for CLI `show` and config dumps)."""
         return {

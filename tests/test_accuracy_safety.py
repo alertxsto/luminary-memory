@@ -71,7 +71,6 @@ def _client(tmp_path, *, scope=None, settings=None, enricher=None):
         db_path=str(tmp_path / "memory.db"),
         strict_recall=True,
         evidence_required=True,
-        rule_auto_replace=False,
     )
     return MemoryClient(
         settings=config,
@@ -261,7 +260,6 @@ def test_strict_scope_lifecycle_does_not_touch_global_rows(tmp_path):
         db_path=str(tmp_path / "lifecycle-scope.db"),
         strict_recall=True,
         evidence_required=True,
-        rule_auto_replace=False,
         scope_include_global=False,
         max_memories=1,
         importance_auto=False,
@@ -283,7 +281,6 @@ def test_default_scoped_lifecycle_never_mutates_global_rows(tmp_path):
         db_path=str(tmp_path / "lifecycle-scope-default.db"),
         strict_recall=True,
         evidence_required=True,
-        rule_auto_replace=False,
         scope_include_global=True,
         max_memories=1,
         importance_auto=False,
@@ -476,7 +473,6 @@ def test_evidence_required_blocks_ungrounded_candidates_even_when_not_strict(tmp
         db_path=str(tmp_path / "permissive-evidence.db"),
         strict_recall=False,
         evidence_required=True,
-        rule_auto_replace=False,
     )
     client = _client(tmp_path, settings=settings)
     memory = Memory(
@@ -511,7 +507,6 @@ def test_all_tag_mode_survives_fallback_without_leaking_other_tags(tmp_path):
     settings = Settings(
         db_path=str(tmp_path / "memory.db"),
         strict_recall=False,
-        rule_auto_replace=False,
     )
     client = _client(tmp_path, settings=settings)
     both = client.ingest("Important database rule for postgres.", tags=["core", "db"], importance=0.95)
@@ -639,7 +634,6 @@ def test_rule_keyword_matching_uses_word_boundaries(tmp_path):
     settings = Settings(
         db_path=str(tmp_path / "rules.db"),
         rule_keywords="MUST",
-        rule_auto_replace=False,
     )
     client = _client(tmp_path, settings=settings)
     assert not contains_rule_keyword("the recipe uses mustard seeds", settings.rule_keywords)
@@ -675,7 +669,7 @@ def test_conflict_history_and_explicit_supersede(tmp_path):
     assert new_id not in {old_id, conflict_id}
     assert client.get(new_id).status == "active"
     assert client.get(old_id).status == "superseded"
-    assert client.get(conflict_id).status == "superseded"
+    assert client.get(conflict_id).status == "conflicted"
     result = client.recall("current deploy target", strict=True)
     assert [m.id for m in result.memories] == [new_id]
     assert result.provenance[0]["evidence_quote"]

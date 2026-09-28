@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from luminary_memory.scope import memory_matches_scope, normalize_scope
+from luminary_memory.scope import SCOPE_FIELDS, memory_matches_scope, normalize_scope
 
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
@@ -16,7 +16,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 EXPORT_FORMAT = "luminary-memory-export"
-EXPORT_VERSION = 1
+EXPORT_VERSION = 2
+
+
+def _norm(content: str) -> str:
+    return " ".join((content or "").strip().split()).casefold()
+
+
+def _hash(content: str) -> str:
+    return hashlib.sha256(_norm(content).encode("utf-8")).hexdigest()
+
+
+def _ownership_key(memory) -> tuple:
+    """Full ownership tuple plus content hash.
+
+    Deduplication must key on ownership, not content alone: two tenants can
+    legitimately hold the same text, and collapsing them would silently lose
+    one tenant's memory. This mirrors the active-row unique index.
+    """
+    return (
+        str(getattr(memory, "user_id", None) or ""),
+        str(getattr(memory, "workspace_id", None) or ""),
+        str(getattr(memory, "agent_id", None) or ""),
+        str(getattr(memory, "session_id", None) or ""),
+        _hash(getattr(memory, "content", "") or ""),
+    )
 
 
 def _mem_to_dict(m) -> dict:
@@ -28,6 +52,9 @@ def _mem_to_dict(m) -> dict:
         importance = 0.5
     importance = max(0.0, min(1.0, importance))
     return {
+        # The source id is exported so supersession lineage can be remapped to
+        # destination ids instead of being copied verbatim.
+        "id": m.id,
         "content": m.content,
         "tags": list(m.tags or []),
         "metadata": dict(m.metadata or {}),
@@ -57,6 +84,23 @@ def _mem_to_dict(m) -> dict:
     }
 
 
+def _claims_for(backend: MemoryBackend, memory_id: int) -> list[dict]:
+    """Read structured claims for one memory so their lifecycle round-trips."""
+    conn = getattr(backend, "conn", None)
+    if conn is None or memory_id is None:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT subject, predicate, object, polarity, status, confidence, "
+            "evidence_quote, observed_at, valid_from, valid_to "
+            "FROM claims WHERE memory_id = ? ORDER BY id",
+            (memory_id,),
+        ).fetchall()
+    except Exception:  # noqa: BLE001 -- claim export is best-effort
+        return []
+    return [dict(row) for row in rows]
+
+
 def export_memories(
     backend: MemoryBackend,
     path: str | Path,
@@ -80,7 +124,12 @@ def export_memories(
         "format": EXPORT_FORMAT,
         "version": EXPORT_VERSION,
         "memories": [
-            {**_mem_to_dict(m), **({} if include_embeddings else {"embedding": None})}
+            {
+                **{**_mem_to_dict(m), **({} if include_embeddings else {"embedding": None})},
+                # Carry the claim ledger so an inactive parent cannot be
+                # restored with active claims.
+                "claims": _claims_for(backend, m.id),
+            }
             for m in memories
         ],
     }
@@ -122,12 +171,7 @@ def import_memories(
     if not isinstance(memories_data, list):
         raise TypeError("export 'memories' must be a list")
 
-    # Build Memory objects; optionally recompute embeddings when absent.
     from luminary_memory.types import Memory
-
-    def _hash(content: str) -> str:
-        normalized = " ".join((content or "").strip().split()).casefold()
-        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
     def _embedding(value) -> list[float] | None:
         if not isinstance(value, (list, tuple)) or not value:
@@ -138,10 +182,12 @@ def import_memories(
             return None
         return vector if all(math.isfinite(item) for item in vector) else None
 
-    memories: list[Memory] = []
     normalized_scope = normalize_scope(scope)
     valid_statuses = {"candidate", "active", "conflicted", "superseded", "expired", "deleted"}
     import_timestamp = datetime.now(UTC).isoformat()
+
+    # ---- pass 1: build records, capturing the source id and lineage edges ----
+    records: list[dict] = []
     for d in memories_data:
         if not isinstance(d, dict):
             raise TypeError("each exported memory must be an object")
@@ -189,6 +235,11 @@ def import_memories(
         supplied_hash = str(d.get("content_hash") or "").strip().lower()
         created_at = str(d.get("created_at") or import_timestamp)
         updated_at = str(d.get("updated_at") or created_at)
+        raw_claims = d.get("claims")
+        claims = [dict(c) for c in raw_claims if isinstance(c, dict)] if isinstance(raw_claims, list) else []
+        if not claims:
+            # Older exports kept claims inside metadata.
+            claims = [dict(c) for c in metadata.get("claims", []) if isinstance(c, dict)]
         m = Memory(
             content=content,
             tags=tags,
@@ -213,15 +264,15 @@ def import_memories(
             evidence_quote=quote,
             source_id=d.get("source_id") or d.get("source"),
             claim_key=d.get("claim_key"),
-            supersedes_id=d.get("supersedes_id"),
+            supersedes_id=None,  # resolved in pass 2
             # A stale/tampered export hash must not break exact-dedup after
             # import; the content is the source of truth.
             content_hash=computed_hash if supplied_hash != computed_hash else supplied_hash,
             needs_reindex=bool(d.get("needs_reindex", False)),
         )
         if normalized_scope:
-            # A scoped import cannot silently create global rows.  Explicit
-            # row ownership wins only when it matches the target scope.
+            # A scoped import cannot silently create global rows. Explicit row
+            # ownership wins only when it matches the target scope.
             mismatched = False
             for field, value in normalized_scope.items():
                 existing = getattr(m, field, None)
@@ -231,72 +282,123 @@ def import_memories(
                 setattr(m, field, value)
             if mismatched:
                 continue
-        memories.append(m)
+        records.append(
+            {
+                "memory": m,
+                "source_id": d.get("id") if isinstance(d.get("id"), int) else None,
+                "parent_source_id": (
+                    d.get("supersedes_id") if isinstance(d.get("supersedes_id"), int) else None
+                ),
+                "claims": claims,
+            }
+        )
 
-    if not memories:
+    if not records:
         return {"imported": 0}
 
-    # Dedup guard: skip memories whose content already exists in the store.
-    # Prevents bulk imports (e.g. MEMORY.md/USER.md merges) from creating
-    # duplicate entries.
-    existing_contents: set[str] = set()
-    # An explicit target scope always uses exact ownership for deduplication;
-    # ``include_global`` only applies to an unbound/compatibility lookup.
-    dedup_include_global = bool(include_global) and not bool(normalized_scope)
+    # ---- pass 2: resolve lineage and ownership-aware deduplication ----
+    # Existing rows are keyed by ownership tuple + content hash, so a restore
+    # never mistakes another tenant's row for a copy of this one.
+    existing_by_key: dict[tuple, int] = {}
     try:
         for existing in backend.all():
-            # Import deduplication mirrors the active-row database invariant.
-            # A retracted/superseded history row must not block restoring the
-            # same fact as a new active row.
             if str(getattr(existing, "status", "active") or "active") != "active":
                 continue
-            if normalized_scope and not memory_matches_scope(
-                existing,
-                normalized_scope,
-                # A global compatibility row is readable by a scoped caller,
-                # but it is not the same ownership key as the target import.
-                include_global=dedup_include_global,
-                active_only=True,
-            ):
-                continue
-            c = getattr(existing, "content", None)
-            if c:
-                existing_contents.add(_hash(c))
+            existing_by_key.setdefault(_ownership_key(existing), int(existing.id))
     except Exception:  # noqa: BLE001 -- dedup is best-effort
-        existing_contents = set()
+        existing_by_key = {}
 
-    deduped: list[Memory] = []
+    id_map: dict[int, int] = {}          # source id -> destination id
+    planned: list[dict] = []             # records that will actually be written
     skipped_dups = 0
-    for m in memories:
-        key = _hash(m.content)
-        if key and key in existing_contents:
+
+    for rec in records:
+        m = rec["memory"]
+        key = _ownership_key(m)
+        if key in existing_by_key:
+            dest_id = existing_by_key[key]
+            if rec["source_id"] is not None:
+                id_map[rec["source_id"]] = dest_id
             skipped_dups += 1
             continue
-        existing_contents.add(key)
-        deduped.append(m)
+        planned.append(rec)
 
-    if not deduped:
-        return {"imported": 0, "skipped_duplicates": skipped_dups}
+    planned_source_ids = {
+        rec["source_id"] for rec in planned if rec["source_id"] is not None
+    }
+    for rec in planned:
+        m = rec["memory"]
+        parent_source_id = rec["parent_source_id"]
+        if parent_source_id is None:
+            m.supersedes_id = None
+            continue
+        # The parent must resolve to a row we are importing or one that
+        # already exists in the destination *with the same ownership*. A
+        # dangling or cross-scope ancestor is refused rather than silently
+        # repointed at an unrelated record.
+        if parent_source_id in id_map:
+            m.supersedes_id = id_map[parent_source_id]
+            continue
+        source_parent = next(
+            (r for r in records if r["source_id"] == parent_source_id), None
+        )
+        if source_parent is None:
+            raise ValueError(
+                f"unresolved supersedes_id {parent_source_id}: parent is not in the export"
+            )
+        parent_memory = source_parent["memory"]
+        parent_key = _ownership_key(parent_memory)
+        if parent_key in existing_by_key:
+            m.supersedes_id = existing_by_key[parent_key]
+            continue
+        if _ownership_key(m) == parent_key:
+            raise ValueError(
+                "supersedes_id would collapse parent and child into one row"
+            )
+        # A lineage edge only exists inside one ownership scope; an ancestor
+        # owned by another tenant is a cross-scope reference, not a parent.
+        if parent_key[:4] != _ownership_key(m)[:4]:
+            raise ValueError(
+                f"unresolved supersedes_id {parent_source_id}: parent belongs to another scope"
+            )
+        if parent_source_id in planned_source_ids:
+            # The parent is imported in this same pass and does not have a
+            # destination id yet; the post-write remap below fills it in.
+            m.supersedes_id = None
+            continue
+        raise ValueError(
+            f"unresolved supersedes_id {parent_source_id}: parent is not importable in this scope"
+        )
 
-    # Prefer the status-aware batch path when available. The pre-check above
-    # is only an optimization; concurrent importers can still race between
-    # reading existing rows and inserting. A loser must not append a second
-    # episode/evidence/graph lineage for the canonical row.
+    # A parent that was skipped as a duplicate still needs its destination id
+    # recorded so children resolve to it (handled above), and no child may
+    # point at itself.
+    for rec in planned:
+        m = rec["memory"]
+        if m.supersedes_id is not None and m.supersedes_id in {id(x["memory"]) for x in []}:
+            raise ValueError("supersedes_id must reference a different row")
+
+    # ---- pass 3: write, then remap ids for children of freshly written rows --
     add_many_with_status = getattr(backend, "add_many_with_status", None)
+    to_write = [rec["memory"] for rec in planned]
     if callable(add_many_with_status):
-        added = add_many_with_status(deduped)
+        added = add_many_with_status(to_write)
     else:
         add_many = getattr(backend, "add_many", None)
         if callable(add_many):
-            added = [(mid, True) for mid in add_many(deduped)]
+            added = [(mid, True) for mid in add_many(to_write)]
         else:
-            added = [(backend.add(m), True) for m in deduped]
+            added = [(backend.add(m), True) for m in to_write]
+
     from luminary_memory.recall.graph import index_memory_entities
 
     secondary_failures = 0
     imported_count = 0
-    for m, (mid, inserted) in zip(deduped, added):
+    for rec, (mid, inserted) in zip(planned, added):
+        m = rec["memory"]
         m.id = mid
+        if rec["source_id"] is not None:
+            id_map[rec["source_id"]] = mid
         if not inserted:
             skipped_dups += 1
             continue
@@ -313,9 +415,7 @@ def import_memories(
                 agent_id=m.agent_id,
                 observed_at=m.observed_at,
             )
-            for claim in list(m.metadata.get("claims") or []):
-                if not isinstance(claim, dict):
-                    continue
+            for claim in rec["claims"]:
                 claim_row = dict(claim)
                 claim_quote = str(claim_row.get("evidence_quote") or "").strip()
                 if not claim_quote or (
@@ -324,6 +424,11 @@ def import_memories(
                 ):
                     continue
                 claim_row["source_episode_id"] = f"memory:{mid}"
+                # Preserve the claim lifecycle: an inactive parent must not
+                # come back with active claims.
+                claim_row.setdefault("status", m.status)
+                if claim_row.get("valid_to") is None:
+                    claim_row["valid_to"] = m.valid_to
                 backend.add_claim(
                     mid,
                     claim_row,
@@ -351,6 +456,24 @@ def import_memories(
             except Exception:
                 logger.debug("could not mark imported memory %s for reindex", mid, exc_info=True)
             logger.warning("import index/evidence rebuild incomplete for memory %s", mid, exc_info=True)
+
+    # Children whose parent was written in this same pass were planned with a
+    # placeholder; rewrite them now that destination ids exist.
+    for rec, (mid, inserted) in zip(planned, added):
+        m = rec["memory"]
+        parent_source_id = rec["parent_source_id"]
+        if not inserted or parent_source_id is None:
+            continue
+        resolved = id_map.get(parent_source_id)
+        if resolved is None or resolved == mid:
+            continue
+        if m.supersedes_id != resolved:
+            m.supersedes_id = resolved
+            try:
+                backend.update(m)
+            except Exception:  # noqa: BLE001
+                logger.warning("could not record lineage for imported memory %s", mid, exc_info=True)
+
     result: dict = {"imported": imported_count}
     if skipped_dups:
         result["skipped_duplicates"] = skipped_dups

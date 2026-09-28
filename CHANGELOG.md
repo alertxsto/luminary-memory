@@ -1,5 +1,39 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+Data-integrity fixes for versioned claims, ingestion policy, and backup restore.
+
+- **Explicit supersession is exact and atomic.** `supersedes_id` now retires
+  only the named predecessor, and only when it exists, is `active` or
+  `conflicted`, matches the successor's full ownership scope, and carries the
+  same `claim_key`. It previously also retired any other same-key row and could
+  overwrite an unrelated memory through the similarity path. Retirement and
+  insertion now commit in one transaction, so a failed successor insert no
+  longer leaves a retired claim behind. Invalid references raise `ValueError`
+  before any write instead of leaving a dangling `supersedes_id`.
+- **Ingest allowlists fail closed.** A blank or unparsable
+  `ingest_whitelist` pattern raises `ValueError` at client construction rather
+  than being silently dropped, which had turned a misconfigured policy into
+  "accept everything".
+- **Batch ingest matches sequential semantics.** `ingest_batch` now routes
+  through the same write path as `ingest`, so conflicts, duplicates and
+  supersession resolve identically instead of leaving several `active` rows for
+  one claim key.
+- **Backup restore preserves ownership and lineage.** Import deduplication keys
+  on the full ownership tuple plus content hash, so identical text held by two
+  tenants both survives. Exports carry source row IDs, import remaps
+  `supersedes_id` to destination IDs, and an unresolvable or cross-scope
+  ancestor is rejected before writing instead of being repointed at an
+  unrelated row. Structured claims now round-trip with the parent's status and
+  validity, so an inactive memory cannot be restored with active claims.
+- **Invalid ranking configuration is rejected at construction.**
+  `Settings(rrf_k=-1)` and other out-of-range or non-finite ranking values now
+  raise `ValueError` instead of failing later with a division by zero deep
+  inside recall.
+
 ## [0.3.0] - 2026-08-24
 
 ### Summary

@@ -111,3 +111,6 @@ website/*.png
 
 # ---- Internal plan files ----
 website/plan.md
+
+# Local uv lockfile (not part of the package build)
+uv.lock
