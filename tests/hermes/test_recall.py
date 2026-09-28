@@ -64,7 +64,6 @@ def test_core_rule_surfaces_and_not_duplicated_by_recall(tmp_path):
     duplicated by the query recall when the same content matches."""
     p = _init_provider(tmp_path)
     # Store the durable rule as CORE (its presence is a fact, not ranking).
-    p._client.settings.rule_auto_replace = False
     p._client.ingest("rule: always use markdown tables in telegram replies",
                      tags=[p._core_tag()], source="test")
     p._client.ingest("the staging cluster deploy target uses docker compose", tags=["seed"])

@@ -45,23 +45,27 @@ or an explicit write enters the durable memory path.
 
 ## Recall
 
-1. **Query expansion**, short queries are enriched with co-occurring graph entities before embedding (best-effort). When the graph yields nothing, content-token expansion may use a topically-related important memory. No language-specific alias list participates in retrieval.
-2. **Four scoped strategy candidates:**
-   - *semantic*, embedding similarity (vectorized cosine matmul).
-   - *keyword*, FTS5 / BM25 term match.
-   - *temporal*, recency decay × access popularity (batched top-id fetch, no N+1).
-   - *graph*, entity co-occurrence traversal (SQL aggregation).
-3. **Weighted RRF fusion**, reciprocal-rank fusion with per-strategy weights (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1) combines the available ranked lists into one.
-4. **Accuracy gate**, current status/validity/scope/tag filters, evidence-aware
-   confidence, and strict abstention run before fallback serialization.
-5. **Importance boost**, memories at importance ≥ 0.8 get a ranking bonus
-   (`importance_recall_boost`) without becoming an always-injected prompt tier.
-6. **Adaptive cutoff** (cliff detection), cuts at the first steep score drop
-   so a sparse store returns only the relevant cluster instead of padding.
-7. **Dedup and budget**, Jaccard similarity removes near-duplicates and the
-   token budget caps serialized context.
-8. **Batched access bookkeeping**, recalled memories are marked accessed with
-   one batched update and importance is re-estimated for the next query.
+1. **Query expansion** (best-effort) uses only current, in-scope graph
+   relationships or content from a current important memory.
+2. **Scoped strategy candidates** are filtered by ownership, status, and
+   validity before each top-K: semantic cosine, keyword BM25/term matching,
+   temporal recency × access, and graph co-occurrence. SQLite BM25 determines
+   its list order; normalized distinct-term coverage drives planner/confidence
+   decisions across backends. A strong keyword hit skips temporal, while
+   missing entity tokens skip graph.
+3. **Weighted RRF** sums `weight / (rrf_k + zero_based_rank + 1)` per
+   strategy. An optional high-importance multiplier adjusts fused candidate
+   scores, not the final public confidence score.
+4. **Confidence rerank and strict abstention** apply evidence and confidence
+   gates. Final `RecallResult.scores` and order reflect confidence;
+   `fused_scores` retain weighted RRF separately.
+5. **Adjacent-confidence cliff** trims the first steep relative drop for
+   finite limits; unlimited recall skips this cutoff.
+6. **Dedup, score floor, budget, limit** remove near-duplicates, apply the
+   public `recall_min_score`, enforce the token budget, then cap output. The
+   importance/temporal fallback follows the same finishing constraints.
+7. **Batched access bookkeeping** updates recalled memories and re-estimates
+   importance for the next query.
 
 The Hermes provider adds a second, serialized reconciliation pass after the
 normal retain task when `ingest_llm` is enabled. It receives only the current
@@ -155,7 +159,5 @@ turn-local corrections before a session boundary, while the latter performs a
 broader bounded store sweep. Both are best-effort and fail closed on missing
 evidence.
 
-All provider-owned writes use strict recall/evidence settings and disable
-destructive semantic rule replacement. The direct library client keeps its
-legacy replacement default for backwards compatibility; use explicit
-`claim_key` + `supersedes_id` when update history matters.
+Versioned writes require an explicit `claim_key` and eligible `supersedes_id`;
+same-key disagreements without one remain auditable conflicts.

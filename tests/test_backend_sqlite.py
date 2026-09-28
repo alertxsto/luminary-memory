@@ -219,17 +219,18 @@ def test_update_importances_bulk(tmp_path):
     assert by_id[ids[2]] == 0.3  # untouched
 
 
-def test_scan_embeddings_matrix_shape(tmp_path):
+def test_vector_search_keeps_cosine_order_and_top_k(tmp_path):
     b = _mk(tmp_path)
-    for i in range(3):
-        b.add(Memory(content=f"fact {i}", embedding=[float(i), 0.0, 0.0]))
-    mid, mat = b.scan_embeddings_matrix()
-    assert len(mid) == 3
-    assert mat.shape == (3, 3)
-    assert mat.dtype.name == "float32"
+    exact = b.add(Memory(content="exact direction", embedding=[1.0, 0.0, 0.0]))
+    near = b.add(Memory(content="near direction", embedding=[3.0, 4.0, 0.0]))
+    b.add(Memory(content="orthogonal", embedding=[0.0, 1.0, 0.0]))
+    hits = b.vector_search([1.0, 0.0, 0.0], limit=2)
+    assert [m.id for m, _ in hits] == [exact, near]
+    assert [score for _, score in hits] == pytest.approx([1.0, 0.6])
+    b.close()
 
 
-def test_scan_embeddings_ignores_corrupt_and_mixed_dimensions(tmp_path):
+def test_vector_search_ignores_corrupt_and_mixed_dimensions(tmp_path):
     b = _mk(tmp_path)
     good_id = b.add(Memory(content="good", embedding=[1.0, 0.0, 0.0]))
     b.add(Memory(content="old model", embedding=[1.0, 0.0]))
@@ -239,9 +240,10 @@ def test_scan_embeddings_ignores_corrupt_and_mixed_dimensions(tmp_path):
     )
     b.conn.commit()
 
-    ids, matrix = b.scan_embeddings_matrix()
-    assert ids == [good_id]
-    assert matrix.shape == (1, 3)
+    hits = b.vector_search([1.0, 0.0, 0.0], limit=None)
+    assert [m.id for m, _ in hits] == [good_id]
+    assert hits[0][1] == pytest.approx(1.0)
+    b.close()
 
 
 def test_corrupt_legacy_row_degrades_to_safe_defaults(tmp_path):
@@ -414,18 +416,15 @@ def test_temporal_scan_lightweight(tmp_path):
     assert not hasattr(rows[0], "metadata")  # tuple, not Memory
 
 
-def test_scan_embeddings_pair_matches_matrix(tmp_path):
+def test_vector_search_scores_all_matching_dimensions(tmp_path):
     b = _mk(tmp_path)
-    for i in range(3):
-        b.add(Memory(content=f"f{i}", embedding=[float(i), float(i + 1)]))
-    ids_pair, vecs = b.scan_embeddings()
-    ids_mat, mat = b.scan_embeddings_matrix()
-    assert ids_pair == ids_mat
-    assert mat.shape == (3, 2)
-    # float32 round-trip preserves values within tolerance
-    for m, row in zip(vecs, mat, strict=True):
-        for a, bb in zip(m, row, strict=True):
-            assert abs(a - bb) < 1e-6
+    exact = b.add(Memory(content="vector exact", embedding=[1.0, 0.0]))
+    near = b.add(Memory(content="vector diagonal", embedding=[1.0, 1.0]))
+    distant = b.add(Memory(content="vector perpendicular", embedding=[0.0, 1.0]))
+    hits = b.vector_search([1.0, 0.0], limit=None)
+    assert [m.id for m, _ in hits] == [exact, near, distant]
+    assert [score for _, score in hits] == pytest.approx([1.0, 2 ** -0.5, 0.0])
+    b.close()
 
 
 def test_recent_pagination_edge(tmp_path):

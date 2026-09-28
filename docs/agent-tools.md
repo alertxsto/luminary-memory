@@ -10,11 +10,12 @@ that runs every turn.
 {"name": "luminary_recall", "description": "Recall relevant memories from the Luminary store for a query.", "parameters": {"query": "string (required)", "limit": "integer (optional; provider default 10)"}}
 ```
 
-Runs the full scoped four-strategy fused recall (semantic + keyword + temporal
-+ graph). The JSON result contains `status`, `reason`, `confidence`,
-`memories`, `scores`, and `provenance`; weak or unsupported queries can return
-an empty `abstain` result. Core matches are omitted from the tool payload when
-they are already present in the system prompt and are reported through
+Runs the full scoped four-strategy recall (semantic + keyword + temporal +
+graph). The JSON result contains `status`, `reason`, `confidence`, `memories`,
+`scores`, and `provenance`; unsupported queries may return an empty `abstain`.
+An operational strategy failure reports `degraded` with surviving hits or
+`error` without usable hits. Core matches already present in the system prompt
+are omitted from the tool payload and reported through
 `deduplicated_core_ids`.
 
 ## luminary_ingest
@@ -45,10 +46,10 @@ inspection view, not a recall query and not an episode-ledger reader.
 ```
 
 Pins a memory as `core` and raises it to the configured pin threshold (default
-`0.9`). Core memories are loaded into the
-system prompt at the start of every session — the DB-backed equivalent of
-`MEMORY.md`. The Hermes provider disables destructive semantic replacement, so
-similar but contradictory rules remain auditable until explicitly superseded.
+`0.9`). Core memories are loaded into the system prompt at the start of every
+session — the DB-backed equivalent of `MEMORY.md`. A same-key, different-value
+claim remains auditable until a caller explicitly supersedes an eligible
+predecessor; similar text alone does not replace it.
 
 ## luminary_core_remove
 

@@ -5,8 +5,9 @@ A lightweight, self-hosted memory layer for AI agents.
 > Released baseline: `0.3.0` — the strict CLI/Hermes accuracy path: scope
 > isolation, evidence/provenance, conflict history, abstention, delivery-safe
 > Telegram activity reporting, scoped JSONL transparency events, and
-> exact-session continuity fallback. Current verification: `505 passed,
-> 3 skipped`, 83% full-source coverage.
+> exact-session continuity fallback. The current checkout's audit fixes and
+> local verification are recorded in [`FIXES.md`](../FIXES.md); a passing local
+> suite does not by itself establish a new published release.
 
 ## What it does
 
@@ -16,7 +17,7 @@ A lightweight, self-hosted memory layer for AI agents.
 
 ## Key features
 
-- Four retrieval strategies fused into one ranked recall via weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1) + query expansion.
+- Four scoped retrieval strategies combined via weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1), then reranked by final evidence confidence; `scores` expose confidence and `fused_scores` retain weighted RRF separately.
 - **First-class Hermes Agent memory provider**, auto-recall every turn and
   evaluate automatic turn batches for durable storage
   (`memory.provider: luminary`); zero LLM tokens for retrieval. Every accepted

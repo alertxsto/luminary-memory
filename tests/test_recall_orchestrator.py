@@ -1,4 +1,5 @@
 from luminary_memory.api import MemoryClient
+from luminary_memory.config import Settings
 from luminary_memory.types import RecallResult
 
 
@@ -37,13 +38,19 @@ def test_recall_respects_token_budget(tmp_path):
     assert total_tokens <= 2
 
 
-def test_recall_dedup_collapses_near_duplicates(tmp_path):
-    c = MemoryClient(db_path=str(tmp_path / "t.db"), engine=_FakeEngine())
-    _ingest(c, "alpha beta gamma delta")
-    _ingest(c, "alpha beta gamma delta")
+def test_recall_dedup_collapses_distinct_near_duplicates(tmp_path):
+    c = MemoryClient(
+        settings=Settings(db_path=str(tmp_path / "t.db"),
+                          recall_cliff_threshold=1.0, query_planner=False),
+        engine=_FakeEngine(),
+    )
+    original = _ingest(c, "alpha beta gamma delta epsilon zeta eta theta iota kappa")
+    variation = _ingest(c, "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda")
+    assert original != variation
+    assert c.get(original) is not None and c.get(variation) is not None
     res = c.recall("alpha beta gamma", limit=5)
-    contents = [m.content for m in res.memories]
-    assert contents.count("alpha beta gamma delta") == 1
+    assert len({m.id for m in res.memories} & {original, variation}) == 1
+    c.close()
 
 
 def test_recall_propagates_empty_store(tmp_path):

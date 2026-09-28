@@ -7,13 +7,16 @@ class WhitelistFilter:
     def __init__(self, patterns: list[str] | None = None, min_length: int = 3):
         self.min_length = min_length
         compiled: list[re.Pattern] = []
-        for p in (patterns or []):
+        if patterns is None or not patterns:
+            self._patterns = compiled
+            return
+        for p in patterns:
+            if not isinstance(p, str) or not p.strip():
+                raise ValueError(f"invalid ingest allowlist pattern: {p!r}")
             try:
                 compiled.append(re.compile(p, re.IGNORECASE))
-            except re.error:
-                # Invalid regex from user config: ignore the pattern rather
-                # than crashing at construction time.
-                continue
+            except re.error as exc:
+                raise ValueError(f"invalid ingest allowlist pattern: {p!r}") from exc
         self._patterns = compiled
 
     def accepts(self, text: str) -> bool:

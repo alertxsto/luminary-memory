@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from itertools import islice
+
 
 def _tokens(text: str) -> set[str]:
     return set(text.lower().split())
 
 
 def jaccard_similarity(a: str, b: str) -> float:
-    ta, tb = _tokens(a), _tokens(b)
+    return _jaccard_tokens(_tokens(a), _tokens(b))
+
+
+def _jaccard_tokens(ta: set[str], tb: set[str]) -> float:
     if not ta and not tb:
         return 1.0
     inter = len(ta & tb)
@@ -31,20 +36,17 @@ def dedup_jaccard(
     threshold: float = 0.85,
     max_pairs: int = 500,
 ) -> list[tuple]:
-    """Dedup near-duplicates by Jaccard token overlap.
+    """Dedup all candidates, comparing against at most ``max_pairs`` retained hits.
 
-    ``max_pairs`` caps the candidate window to the top-N scored items
-    (already ranked by relevance) before pairwise comparison — recall stays
-    O(n · max_pairs) instead of O(n²) on large result sets.
+    This bounds the work per candidate without silently dropping candidates
+    beyond the first window in unlimited recall.
     """
-    window = scored[:max_pairs] if max_pairs and len(scored) > max_pairs else scored
     kept: list[tuple] = []
-    for mem, score in window:
-        duplicate = False
-        for k_mem, _ in kept:
-            if jaccard_similarity(mem.content, k_mem.content) >= threshold:
-                duplicate = True
-                break
-        if not duplicate:
-            kept.append((mem, score))
+    kept_tokens: list[set[str]] = []
+    for row in scored:
+        tokens = _tokens(row[0].content)
+        previous_tokens = islice(reversed(kept_tokens), max_pairs if max_pairs > 0 else None)
+        if not any(_jaccard_tokens(tokens, previous) >= threshold for previous in previous_tokens):
+            kept.append(row)
+            kept_tokens.append(tokens)
     return kept

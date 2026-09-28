@@ -38,7 +38,6 @@ def test_query_expansion_falls_back_to_rules(tmp_path):
             return [[0.1, 0.2, 0.3] for _ in ts]
 
     c = MemoryClient(db_path=str(tmp_path / "r.db"), engine=_E())
-    c.settings.rule_auto_replace = False
     # durable rule: topic overlaps "laporan" -> contributes "tabel"
     mid = c.ingest("laporan selalu pakai markdown tabel", tags=["rule"])
     assert mid is not None
@@ -66,7 +65,6 @@ def test_query_expansion_rule_noop_when_no_overlap(tmp_path):
             return [[0.1, 0.2, 0.3] for _ in ts]
 
     c = MemoryClient(db_path=str(tmp_path / "rn.db"), engine=_E())
-    c.settings.rule_auto_replace = False
     mid = c.ingest("selalu pakai markdown tabel di telegram", tags=["rule"])
     m = c.get(mid)
     m.importance = 0.95
@@ -101,7 +99,6 @@ def test_query_expansion_rule_short_words_noop(tmp_path):
         def embed_batch(self, ts): return [[0.1, 0.2] for _ in ts]
 
     c = MemoryClient(db_path=str(tmp_path / "sw.db"), engine=_E())
-    c.settings.rule_auto_replace = False
     mid = c.ingest("xy ab cd", tags=["rule"])  # all words len <= 2 -> no keyword
     m = c.get(mid)
     m.importance = 0.95
@@ -120,7 +117,6 @@ def test_query_expansion_rule_extra_empty_noop(tmp_path):
         def embed_batch(self, ts): return [[0.1, 0.2] for _ in ts]
 
     c = MemoryClient(db_path=str(tmp_path / "ee.db"), engine=_E())
-    c.settings.rule_auto_replace = False
     # no tags so the graph has no entity to expand from (rule expansion path only)
     mid = c.ingest("laporan tabel", tags=[])
     m = c.get(mid)

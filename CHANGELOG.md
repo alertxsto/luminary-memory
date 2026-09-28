@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Explicit supersession now validates exact lineage and owner and retires its
+  predecessor atomically; malformed allowlists fail closed and batch conflicts
+  match sequential writes. Export/import preserves tenant-specific copies,
+  ancestor IDs, and claim lifecycle state.
+- Retrieval excludes invalid/expired candidates before top-K, normalizes
+  lexical evidence, reports both confidence and fused RRF scores, enforces
+  score floors and token budgets on fallback, and surfaces search failures.
+  Graph relationships and core tags are indexed and matched exactly.
+- SQLite and PostgreSQL retrieval/maintenance paths bound hot-path work;
+  corrupt SQLite numeric fields no longer interrupt reads.
+- Release preparation validates every version anchor, installer upgrades and
+  verifies its distribution before activation, and publication depends on
+  passing tests plus real-host/model smokes and matching built metadata.
+- Version-bump preflight and its regression test now match the website's
+  declared-version copy without rewriting historical release rows.
+- Documentation and benchmark runner now match the removed automatic rule
+  replacement setting. A fresh deterministic controlled-gold run is recorded
+  separately from historical results; its lower recall is not presented as a
+  production-model or release claim.
+
+
 ## [0.3.0] - 2026-08-24
 
 ### Summary

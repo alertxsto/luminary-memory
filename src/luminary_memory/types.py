@@ -52,11 +52,20 @@ class ScoredMemory:
     strategy: str  # "semantic" | "keyword" | "temporal" | "graph"
 
 @dataclass
+@dataclass
 class RecallResult:
+    """Final recalled hits in confidence order.
+
+    ``fused_scores`` are the same hits' weighted reciprocal-rank scores before
+    confidence reranking (``None`` for fallback hits without an RRF ranking).
+    confidence reranking; neither list is sorted independently.
+    """
+
     memories: list[Memory]
     scores: list[float]
     strategies_hit: dict[str, int]
     status: str = "ok"
     reason: str | None = None
     confidence: float = 0.0
-    provenance: list[dict[str, Any]] = field(default_factory=list)
+    fused_scores: list[float | None] = field(default_factory=list)
+    fused_scores: list[float] = field(default_factory=list)

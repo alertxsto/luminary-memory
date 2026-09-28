@@ -1,14 +1,19 @@
 # Benchmark Results — luminary-memory
 
-> Historical pipeline-smoke numbers plus the current controlled gold-set run.
-> These results do not by themselves establish superiority over Mem0,
-> Hindsight, or another provider.
+> Historical pipeline and controlled-gold measurements are retained below.
+> A separate current-checkout smoke is shown first. None establishes
+> superiority over Mem0, Hindsight, or another provider.
 
 ## Historical pipeline run (2026-08-18, v0.2.15)
 
+The current checkout run was:
+
+```bash
+uv run --extra dev python -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-bench-doc-smoke.json
 ```
-python benchmarks/run_benchmarks.py --n 5000 --backend sqlite --report /tmp/bench_final_run.json
-```
+
+It used the deterministic fake embedding engine, strict recall, and evidence
+requirements. The 12 independently labelled
 
 | Metric | Value |
 |--------|-------|
@@ -16,13 +21,12 @@ python benchmarks/run_benchmarks.py --n 5000 --backend sqlite --report /tmp/benc
 | Ingest (5k, batch) | 2.1 s (~2,400 mem/s) |
 | Recall e2e p50 | **76.9 ms** (p95 76.9, mean 78.2) |
 | Quality | See the independent gold-set run below |
-| Legacy persistent-context build (historical) | **4 ms** (measured, warm) |
-| Rule auto-replace scan (vectorized) | **31 ms** (measured, warm) |
-| Temporal recall (limit 20) | **28 ms** (measured, warm) |
-
-> v0.2.15 re-verified on a 2k store (deterministic seed): MRR **1.0** on all
+The historical gold score below was recall@10 **0.95**. The current controlled
+fixture is lower; the older figures **must not** be described as current
+accuracy or assumed to survive changes in confidence or ranking. The real
+default embedding model has a separate semantic smoke in
+[`FIXES.md`](../FIXES.md), not a matched full gold-set run.
 > queries, e2e recall ~32 ms p50. Adaptive-importance re-estimation and
-> rule-aware query expansion did **not** change the quality metrics.
 
 ## Latency by strategy (5k store, deterministic embedding)
 
@@ -61,11 +65,11 @@ representative of a real store.
 | Operation | Measured | Why it matters |
 |-----------|----------|----------------|
 | Legacy persistent context (top-8 by importance) | **4 ms** | Historical only; the v0.2.18 provider no longer injects this tier |
-| Rule auto-replace scan | **31 ms** | One matmul over stored embeddings instead of N Python cosines |
+| Rule auto-replace scan | **31 ms** | Historical measured cost; this automatic replacement path has since been removed |
 | Access bookkeeping (`touch_memories`) | batched | One `UPDATE ... WHERE id IN (...)` instead of N writes |
 | Temporal recall | **28 ms** | Batch top-id fetch (`get_many`), no N+1 |
 
-## Current deep-audit run (2026-08-23, v0.2.18 working tree)
+## Historical deep-audit run (2026-08-23, v0.2.18 working tree)
 
 Command:
 
@@ -92,7 +96,7 @@ The independent gold arm remained unchanged:
 | Evidence support precision | 1.00 |
 | Cross-scope leakage | 0 |
 
-## Independent gold-set run
+## Historical independent gold-set run
 
 Command:
 
@@ -100,9 +104,9 @@ Command:
 python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-gold.json
 ```
 
-The gold arm uses `benchmarks/gold_micro.jsonl`, which contains fixed relevant
-claims and no-answer cases authored outside the retriever. The latest controlled
-run reported:
+The gold arm used `benchmarks/gold_micro.jsonl`, with fixed relevance labels and
+no-answer cases authored outside the retriever. This earlier controlled run
+reported (not current checkout results):
 
 | Metric | Result |
 |--------|--------|
@@ -115,21 +119,21 @@ run reported:
 | Evidence support precision | 1.00 |
 | Cross-scope leakage | 0 |
 
-This is a regression signal for the controlled fixture, not a competitor
-ranking. The next accuracy milestone is a matched LongMemEval/competitor
-adapter with identical embedding, extraction, context, and answer settings.
+These historical results are a regression reference, not a competitor ranking.
+A matched LongMemEval/competitor adapter would require identical embedding,
+extraction, context, and answer settings.
 
-## Accuracy is preserved
+## Historical v0.2.12 accuracy comparison
 
-Every optimization in v0.2.12 (vectorized auto-replace, lean legacy persistent-context
-scan, batched access/lifecycle/temporal) was verified against the
-pre-optimization baseline: the quality metrics (recall@5, recall@10, MRR) are
-**identical** for the same store and queries. Speed did not cost accuracy.
+At that time, vectorized auto-replace, lean legacy persistent-context scans,
+and batched access/lifecycle/temporal operations gave identical recall@k and
+MRR for the same store and queries before and after those optimizations.
+This is **not** a claim about the current checkout (see the smoke above).
 
-## What was optimized (identical results, no approximation)
+## Historical optimized paths (some since removed)
 
-1. **Vectorized cosine similarity** — per-row numpy loop → single matmul (`sqlite.py`).
-2. **`scan_embeddings_matrix`** — rule auto-replace loads (id, matrix) without full Memory materialization; one matmul instead of N Python cosines.
+1. **Vectorized cosine similarity** — per-row numpy loop became a matmul; current SQLite vector search uses bounded batches instead of a full-store matrix.
+2. **`scan_embeddings_matrix`** — the historical automatic rule-replacement scan; the setting and helper have since been removed.
 3. **`top_by_importance`** — persistent-context scan reads only id/content/importance/access_count, no embedding blobs.
 4. **`touch_memories`** — access bookkeeping in one `UPDATE ... WHERE id IN (...)`.
 5. **`delete_many` / `update_importances`** — lifecycle passes issue a handful of statements instead of one write per memory.

@@ -26,7 +26,7 @@ Agents are only as good as what they remember. A stateless agent re-learns the s
 - **Graph**, entity co-occurrence with automatic curation
 - **Active-task session continuity**, exact-session episodes preserve short-term context when durable recall abstains without promoting raw turns into semantic memory or widening scope across users, agents, or sessions.
 
-Strategies fuse via **weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1)** → **scope/status/time filtering** → **conservative confidence and abstention** → **adaptive cutoff** → **Jaccard deduplication** → **token budget**. Short queries may be expanded with graph entities or stored content tokens before embedding; there is no language-specific alias classifier.
+Retrieval filters **scope/status/validity before each strategy's top-K**, then applies **weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1)** → **confidence rerank and optional strict abstention** → **adjacent-confidence cliff** (finite limits) → **Jaccard deduplication** → **confidence floor** → **token budget and output limit**. `RecallResult.scores` are final confidences; `fused_scores` separately expose RRF values. Short queries may be expanded with current graph entities or stored content tokens before embedding; there is no language-specific alias classifier.
 
 **Important rules always in context.** Durable rules tagged `core` are auto-loaded into the system prompt every session (the DB-backed `MEMORY.md`). All other durable memories are surfaced through query retrieval: relevant facts are recalled on demand (ranked by query relevance) and merged with the core block under anti-duplication. When durable recall abstains, the Hermes provider can also expose a bounded exact-session continuity block so an ambiguous follow-up stays attached to its active task without turning raw conversation into durable memory.
 
@@ -145,6 +145,7 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `rrf_k` | `LUMINARY_RRF_K` | `60` |
 | `strategy_weights` | `LUMINARY_WEIGHT_{SEMANTIC,KEYWORD,GRAPH,TEMPORAL}` | `0.4 / 0.3 / 0.2 / 0.1` |
 | `recall_cliff_threshold` | `LUMINARY_RECALL_CLIFF_THRESHOLD` | `0.45` |
+| `recall_min_score` | `LUMINARY_RECALL_MIN_SCORE` | `0.0` |
 | `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | `0.85` |
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` |
 | `max_memories` | `LUMINARY_MAX_MEMORIES` | `1000` |
@@ -154,8 +155,6 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `consolidate_semantic` | `LUMINARY_CONSOLIDATE_SEMANTIC` | `true` |
 | `importance_auto` | `LUMINARY_IMPORTANCE_AUTO` | `true` |
 | `importance_recall_boost` | `LUMINARY_IMPORTANCE_RECALL_BOOST` | `1.0` |
-| `rule_auto_replace` | `LUMINARY_RULE_AUTO_REPLACE` | `true` (legacy library default; requires explicit supersession) |
-| `rule_auto_replace_threshold` | `LUMINARY_RULE_AUTO_REPLACE_THRESHOLD` | `0.85` |
 | `rule_importance` | `LUMINARY_RULE_IMPORTANCE` | `0.9` |
 | `core_tag` | `LUMINARY_CORE_TAG` | `core` |
 | `core_top_n` | `LUMINARY_CORE_TOP_N` | `12` |
@@ -170,10 +169,10 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `llm_max_tokens` | `LUMINARY_LLM_MAX_TOKENS` | `512` |
 | `rule_keywords` | `LUMINARY_RULE_KEYWORDS` | `""` (compatibility only; not used for durability classification) |
 
-> The direct library client keeps `rule_auto_replace=true` for compatibility,
-> but replacement still requires an explicit `supersedes_id`. The accuracy-facing
-> CLI and Hermes provider disable replacement unless that relationship is supplied
-> and preserve conflicting claims for auditability. `rule_keywords` is retained
+> An explicit `supersedes_id` creates a new version only when the referenced
+> active/conflicted memory belongs to the same exact scope and claim key.
+> The predecessor remains in history as `superseded`; similarity never
+> authorizes an in-place overwrite. `rule_keywords` is retained
 > only for callers that already depend on the compatibility matcher; it does not
 > classify memory by language or vocabulary.
 
@@ -197,20 +196,14 @@ recalls what is relevant before the agent answers, then ingests what mattered
 after, and a background lifecycle keeps the store lean.
 
 ```
-        ┌───────────────────────────── LOOP ─────────────────────────────┐
-        │                                                               │
-   recall(query) ──► scoped strategy candidates ──► weighted RRF ──► confidence/abstention ──► ranked results
-        ▲            semantic │ keyword │ temporal │ graph   (per-strategy weights)   (cliff detection)
-        │                                                               │
-        └── inject into agent context ◄── token budget (4096) ◄── dedup (Jaccard 0.85)
-                                                            │            │
-   core memory ──► auto-loaded every session (tag 'core') ─┘ (merged, anti-duplicated)
-                                                            │
-   ingest(text) ──► whitelist ──► (LLM curation) ──► embed (ONNX 384-d) ─┘
-   Hermes sync_turn ──► exact-session episode ledger ──► serialized retain ──► incremental review ──► capture / supersede / retract
-                                                            │
-   lifecycle() ──► cleanup (TTL) ──► consolidate (semantic + Jaccard, pinned exempt) ──► prune (importance, pinned exempt)
-   maintenance() ──► LLM reviews store ──► keep │ update │ delete stale facts
+recall(query) ──► optional expansion ──► scope/status/validity-filtered strategy top-K
+              ──► weighted RRF ──► confidence rerank / strict abstention
+              ──► adjacent-confidence cliff (finite limit) ──► Jaccard dedup
+              ──► confidence floor ──► token budget / output limit ──► agent context
+core memory (exact 'core' tag, loaded each session) ──► anti-duplicate merge ──┘
+ingest(text) ──► whitelist ──► optional curation ──► embed / evidence / graph
+Hermes sync_turn ──► exact-session episode ledger ──► retain / review
+lifecycle() ──► TTL cleanup ──► consolidate ──► importance prune
 ```
 
 **Accuracy safeguards:**
@@ -223,9 +216,9 @@ after, and a background lifecycle keeps the store lean.
 | **Evidence** | Stored claims retain evidence quote, source, validity time, and audit provenance |
 | **Conflict safety** | Conflicting claim keys remain versioned/conflicted until explicit supersession or resolution |
 | **Core memory** | Rules tagged `core` are auto-loaded into the system prompt every session (the DB-backed MEMORY.md), independent of query match |
-| **Weighted fusion** | Each strategy carries a tunable weight (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1), so high-signal strategies dominate the ranking |
+| **Weighted fusion** | Tunable strategy weights choose the candidate RRF ordering; final results are reranked by evidence confidence. `scores` are confidences, and `fused_scores` retain RRF values |
 | **Query expansion** | Short queries are expanded with co-occurring graph entities before embedding; when the graph is empty, content tokens from a topically related important memory may be appended (v0.2.15). No language-specific alias list is used. |
-| **Importance boost** | Memories at importance ≥ 0.8 get a ranking bonus, lifting durable rules above weak-but-recent noise |
+| **Importance boost** | Importance ≥ 0.8 can boost fused candidate order before confidence reranking, without guaranteeing an irrelevant rule surfaces |
 | **Adaptive cutoff** | Cliff detection keeps only the relevant cluster: a sparse store returns 3 strong matches instead of padding to 20, while a dense relevant store keeps everything (no over-filtering) |
 | **Token budget** | Hard cap so memory injection never blows up the context window |
 | **Session continuity** | Hermes may inject only a bounded, untrusted recent-episode block from the exact active session when durable recall has no usable result |
@@ -236,7 +229,7 @@ after, and a background lifecycle keeps the store lean.
 |-------|-----------|
 | **Lifecycle** | TTL cleanup, semantic consolidation (embedding cosine, fallback Jaccard), importance-based pruning (all batched at the backend level) |
 | **Rule pinning** | Memories at importance ≥ 0.9 are pinned: never pruned, never deleted by consolidation |
-| **Rule replacement** | Hermes/CLI disable destructive replacement by default; legacy direct-client behavior remains compatibility-controlled |
+| **Rule replacement** | Same-key conflicts remain auditable until explicit supersession names the exact eligible predecessor; no similarity-based replacement |
 | **Store hygiene** | Automatic transcript batches require a curated summary before entering durable memory; malformed or uncurated batches stay only in the exact-session ledger, while explicit writes preserve their supplied provenance. Durability is not inferred from language-specific keywords. |
 | **Auto importance** | Every memory is scored by recency + access + graph centrality; prune and health use live values. On recall, frequently-used memories are re-estimated immediately so they rank higher in the next turn's query recall (v0.2.15, `LUMINARY_IMPORTANCE_AUTO`) |
 | **Max memories cap** | `max_memories` (default 1000) prunes the oldest/lowest-importance when the store exceeds it |

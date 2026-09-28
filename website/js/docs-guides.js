@@ -61,15 +61,15 @@
   ];
 
   var libraryRecall = [
-    parameter("rrf_k", "int", "60", "Reciprocal Rank Fusion smoothing constant.", "LUMINARY_RRF_K"),
+    parameter("rrf_k", "int", "60", "Nonnegative RRF constant: each list adds weight / (rrf_k + zero-based rank + 1).", "LUMINARY_RRF_K"),
     parameter("weight semantic / keyword / graph / temporal", "float", "0.4 / 0.3 / 0.2 / 0.1", "Per-strategy fusion weights.", "LUMINARY_WEIGHT_*"),
-    parameter("recall_cliff_threshold", "float", "0.45", "Trim results after a score drop larger than this fraction.", "LUMINARY_RECALL_CLIFF_THRESHOLD"),
+    parameter("recall_cliff_threshold", "float", "0.45", "Adjacent final-confidence drop that cuts finite result lists; lower trims more aggressively.", "LUMINARY_RECALL_CLIFF_THRESHOLD"),
     parameter("dedup_jaccard_threshold", "float", "0.85", "Token-overlap threshold for removing near duplicates.", "LUMINARY_DEDUP_JACCARD_THRESHOLD"),
-    parameter("token_budget", "int", "4096", "Maximum tokens serialized into context.", "LUMINARY_TOKEN_BUDGET"),
+    parameter("token_budget", "int", "4096", "Hard cap on returned tokens, including fallback results.", "LUMINARY_TOKEN_BUDGET"),
     parameter("importance_recall_boost", "float", "1.0", "Multiplier for memories with importance at least 0.8.", "LUMINARY_IMPORTANCE_RECALL_BOOST"),
-    parameter("recall_min_score", "float", "0.0", "Score floor; zero disables the floor.", "LUMINARY_RECALL_MIN_SCORE"),
+    parameter("recall_min_score", "float", "0.0", "Minimum final confidence in normal and fallback recall; zero disables.", "LUMINARY_RECALL_MIN_SCORE"),
     parameter("query_planner", "bool", "true", "Skip strategies without a useful signal.", "LUMINARY_QUERY_PLANNER"),
-    parameter("query_planner_keyword_threshold", "float", "0.9", "Strong keyword score at which planner can skip other passes.", "LUMINARY_QUERY_PLANNER_KEYWORD_THRESHOLD")
+    parameter("query_planner_keyword_threshold", "float", "0.9", "Distinct query-term coverage above this threshold skips temporal, not semantic or graph.", "LUMINARY_QUERY_PLANNER_KEYWORD_THRESHOLD")
   ];
 
   var safetyParameters = [
@@ -97,7 +97,7 @@
 
   var llmParameters = [
     parameter("ingest_llm", "bool", "false", "Enable summary extraction and grounded incremental review.", "LUMINARY_INGEST_LLM"),
-    parameter("ingest_whitelist", "comma-separated list", "[]", "Optional prefixes/tags accepted for ingest.", "LUMINARY_INGEST_WHITELIST"),
+    parameter("ingest_whitelist", "comma-separated regex list", "[]", "Case-insensitive content regexes; invalid patterns reject client construction.", "LUMINARY_INGEST_WHITELIST"),
     parameter("llm_base_url", "URL | None", "None", "OpenAI-compatible enrichment endpoint.", "LUMINARY_LLM_BASE_URL"),
     parameter("llm_api_key", "secret", "None", "Credential for the enrichment endpoint.", "LUMINARY_LLM_API_KEY"),
     parameter("llm_model", "str", "gpt-4o-mini", "Enricher model id.", "LUMINARY_LLM_MODEL"),
@@ -107,9 +107,7 @@
 
   var compatibilityParameters = [
     parameter("rule_keywords", "str", "empty", "Legacy phrase-matcher input; not used to classify durability.", "LUMINARY_RULE_KEYWORDS"),
-    parameter("rule_importance", "float", "0.9", "Pin/protection threshold, not a language keyword score.", "LUMINARY_RULE_IMPORTANCE"),
-    parameter("rule_auto_replace", "bool", "true library / false Hermes", "Legacy explicit replacement path; provider disables destructive replacement.", "LUMINARY_RULE_AUTO_REPLACE"),
-    parameter("rule_auto_replace_threshold", "float", "0.85", "Similarity threshold only after caller authorizes replacement.", "LUMINARY_RULE_AUTO_REPLACE_THRESHOLD")
+    parameter("rule_importance", "float", "0.9", "Pin/protection threshold, not a language keyword score.", "LUMINARY_RULE_IMPORTANCE")
   ];
 
   var providerParameters = [
@@ -162,7 +160,7 @@
           title: "First use: Python",
           paragraphs: ["Ingest accepts content plus evidence, ownership, validity, claim, and provenance fields. Recall is scoped and returns a stateful result instead of an opaque list."],
           code: "from luminary_memory import MemoryClient\n\nclient = MemoryClient(db_path=\"memory.db\", scope={\"user_id\": \"u1\"})\nmid = client.ingest(\n    \"The deploy target is the staging cluster\",\n    tags=[\"deploy\"],\n    source=\"quickstart\",\n    user_id=\"u1\",\n    claim_key=\"deploy.target\",\n    evidence_quote=\"The deploy target is the staging cluster\",\n)\nresult = client.recall(\"where do we deploy?\", limit=5)\nprint(mid, result.status, result.confidence, result.provenance)",
-          returns: ["ingest() returns the canonical integer id, or None for empty/whitelist-rejected input.", "recall() returns RecallResult with memories, scores, strategies_hit, status, reason, confidence, and provenance."],
+          returns: ["ingest() returns the canonical integer id, or None for empty/whitelist-rejected input.", "recall() returns RecallResult with memories, parallel confidence scores and fused_scores (None for fallback hits), strategies_hit, status, reason, confidence, and provenance."],
           tips: ["Pass a scope at client construction for a hard ownership boundary. A bound client cannot switch user, workspace, agent, or session in a later call.", "Use claim_key plus supersedes_id for a correction; a different same-key fact without explicit supersession remains a conflict."]
         },
         {
@@ -251,7 +249,7 @@
           paragraphs: ["The system keeps ingestion, retrieval, context injection, and maintenance separate so an untrusted transcript cannot silently become durable truth."],
           table: table("Pipeline stages", ["Stage", "Inputs", "Guarantee"], [
             ["Ingest", "text, scope, evidence, claims", "Whitelist, hash, evidence validation, embed, index"],
-            ["Recall", "query, scope, tags, budget", "Scope/status first, four candidates, fusion, abstention"],
+            ["Recall", "query, scope, tags, budget", "Scope/status/validity before top-K, four strategies, fusion, confidence rerank, abstention"],
             ["Injection", "core + recall + session", "Anti-duplicated, token-bounded context surfaces"],
             ["Lifecycle", "TTL, duplicate, importance", "Batched cleanup/consolidation/pruning"],
             ["Repair", "legacy provenance/scope", "Dry-run first; apply backs up and archives"]
@@ -265,8 +263,8 @@
         },
         {
           title: "Recall and delivery",
-          paragraphs: ["Semantic, keyword, temporal, and graph candidates are scoped before fusion. Weighted RRF, evidence gates, adaptive cutoff, deduplication, and token budgets shape the returned block."],
-          code: "scope -> candidates -> RRF -> confidence/evidence -> cutoff -> dedup/budget -> context | abstain\nabstain/no usable block -> exact-session continuity fallback",
+          paragraphs: ["Active, valid semantic, keyword, temporal, and graph candidates are scoped before top-K and weighted RRF. Confidence then reranks candidates, strict recall may abstain, and the adjacent-confidence cutoff, deduplication, score floor, and hard budget finish the result."],
+          code: "scope/status/validity -> strategy top-K -> weighted RRF -> confidence rerank / abstain -> adjacent-confidence cliff -> Jaccard dedup -> confidence floor -> token budget / limit -> context\nabstain/no usable block -> exact-session continuity fallback",
           warnings: ["Session episodes never participate in ranking, never widen user/workspace/agent/session scope, and never become durable merely because the agent quoted them."]
         },
         {
@@ -303,7 +301,7 @@
           paragraphs: ["Memory is the durable row; RecallResult is the retrieval envelope; Settings exposes engine configuration. Batch ingest applies the same evidence, scope, deduplication, and indexing rules as one-by-one writes."],
           table: table("Stable public types", ["Type", "Contains", "Use"], [
             ["Memory", "content, tags, scope, status, validity, confidence, evidence, claims", "Durable row and mutation input."],
-            ["RecallResult", "memories, scores, strategies_hit, status, reason, confidence, provenance", "Safe retrieval result; handle abstain explicitly."],
+            ["RecallResult", "memories, scores, fused_scores, strategies_hit, status, reason, confidence, provenance", "Safe retrieval result; handle abstain and operational errors explicitly."],
             ["Settings", "backend, embeddings, recall, safety, core, lifecycle, LLM", "Engine defaults from LUMINARY_* environment variables."]
           ]),
           code: "client.ingest_batch(\n    texts,\n    tags=[...],\n    metadata=[...],\n)  # one id/None per input",
@@ -323,7 +321,7 @@
           paragraphs: ["Runs scoped semantic, keyword, temporal, and graph retrieval, fuses rankings, gates evidence, applies adaptive cutoff/deduplication, and serializes within a token budget."],
           parameters: recallParameters,
           code: "client.recall(query, limit=10, token_budget=None, tags=None,\n               tag_mode=\"any\", scope=None, strict=None,\n               include_conflicted=False)",
-          returns: ["RecallResult.memories and parallel scores.", "strategies_hit, status (ok/fallback/abstain), reason, confidence, and provenance."],
+          returns: ["RecallResult.memories with parallel final-confidence scores and pre-rerank fused_scores (None for fallback hits).", "strategies_hit, status (ok/fallback/abstain/empty/degraded/error), reason, confidence, and provenance."],
           tips: ["Treat status=abstain as a correct no-answer outcome. Do not force the first candidate into a prompt.", "Normal recall hides conflicted, superseded, deleted, and expired rows; include_conflicted is for diagnostics."]
         },
         {
@@ -366,9 +364,9 @@
         },
         {
           title: "Fusion and query planning",
-          paragraphs: ["Weighted reciprocal-rank fusion combines available lists using semantic 0.4, keyword 0.3, graph 0.2, and temporal 0.1 by default. Short queries may expand with co-occurring graph entities or tokens from a topically related important memory."],
-          code: "score = Σ strategy_weight / (rrf_k + rank)\nsemantic=0.4  keyword=0.3  graph=0.2  temporal=0.1\nrrf_k=60",
-          tips: ["Use keyword search for direct inspection and recall for evidence-aware context. They are intentionally different surfaces.", "If an unrelated query returns no memories, that is abstention doing its job, not a retrieval crash."]
+          paragraphs: ["Weighted reciprocal-rank fusion combines available lists using semantic 0.4, keyword 0.3, graph 0.2, and temporal 0.1 by default. Backend BM25 only orders keyword candidates; distinct query-term coverage in [0,1] drives planner/confidence. A strong keyword hit skips temporal. Short queries may expand with current graph entities or tokens from a valid, topically related memory. Public scores are final confidences; fused_scores expose RRF separately."],
+          code: "fused_score = Σ strategy_weight / (rrf_k + zero_based_rank + 1)\nsemantic=0.4  keyword=0.3  graph=0.2  temporal=0.1\nrrf_k=60",
+          tips: ["Use keyword search for direct inspection and recall for confidence-ranked context; SearchError signals an operational keyword-search failure.", "A successful empty result is different from degraded/error status when retrieval strategies fail."]
         },
         {
           title: "Strict results, evidence, and conflicts",
@@ -378,13 +376,13 @@
         },
         {
           title: "Cutoff, deduplication, and budget",
-          paragraphs: ["Adaptive cliff detection trims a sparse result set after a steep score drop. Jaccard deduplication removes near-identical candidates, and token_budget bounds serialized context. Recalled rows receive batched access bookkeeping for the next importance estimate."],
+          paragraphs: ["After the final confidence rerank, finite result lists cut at the first adjacent relative confidence drop (lower threshold is more aggressive). Jaccard dedup removes near-identical candidates, recall_min_score filters final confidence in both normal and fallback paths, and token_budget hard-caps the returned tokens. Recalled rows receive batched access bookkeeping for the next importance estimate."],
           parameters: [
-            parameter("recall_cliff_threshold", "float", "0.45", "Relative score drop that starts the cutoff."),
+            parameter("recall_cliff_threshold", "float", "0.45", "Adjacent final-confidence drop; lower trims more aggressively."),
             parameter("dedup_jaccard_threshold", "float", "0.85", "Near-duplicate token-overlap threshold."),
             parameter("token_budget", "int", "4096 library / 2048 provider", "Hard serialization budget."),
             parameter("importance_recall_boost", "float", "1.0", "Multiplier for importance at least 0.8."),
-            parameter("recall_min_score", "float", "0.0", "Minimum score accepted by provider/CLI recall.")
+            parameter("recall_min_score", "float", "0.0", "Minimum final confidence for library and provider recall.")
           ]
         },
         {
@@ -560,7 +558,7 @@
       sections: [
         {
           title: "Global options and scope",
-          paragraphs: ["Every command accepts --db-path and --backend. The CLI client uses strict recall, evidence-required results, and non-destructive rule handling."],
+          paragraphs: ["Every command accepts --db-path and --backend. The CLI client uses strict recall and evidence checks; claim replacement requires explicit supersession by predecessor ID."],
           parameters: [
             parameter("--db-path PATH", "option", "unset", "Override SQLite path."),
             parameter("--backend sqlite|pgvector", "option", "sqlite", "Select storage backend."),
@@ -603,7 +601,7 @@
         {
           title: "Output and exit codes",
           output: "🌙 Luminary — no relevant memories found (no_supported_candidate)\n\n# success: 0\n# error or rejected ingest: 1",
-          paragraphs: ["Human output stays compact; --json is the stable automation surface. Recall JSON contains status (ok, fallback, or abstain), reason, confidence, memories, scores, strategies_hit, and provenance."],
+          paragraphs: ["Human output stays compact; --json is the stable automation surface. CLI recall JSON includes status (ok, fallback, abstain, empty, degraded, or error), reason, confidence, memories, scores, strategies_hit, and provenance. A degraded result may retain hits; error means retrieval failed without usable hits. The Python RecallResult additionally exposes pre-rerank fused_scores."],
           tips: ["A zero-memory abstain is a valid success path for a query with no supported answer; distinguish it from process exit code 1, which indicates a command error or rejected ingest."]
         }
       ]
@@ -687,7 +685,7 @@
         },
         {
           title: "Scope, evidence, status, and logs",
-          paragraphs: ["Provider paths enable strict recall, evidence-required results, and non-destructive rule replacement. Conflicting claims remain in the audit/version chain until explicitly superseded."],
+          paragraphs: ["Provider paths enable strict recall, evidence-required results, and explicit atomic claim supersession by predecessor ID. Conflicting claims remain in the audit/version chain until explicitly superseded."],
           bullets: ["Every operation carries user/workspace/agent/session scope.", "Current-turn review requires candidate id plus exact evidence quote.", "Transparency JSONL keeps trace id, status/reason, counts, confidence, latency, and scope—not prompt or memory content.", "The activity hook mirrors active durable rows after committed writes; it is not the memory authority."]
         }
       ]
@@ -797,7 +795,7 @@
             ["Independent gold set", "Recall, abstention, evidence, scope isolation", "Labels authored outside retriever"]
           ]),
           code: "python3 -m benchmarks.run_benchmarks --n 500 --report /tmp/bench.json",
-          warnings: ["The controlled 12-case gold fixture is a regression signal, not proof of superiority over Mem0, Hindsight, or another provider."]
+          warnings: ["The controlled 12-case gold fixture is a regression signal, not proof of superiority over Mem0, Hindsight, or another provider.", "On the current fake-engine checkout smoke, recall@10 was 0.60 versus a historical 0.95. See benchmarks/RESULTS.md for conditions and the four answer-case abstentions."]
         },
         {
           title: "Measured fields and parameters",
@@ -895,12 +893,13 @@
           warnings: ["Planning/audit notes under docs/ are ignored by design. Do not treat them as the source-facing contract or stage them accidentally."]
         },
         {
-          title: "Current release snapshot",
-          paragraphs: ["The public package and website are aligned to v0.3.0. This release is the strict CLI/Hermes accuracy path: scope isolation, evidence/provenance, conflict history, abstention, scoped transparency events, and exact-session continuity fallback."],
-          table: table("Release checks", ["Surface", "Current contract"], [
-            ["Version", "0.3.0 / Python 3.11+"],
-            ["Release baseline", "505 passed, 3 skipped; 83% full-source coverage"],
-            ["Current workspace check", "534 passed, 3 skipped; 83% full-source coverage"],
+          title: "Release baseline and checkout verification",
+          paragraphs: ["The repository declares v0.3.0. Its published release baseline is historical; this source guide also describes pending checkout fixes, which require a separate verified release and deployment before they reach a public installation."],
+          table: table("Release checks", ["Surface", "Contract"], [
+            ["Declared version", "0.3.0 / Python 3.11+"],
+            ["Historical release baseline", "505 passed, 3 skipped; 83% coverage as recorded for that baseline"],
+            ["Current checkout verification", "See FIXES.md and CI; local results alone do not publish a release"],
+            ["Controlled gold smoke", "Current fake-engine recall@10 0.60 versus historical 0.95; see benchmarks/RESULTS.md"],
             ["Accuracy boundary", "Controlled gold fixture is a regression signal, not a competitor ranking"],
             ["Native Hermes memory", "Disabled through documented config switches when Luminary is active"]
           ]),
@@ -908,7 +907,7 @@
         },
         {
           title: "Recent release history",
-          paragraphs: ["The release baseline comes from CHANGELOG.md. The current workspace check above includes the additional migration and regression coverage present in this working tree; it is not a new release claim."],
+          paragraphs: ["The shipped release history comes from CHANGELOG.md. FIXES.md records the newer checkout audit and local verification; it is not a claim that those fixes have been published."],
           table: table("Recent shipped changes", ["Release", "Date", "Scope"], [
             ["0.3.0", "2026-08-24", "Scoped, evidenced, auditable CLI/Hermes path with session continuity and post-turn reconciliation."],
             ["0.2.18", "2026-08-20", "Importance became retrieval-only; core memory replaced persistent-context injection; strict accuracy path shipped."],

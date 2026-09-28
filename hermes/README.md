@@ -97,9 +97,9 @@ Results land in the JSONL transparency log as a scoped
 `maintenance.completed` event with `trace_id`, status, counts, and latency.
 The log never includes raw prompt or memory content.
 
-For correctness, Hermes sets strict recall/evidence mode and disables
-destructive rule replacement. Conflicting claim keys remain visible in audit
-history until explicitly superseded.
+For correctness, Hermes enables strict recall and evidence checks. There is no
+semantic rule auto-replacement setting: a same-key conflicting claim remains in
+audit history until an eligible predecessor is explicitly superseded.
 
 Luminary is the authoritative memory surface when `memory.provider: luminary` is
 active together with:

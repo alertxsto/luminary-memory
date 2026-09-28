@@ -355,7 +355,7 @@ class LuminaryMemoryProvider(MemoryProvider):
 
         Keeping this in one place prevents background retain/prefetch from
         silently using different ranking, lifecycle, core, or LLM policies.
-        Provider safety defaults (strict recall and no implicit replacement)
+        Provider safety defaults (strict recall and explicit versioning)
         remain explicit and are not configurable here.
         """
         settings = Settings(
@@ -366,7 +366,6 @@ class LuminaryMemoryProvider(MemoryProvider):
             max_memories=int(self._config.get("max_memories", 1000) or 0) or None,
             strict_recall=True,
             evidence_required=True,
-            rule_auto_replace=False,
         )
         for key in (
             "recall_min_score",

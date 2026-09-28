@@ -1,3 +1,7 @@
+import pytest
+
+from luminary_memory.api import MemoryClient
+from luminary_memory.config import Settings
 from luminary_memory.ingest.whitelist import WhitelistFilter
 
 
@@ -39,12 +43,19 @@ def test_whitelist_empty_text_rejected():
     assert f.accepts("   ") is False
 
 
-def test_whitelist_invalid_regex_ignored():
-    """A malformed regex pattern is skipped, not fatal."""
-    from luminary_memory.ingest.whitelist import WhitelistFilter
+def test_whitelist_invalid_regex_fails_closed():
+    with pytest.raises(ValueError, match="invalid ingest allowlist pattern"):
+        WhitelistFilter(patterns=["[invalid", "ok-pattern"])
 
-    f = WhitelistFilter(patterns=["[invalid", "ok-pattern"])
-    assert f.accepts("ok-pattern here") is True
+
+def test_client_rejects_invalid_allowlist_before_accepting_content(tmp_path):
+    settings = Settings(db_path=str(tmp_path / "invalid.db"), ingest_whitelist=["["])
+    with pytest.raises(ValueError, match="invalid ingest allowlist pattern"):
+        MemoryClient(settings=settings)
+
+def test_blank_allowlist_rule_is_not_equivalent_to_no_policy():
+    with pytest.raises(ValueError, match="invalid ingest allowlist pattern"):
+        WhitelistFilter(patterns=[""])
 
 
 def test_rules_empty_inputs_false():

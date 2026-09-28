@@ -4,41 +4,132 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag (dispatch the workflow on that same tag)"
+        required: true
+        type: string
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
+  release-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require this checked-out commit to be the selected release tag
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          REF: ${{ github.ref }}
+        run: |
+          test "$REF" = "refs/tags/$TAG" || { echo "Dispatch must run on the selected tag, not a branch or another tag" >&2; exit 1; }
+          test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$(git rev-parse HEAD)" || { echo "Tag does not point to checked-out release commit" >&2; exit 1; }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Run release-commit tests and import smoke
+        run: |
+          python -m pip install '.[dev]'
+          python -m pytest -q
+          python -c 'from luminary_memory import MemoryClient, __version__; c = MemoryClient(db_path=":memory:"); assert c.count() == 0; c.close(); print(__version__)'
+      - name: Build sdist and wheel
+        run: python -m build
+      - name: Verify tag, project, runtime and wheel METADATA
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          REF: ${{ github.ref }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            python scripts/verify-release.py --tag "$TAG" --manual-ref "$REF" --wheel dist/*.whl
+          else
+            python scripts/verify-release.py --tag "$TAG" --wheel dist/*.whl
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-distributions
+          path: dist/*
+          if-no-files-found: error
+
+  real-hermes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install isolated pinned upstream Hermes source and Luminary
+        env:
+          HERMES_SHA: ddb56d0aa126be722115afd3779d17f80f490825
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/NousResearch/hermes-agent.git "$RUNNER_TEMP/hermes-agent"
+          git -C "$RUNNER_TEMP/hermes-agent" fetch --depth 1 origin "$HERMES_SHA"
+          git -C "$RUNNER_TEMP/hermes-agent" checkout --detach FETCH_HEAD
+          python -m pip install -e "$RUNNER_TEMP/hermes-agent"
+          python -m pip install .
+      - name: Run actual Hermes manager and provider session lifecycle
+        run: python scripts/smoke-real-hermes.py
+
+  real-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/luminary-fastembed-model
+            ${{ runner.temp }}/luminary-hf-model
+          key: fastembed-bge-small-en-v1.5-${{ runner.os }}-py311
+      - name: Install actual default Fastembed model environment
+        run: python -m pip install .
+      - name: Retrieve semantically with default model
+        env:
+          FASTEMBED_CACHE_PATH: ${{ runner.temp }}/luminary-fastembed-model
+          HF_HOME: ${{ runner.temp }}/luminary-hf-model
+        run: python scripts/smoke-real-model.py
+
   pypi:
+    needs: [release-tests, real-hermes, real-model]
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/project/luminary-memory
     permissions:
-      contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/download-artifact@v4
         with:
-          python-version: "3.11"
-          cache: pip
-      - name: Build sdist and wheel
-        run: |
-          python -m pip install --upgrade pip
-          pip install build
-          python -m build
+          name: release-distributions
+          path: dist
+      - name: Publish verified distributions to PyPI (trusted publishing / OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: [release-tests, real-hermes, real-model, pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Build Hermes skill artifact
         run: |
           mkdir -p skill_asset
           zip -j skill_asset/luminary-memory-skill.zip hermes/SKILL.md hermes/README.md
-          ls -lh skill_asset/luminary-memory-skill.zip
-      - name: Publish to PyPI (trusted publishing / OIDC)
-        uses: pypa/gh-action-pypi-publish@release/v1
-        # Trusted Publisher only — no API token. Configured at
-        # https://pypi.org/manage/account/publishing/. Never fall back to twine:
-        # an API token upload alongside Trusted Publishing triggers a PyPI alert.
       - name: Attach skill asset to GitHub Release
         uses: softprops/action-gh-release@v2
         with:

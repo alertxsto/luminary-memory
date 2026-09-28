@@ -9,7 +9,26 @@ isolation semantics.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
+
+
+def _parse_valid_at(value: Any) -> datetime | None:
+    """Parse an ISO timestamp as UTC; reject malformed stored validity bounds."""
+    try:
+        parsed = datetime.fromisoformat(str(value))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def sqlite_valid_epoch(value: Any) -> float | None:
+    """SQLite deterministic scalar for strict UTC date comparison."""
+    parsed = _parse_valid_at(value)
+    return parsed.timestamp() if parsed is not None else None
+
 
 SCOPE_FIELDS = ("user_id", "workspace_id", "agent_id", "session_id")
 _IDENTITY_FIELDS = ("user_id", "workspace_id", "agent_id")
@@ -33,7 +52,9 @@ def scope_sql(
     alias: str = "",
     include_global: bool = True,
     active_only: bool = True,
-) -> tuple[str, list[str]]:
+    valid_only: bool = False,
+    dialect: str = "sqlite",
+) -> tuple[str, list[str | float]]:
     """Build a parameterized SQL predicate for a memory row.
 
     ``include_global`` allows legacy/global facts to remain visible to a
@@ -41,13 +62,17 @@ def scope_sql(
     treated as global.  An unscoped read sees only fully global rows.  Session
     identity is intentionally a wildcard when omitted so durable facts can be
     recalled across sessions; user/workspace/agent identity is never inferred.
+    recalled across sessions; user/workspace/agent identity is never inferred.
     Provider stores use this compatibility mode during migration; callers can
-    disable it for strict tenant isolation.
+    disable it for strict tenant isolation. ``valid_only`` opts retrieval
+    into UTC validity-window filtering without changing administrative reads.
+    PostgreSQL stores timestamps in TIMESTAMPTZ; SQLite parses ISO timestamps
+    with ``memory_valid_epoch`` (which must be registered on its connection).
     """
     normalized = normalize_scope(scope)
     prefix = f"{alias}." if alias else ""
     clauses: list[str] = []
-    params: list[str] = []
+    params: list[str | float] = []
     if include_global:
         if not normalized:
             # No identity is not permission to read every tenant's memory.
@@ -76,6 +101,20 @@ def scope_sql(
             params.append(value)
     if active_only:
         clauses.append(f"COALESCE({prefix}status, 'active') = 'active'")
+        if valid_only:
+            if dialect == "postgres":
+                clauses.extend((
+                    f"({prefix}valid_from IS NULL OR {prefix}valid_from <= CURRENT_TIMESTAMP)",
+                    f"({prefix}valid_to IS NULL OR {prefix}valid_to > CURRENT_TIMESTAMP)",
+                ))
+            else:
+                now = datetime.now(UTC).timestamp()
+                for field, operator in (("valid_from", "<="), ("valid_to", ">")):
+                    column = f"{prefix}{field}"
+                    clauses.append(
+                        f"({column} IS NULL OR memory_valid_epoch({column}) {operator} ?)"
+                    )
+                    params.append(now)
     return (" AND ".join(clauses) or "1=1"), params
 
 
@@ -85,11 +124,21 @@ def memory_matches_scope(
     *,
     include_global: bool = True,
     active_only: bool = True,
+    valid_only: bool = False,
 ) -> bool:
     """Python fallback equivalent of :func:`scope_sql`."""
     normalized = normalize_scope(scope)
     if active_only and str(getattr(memory, "status", "active") or "active") != "active":
         return False
+    if active_only and valid_only:
+        now = datetime.now(UTC)
+        for field, operator in (("valid_from", "from"), ("valid_to", "to")):
+            value = getattr(memory, field, None)
+            if value is None:
+                continue
+            bound = _parse_valid_at(value)
+            if bound is None or (now < bound if operator == "from" else now >= bound):
+                return False
     if include_global:
         if not normalized:
             return all(

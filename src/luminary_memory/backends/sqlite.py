@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import heapq
 import json
 import logging
 import math
 import sqlite3
+import threading
+from itertools import islice
 import threading
 
 import numpy as np
 
 from luminary_memory.backends.base import MemoryBackend
 from luminary_memory.schema import init_schema
-from luminary_memory.scope import scope_sql
+from luminary_memory.scope import scope_sql, sqlite_valid_epoch
 from luminary_memory.types import Memory
 
 logger = logging.getLogger(__name__)
@@ -30,8 +33,9 @@ def _safe_unit_float(value, default: float) -> float:
 
 def _safe_int(value, default: int = 0) -> int:
     try:
-        return int(float(value))
-    except (TypeError, ValueError):
+        parsed = float(value)
+        return int(parsed) if math.isfinite(parsed) else default
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -39,8 +43,9 @@ def _optional_int(value) -> int | None:
     if value is None:
         return None
     try:
-        return max(0, int(float(value)))
-    except (TypeError, ValueError):
+        parsed = float(value)
+        return max(0, int(parsed)) if math.isfinite(parsed) else None
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -93,6 +98,7 @@ class SQLiteBackend(MemoryBackend):
         if conn is None:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
+            conn.create_function("memory_valid_epoch", 1, sqlite_valid_epoch, deterministic=True)
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA busy_timeout = 5000")
             # WAL lets the Hermes writer and prefetch reader coexist without
@@ -257,6 +263,37 @@ class SQLiteBackend(MemoryBackend):
 
     def add(self, m: Memory) -> int:
         return self.add_with_status(m)[0]
+
+    def supersede_and_add(self, predecessor: Memory, successor: Memory, retired_at: str) -> int:
+        """Commit the exact predecessor transition and new version together."""
+        if predecessor.id is None or successor.supersedes_id != predecessor.id:
+            raise ValueError("invalid supersession predecessor")
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            cur = self.conn.execute(
+                "UPDATE memories SET status = 'superseded', valid_to = COALESCE(valid_to, ?) "
+                "WHERE id = ? AND claim_key = ? AND status IN ('active', 'conflicted') "
+                "AND COALESCE(user_id, '') = COALESCE(?, '') "
+                "AND COALESCE(workspace_id, '') = COALESCE(?, '') "
+                "AND COALESCE(agent_id, '') = COALESCE(?, '') "
+                "AND COALESCE(session_id, '') = COALESCE(?, '')",
+                (retired_at, predecessor.id, successor.claim_key, successor.user_id,
+                 successor.workspace_id, successor.agent_id, successor.session_id),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("supersession predecessor is no longer eligible")
+            inserted = self._insert_row(successor)
+            self.conn.execute(
+                "UPDATE claims SET status = 'superseded', valid_to = COALESCE(valid_to, ?) "
+                "WHERE memory_id = ? AND status IN ('active', 'conflicted')",
+                (retired_at, predecessor.id),
+            )
+            self.conn.commit()
+            return int(inserted.lastrowid)
+        except Exception:
+            self.conn.rollback()
+            raise
+
 
     def get(self, id: int) -> Memory | None:
         row = self.conn.execute("SELECT * FROM memories WHERE id = ?", (id,)).fetchone()
@@ -603,10 +640,11 @@ class SQLiteBackend(MemoryBackend):
 
     def top_by_importance(
         self,
-        top_n: int,
+        valid_only: bool = False,
         min_importance: float = 0.0,
         scope: dict | None = None,
         include_global: bool = True,
+        valid_only: bool = False,
     ) -> list[Memory]:
         """Top-N memories by importance (desc), then access count (desc).
 
@@ -617,8 +655,12 @@ class SQLiteBackend(MemoryBackend):
         """
         if int(top_n) <= 0:
             return []
-        where, scope_params = scope_sql(scope, alias="m", include_global=include_global)
-        rows = self.conn.execute(
+        where, scope_params = scope_sql(
+            scope, alias="m", include_global=include_global, valid_only=valid_only
+        )
+        where, scope_params = scope_sql(
+            scope, alias="m", include_global=include_global, valid_only=valid_only
+        )
             f"SELECT m.id, m.content, m.importance, m.access_count FROM memories m "
             f"WHERE {where} AND m.importance >= ? "
             "ORDER BY importance DESC, access_count DESC, id DESC "
@@ -651,14 +693,30 @@ class SQLiteBackend(MemoryBackend):
         where, scope_params = scope_sql(scope, alias="m", include_global=include_global)
         rows = self.conn.execute(
             f"SELECT m.id, m.content, m.importance, m.access_count FROM memories m "
-            f"WHERE {where} AND m.tags LIKE ? "
+            f"WHERE {where} AND EXISTS ("
+            "SELECT 1 FROM json_each(m.tags) AS tag WHERE tag.value = ?) "
             "ORDER BY id ASC "
             "LIMIT ?",
-            (*scope_params, f'%"{tag}"%', int(max(0, top_n) or 0) or 1),
+            (*scope_params, tag, int(max(0, top_n) or 0) or 1),
         ).fetchall()
         ids = [int(r["id"]) for r in rows]
         full = self.get_many(ids)
-        return [full[mid] for mid in ids if mid in full]
+    def iter_temporal_scan(
+        self,
+        scope: dict | None = None,
+        include_global: bool = True,
+        include_observed: bool = False,
+    ):
+        """Yield scoped, valid lightweight rows without materializing the store."""
+        where, params = scope_sql(scope, alias="m", include_global=include_global, valid_only=True)
+        date_column = "COALESCE(m.observed_at, m.created_at)" if include_observed else "m.created_at"
+        cursor = self.conn.execute(
+            f"WHERE {where}",
+            f"WHERE {where} ORDER BY m.id",
+            params,
+        )
+        for row in cursor:
+            yield int(row["id"]), str(row["temporal_at"]), _safe_int(row["access_count"])
 
     def temporal_scan(
         self,
@@ -667,91 +725,11 @@ class SQLiteBackend(MemoryBackend):
         include_global: bool = True,
         include_observed: bool = False,
     ) -> list[tuple[int, str, int]]:
-        """Lightweight rows (id, created_at, access_count) for temporal scoring.
-
-        Avoids parsing JSON metadata/tags and decoding embeddings for every
-        memory — temporal recall only needs creation time and access count.
-        """
-        limit_sql = "" if limit is None else f" LIMIT {int(limit)}"
-        where, params = scope_sql(scope, alias="m", include_global=include_global)
-        date_column = "COALESCE(m.observed_at, m.created_at)" if include_observed else "m.created_at"
-        rows = self.conn.execute(
-            f"SELECT m.id, {date_column} AS temporal_at, m.access_count FROM memories m "
-            f"WHERE {where}{limit_sql}",
-            params,
-        ).fetchall()
-        return [(int(r["id"]), str(r["temporal_at"]), int(r["access_count"] or 0)) for r in rows]
-
-    def scan_embeddings(
-        self,
-        scope: dict | None = None,
-        include_global: bool = True,
-    ) -> tuple[list[int], list[list[float]]]:
-        """Lightweight (id, embedding) pairs for vectorized scans.
-
-        Only reads the embedding blob (no JSON/tags/content decode), so the
-        rule auto-replace scan can stay vectorized on large stores without
-        materializing full Memory objects for every row.
-        """
-        where, params = scope_sql(scope, alias="m", include_global=include_global, active_only=True)
-        rows = self.conn.execute(
-            f"SELECT m.id, m.embedding FROM memories m "
-            f"WHERE m.embedding IS NOT NULL AND {where}",
-            params,
-        ).fetchall()
-        parsed: list[tuple[int, np.ndarray]] = []
-        for row in rows:
-            try:
-                vec = np.frombuffer(row["embedding"], dtype=np.float32)
-            except (TypeError, ValueError):
-                continue
-            if vec.size and np.isfinite(vec).all():
-                parsed.append((int(row["id"]), vec))
-        if not parsed:
-            return [], []
-        # Cosine-style callers need one dimension. Keep the first stored
-        # dimension and skip malformed/old-model rows instead of crashing
-        # maintenance on a partially migrated store.
-        dimension = parsed[0][1].size
-        parsed = [(mid, vec) for mid, vec in parsed if vec.size == dimension]
-        ids = [mid for mid, _vec in parsed]
-        vecs = [vec.tolist() for _mid, vec in parsed]
-        return ids, vecs
-
-    def scan_embeddings_matrix(
-        self,
-        scope: dict | None = None,
-        include_global: bool = True,
-    ) -> tuple[list[int], np.ndarray]:
-        """(id list, N×D float32 matrix) for batched cosine scans.
-
-        Faster than :meth:`scan_embeddings` for large stores: stacks the raw
-        embedding blobs into one matrix without an intermediate Python list
-        of lists, so the rule auto-replace scan stays a single matmul.
-        """
-        where, params = scope_sql(scope, alias="m", include_global=include_global, active_only=True)
-        rows = self.conn.execute(
-            f"SELECT m.id, m.embedding FROM memories m "
-            f"WHERE m.embedding IS NOT NULL AND {where}",
-            params,
-        ).fetchall()
-        if not rows:
-            return [], np.empty((0, 0), dtype=np.float32)
-        parsed: list[tuple[int, np.ndarray]] = []
-        for row in rows:
-            try:
-                vec = np.frombuffer(row["embedding"], dtype=np.float32)
-            except (TypeError, ValueError):
-                continue
-            if vec.size and np.isfinite(vec).all():
-                parsed.append((int(row["id"]), vec))
-        if not parsed:
-            return [], np.empty((0, 0), dtype=np.float32)
-        dimension = parsed[0][1].size
-        parsed = [(mid, vec) for mid, vec in parsed if vec.size == dimension]
-        if not parsed:
-            return [], np.empty((0, 0), dtype=np.float32)
-        ids = [mid for mid, _vec in parsed]
+        """Return lightweight temporal rows for callers needing a list."""
+        rows = self.iter_temporal_scan(
+            scope=scope, include_global=include_global, include_observed=include_observed,
+        )
+        return list(rows) if limit is None or int(limit) < 0 else list(islice(rows, int(limit)))
         mat = np.vstack([vec for _mid, vec in parsed])
         return ids, mat
 
@@ -800,7 +778,7 @@ class SQLiteBackend(MemoryBackend):
         if limit is not None and int(limit) == 0:
             return []
         safe = _sanitize_fts_query(query)
-        where, params = scope_sql(scope, alias="m", include_global=include_global)
+        where, params = scope_sql(scope, alias="m", include_global=include_global, valid_only=True)
         if limit is None:
             rows = self.conn.execute(
                 "SELECT m.*, bm25(memories_fts) AS rank "
@@ -852,8 +830,6 @@ class SQLiteBackend(MemoryBackend):
                     results[int(row["id"])] = (memory, exact_score)
 
         ordered = sorted(results.values(), key=lambda item: item[1], reverse=True)
-        return ordered if limit is None else ordered[: max(0, int(limit))]
-
     def vector_search(
         self,
         vec: list[float],
@@ -864,58 +840,75 @@ class SQLiteBackend(MemoryBackend):
         if limit is not None and int(limit) == 0:
             return []
         q = np.asarray(vec, dtype=np.float32)
+        if q.ndim != 1 or not q.size or not np.isfinite(q).all():
+            return []
         qn = float(np.linalg.norm(q))
-        if qn == 0:
+        if not math.isfinite(qn) or qn == 0:
             return []
 
-        # Vectorized cosine similarity: load only embeddings into one matrix
-        # and compute dot products via matmul (identical results to the
-        # per-row loop, but O(N) in numpy instead of Python).
-        where, params = scope_sql(scope, alias="m", include_global=include_global)
-        rows = self.conn.execute(
-            f"SELECT m.id, m.embedding FROM memories m "
+        # Keep the scan's transient matrix bounded independently of corpus size.
+        # The heap retains only the best K scores; unlimited output necessarily
+        # retains all winning (id, score) pairs, but never all embedding blobs.
+        k = int(limit) if limit is not None else None
+        bounded = k is not None and k > 0
+        best: list[tuple[float, int]] = []
+        where, params = scope_sql(scope, alias="m", include_global=include_global, valid_only=True)
+        cursor = self.conn.execute(
             f"WHERE m.embedding IS NOT NULL AND {where}",
+            f"WHERE m.embedding IS NOT NULL AND {where} ORDER BY m.id",
             params,
-        ).fetchall()
-        if not rows:
-            return []
+        )
+        batch: list[tuple[int, np.ndarray]] = []
 
-        valid = []
-        valid_ids = []
-        for r in rows:
+        def rank_batch() -> None:
+            if not batch:
+                return
+            matrix = np.stack([embedding for _, embedding in batch])
+            norms = np.linalg.norm(matrix, axis=1)
+            sims = (matrix @ q) / (norms * qn + 1e-12)
+            for (mid, _), sim in zip(batch, sims):
+                score = float(sim)
+                if not math.isfinite(score):
+                    continue
+                candidate = (score, -mid)
+                if bounded:
+                    if len(best) < k:
+                        heapq.heappush(best, candidate)
+                    elif candidate > best[0]:
+                        heapq.heapreplace(best, candidate)
+                else:
+                    best.append(candidate)
+            batch.clear()
+
+        for row in cursor:
             try:
-                emb = np.frombuffer(r["embedding"], dtype=np.float32)
-                if emb.size == q.size and np.isfinite(emb).all():
-                    valid.append(emb)
-                    valid_ids.append(int(r["id"]))
+                embedding = np.frombuffer(row["embedding"], dtype=np.float32)
             except (TypeError, ValueError):
                 continue
-        if not valid:
+            if embedding.size != q.size or not np.isfinite(embedding).all():
+                continue
+            batch.append((int(row["id"]), embedding))
+            if len(batch) == 256:
+                rank_batch()
+        rank_batch()
+        if not best:
             return []
-        ids = np.asarray(valid_ids, dtype=np.int64)
-        mat = np.vstack(valid)
-        norms = np.linalg.norm(mat, axis=1)
-        sims = (mat @ q) / (norms * qn + 1e-12)
 
-        # Top-k via argpartition (O(N) instead of full sort).
-        if limit is not None and int(limit) > 0 and limit < len(sims):
-            k = int(limit)
-            idx = np.argpartition(-sims, k - 1)[:k]
-            idx = idx[np.argsort(-sims[idx])]
-        else:
-            idx = np.argsort(-sims)
-
-        # Fetch full rows only for the top-k winners.
-        top_ids = [int(ids[i]) for i in idx]
-        id_ph = ",".join("?" for _ in top_ids)
-        full_rows = self.conn.execute(
-            f"SELECT * FROM memories WHERE id IN ({id_ph})", top_ids
-        ).fetchall()
-        full_by_id = {int(r["id"]): r for r in full_rows}
+        ordered = sorted(best, reverse=True)
         results: list[tuple[Memory, float]] = []
-        for i in idx:
-            row = full_by_id.get(int(ids[i]))
-            if row is not None:
+        for start in range(0, len(ordered), 900):
+            winners = ordered[start : start + 900]
+            ids = [-mid for _, mid in winners]
+            placeholders = ",".join("?" for _ in ids)
+            rows = self.conn.execute(
+                f"SELECT * FROM memories WHERE id IN ({placeholders})", ids,
+            ).fetchall()
+            by_id = {int(row["id"]): row for row in rows}
+            for score, negative_id in winners:
+                row = by_id.get(-negative_id)
+                if row is not None:
+                    results.append((self._row_to_memory(row), score))
+        return results
                 results.append((self._row_to_memory(row), float(sims[i])))
         return results
 

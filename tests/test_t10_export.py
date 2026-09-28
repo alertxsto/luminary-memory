@@ -23,7 +23,7 @@ def test_export_import_round_trip(tmp_path):
     exported = src.export(path)
     assert path.exists()
     assert exported["count"] == 3
-    assert json.loads(path.read_text())["version"] == 1
+    assert json.loads(path.read_text())["version"] == 2
 
     dst = MemoryClient(db_path=str(tmp_path / "dst.db"), engine=_FakeEngine(), enricher=NoopEnricher())
     imported = dst.import_memories(path)

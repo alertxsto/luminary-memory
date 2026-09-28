@@ -172,7 +172,6 @@ def main() -> None:
             db_path=str(db_path),
             strict_recall=True,
             evidence_required=True,
-            rule_auto_replace=False,
         )
         client = MemoryClient(settings=settings, engine=_FakeEngine(), enricher=NoopEnricher())
         try:
@@ -214,7 +213,6 @@ def main() -> None:
                 db_path=str(Path(temp_dir) / "gold.db"),
                 strict_recall=True,
                 evidence_required=True,
-                rule_auto_replace=False,
             )
             gold_client = MemoryClient(
                 settings=gold_settings,
@@ -236,7 +234,6 @@ def main() -> None:
                     "config": {
                         "strict_recall": True,
                         "evidence_required": True,
-                        "rule_auto_replace": False,
                     },
                     "git_revision": _git_revision(),
                     "labels_are_system_generated": False,

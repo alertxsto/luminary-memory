@@ -231,7 +231,6 @@ def test_core_surface_is_stable_and_deduplicated_across_repeated_turns(tmp_path)
     })
     provider._client.settings.core_top_n = 8
     provider._client.settings.core_budget = 2000
-    provider._client.settings.rule_auto_replace = False
     durable = [
         "owner record alpha remains stable",
         "owner record beta remains stable",
