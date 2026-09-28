@@ -3,7 +3,7 @@ from datetime import UTC
 
 import pytest
 
-from luminary_memory.api import MemoryClient
+from luminary_memory import MemoryClient, SearchError
 from luminary_memory.config import Settings
 
 
@@ -176,20 +176,21 @@ def test_list_fallback_no_recent(tmp_path):
     assert len(ms) == 2
 
 
-def test_search_error_returns_empty(tmp_path):
-    from luminary_memory.api import MemoryClient
-
+def test_search_error_is_typed_and_preserves_backend_cause(tmp_path):
     class _E:
         def embed(self, t):
             return [0.1] * 384
 
     c = MemoryClient(db_path=str(tmp_path / "y.db"), engine=_E())
     c.backend = _NoRecentBackend()
-    assert c.search("anything") == []
+    with pytest.raises(SearchError, match="no keyword search") as error:
+        c.search("anything")
+    assert isinstance(error.value.__cause__, RuntimeError)
+    c.close()
 
 
 def test_recall_strategy_error_falls_back(tmp_path, monkeypatch):
-    """A strategy that raises must not break recall — it degrades to []."""
+    """A failed strategy is visible while unaffected strategies still return evidence."""
     from luminary_memory.api import MemoryClient
     from luminary_memory.recall import semantic as semantic_mod
 
@@ -200,14 +201,16 @@ def test_recall_strategy_error_falls_back(tmp_path, monkeypatch):
             return [[0.1] * 384 for _ in ts]
 
     c = MemoryClient(db_path=str(tmp_path / "r.db"), engine=_E())
-    c.ingest("some fact about postgres")
+    mid = c.ingest("some fact about postgres")
 
     def boom(*a, **kw):
         raise RuntimeError("semantic exploded")
     monkeypatch.setattr(semantic_mod, "semantic_recall", boom)
 
     result = c.recall("postgres", limit=5)
-    assert result is not None  # degraded, not raised
+    assert [memory.id for memory in result.memories] == [mid]
+    assert result.status == "degraded"
+    assert "semantic" in (result.reason or "")
     c.close()
 
 
@@ -288,24 +291,27 @@ def test_ingest_batch_embed_failure_falls_back(tmp_path, monkeypatch):
 def test_recall_snippet_error_ignored(tmp_path, monkeypatch):
     from luminary_memory.recall import snippets as snip_mod
     c = MemoryClient(db_path=str(tmp_path / "sn.db"), engine=_E())
-    c.ingest("postgres tuning is critical for latency")
+    mid = c.ingest("postgres tuning is critical for latency")
     monkeypatch.setattr(snip_mod, "extract_snippet", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("snippet failed")))
     r = c.recall("postgres", limit=5)
-    assert r is not None  # recall survives snippet failure
+    assert [m.id for m in r.memories] == [mid]
+    assert r.memories[0].content == "postgres tuning is critical for latency"
     c.close()
 
 
 def test_recall_keyword_error_falls_back(tmp_path, monkeypatch):
     from luminary_memory.recall import keyword as kw_mod
     c = MemoryClient(db_path=str(tmp_path / "kw.db"), engine=_E())
-    c.ingest("postgres index tuning")
+    mid = c.ingest("postgres index tuning")
 
     def boom(*a, **kw):
         raise RuntimeError("keyword exploded")
     monkeypatch.setattr(kw_mod, "keyword_recall", boom)
 
     r = c.recall("postgres", limit=5)
-    assert r is not None  # degraded, not raised
+    assert [memory.id for memory in r.memories] == [mid]
+    assert r.status == "degraded"
+    assert "keyword" in (r.reason or "")
     c.close()
 
 

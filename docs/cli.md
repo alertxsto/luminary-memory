@@ -7,9 +7,9 @@ Every command accepts:
 - `--db-path PATH`, override the SQLite path.
 - `--backend sqlite|pgvector`, select the backend.
 
-The CLI recall path uses strict abstention, evidence-required results, and
-non-destructive rule handling. Set scope without placing identity values in
-shell history:
+The CLI recall path uses strict abstention and evidence-required results;
+claim replacement requires explicit supersession. Set scope without placing
+identity values in shell history:
 
 ```bash
 export LUMINARY_USER_ID=u1
@@ -86,10 +86,12 @@ luminary-memory recall "where do we deploy?" --limit 5
 luminary-memory recall "where do we deploy?" --json
 ```
 
-Runs the full four-strategy pipeline. Default output is a rich table; `--json` emits a machine-readable object.
-The JSON form includes `status` (`ok`, `fallback`, or `abstain`), `reason`,
-confidence, evidence quote, source, and provenance. An unrelated query returns
-an explicit abstention with zero memories instead of a guessed top result.
+Runs the full four-strategy pipeline. Default output is a rich table; `--json`
+emits a machine-readable object with `status` (`ok`, `fallback`, `abstain`,
+`empty`, `degraded`, or `error`), `reason`, `confidence`, `memories`, parallel
+final-confidence `scores`, `strategies_hit`, and `provenance` (including evidence
+quote and source). An unrelated query may abstain with zero memories; a failed
+strategy produces `degraded` with surviving hits or `error` without usable hits.
 
 ### search
 

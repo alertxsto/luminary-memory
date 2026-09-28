@@ -183,6 +183,7 @@ class PGVectorBackend(MemoryBackend):
             )
             """
         )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_relations_memory_id ON relations(memory_id)")
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS memory_evidence (
@@ -197,6 +198,7 @@ class PGVectorBackend(MemoryBackend):
             )
             """
         )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_memory_evidence_memory_id ON memory_evidence(memory_id)")
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS memory_events (
@@ -258,6 +260,7 @@ class PGVectorBackend(MemoryBackend):
             "CREATE INDEX IF NOT EXISTS idx_claims_key "
             "ON claims(user_id, workspace_id, subject, predicate, status)"
         )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_claims_memory_id ON claims(memory_id)")
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS claim_evidence (
@@ -272,6 +275,7 @@ class PGVectorBackend(MemoryBackend):
             )
             """
         )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_claim_evidence_claim_id ON claim_evidence(claim_id)")
 
         # Repair legacy rows before installing the database-level exact
         # dedup invariant. The oldest active row remains canonical; derived
@@ -441,27 +445,30 @@ class PGVectorBackend(MemoryBackend):
         row = cur.fetchone()
         return self._row_to_memory(row) if row else None
 
+    def _insert_row(self, cur: Any, m: Memory) -> int:
+        cur.execute(
+            """
+            INSERT INTO memories (content, metadata, source, tags, importance,
+                                  ttl_seconds, created_at, updated_at,
+                                  last_accessed_at, access_count, embedding,
+                                  user_id, session_id, workspace_id, agent_id,
+                                  observed_at, valid_from, valid_to, status, confidence,
+                                  evidence_quote, source_id, claim_key, supersedes_id,
+                                  content_hash, needs_reindex)
+            VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            self._insert_values(m),
+        )
+        return int(cur.fetchone()[0])
+
     def add_with_status(self, m: Memory) -> tuple[int, bool]:
         cur = self.conn.cursor()
         try:
-            cur.execute(
-                """
-                INSERT INTO memories (content, metadata, source, tags, importance,
-                                      ttl_seconds, created_at, updated_at,
-                                      last_accessed_at, access_count, embedding,
-                                      user_id, session_id, workspace_id, agent_id,
-                                      observed_at, valid_from, valid_to, status, confidence,
-                                      evidence_quote, source_id, claim_key, supersedes_id,
-                                      content_hash, needs_reindex)
-                VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-                """,
-                self._insert_values(m),
-            )
-            row = cur.fetchone()
+            mid = self._insert_row(cur, m)
             self.conn.commit()
-            return int(row[0]) if row else 0, True
+            return mid, True
         except Exception as exc:
             # Only a unique-index race is recoverable. Do not turn a malformed
             # row, dimension mismatch, or connection/database error into a
@@ -481,6 +488,36 @@ class PGVectorBackend(MemoryBackend):
                 raise
             return existing.id, False
 
+    def supersede_and_add(self, predecessor: Memory, successor: Memory, retired_at: str) -> int:
+        """Lock and retire exactly one eligible parent with the new insert."""
+        if predecessor.id is None or successor.supersedes_id != predecessor.id:
+            raise ValueError("invalid supersession predecessor")
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE memories SET status = 'superseded', valid_to = COALESCE(valid_to, %s) "
+                "WHERE id = %s AND claim_key = %s AND status IN ('active', 'conflicted') "
+                "AND COALESCE(user_id, '') = COALESCE(%s, '') "
+                "AND COALESCE(workspace_id, '') = COALESCE(%s, '') "
+                "AND COALESCE(agent_id, '') = COALESCE(%s, '') "
+                "AND COALESCE(session_id, '') = COALESCE(%s, '')",
+                (retired_at, predecessor.id, successor.claim_key, successor.user_id,
+                 successor.workspace_id, successor.agent_id, successor.session_id),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("supersession predecessor is no longer eligible")
+            new_id = self._insert_row(cur, successor)
+            cur.execute(
+                "UPDATE claims SET status = 'superseded', valid_to = COALESCE(valid_to, %s) "
+                "WHERE memory_id = %s AND status IN ('active', 'conflicted')",
+                (retired_at, predecessor.id),
+            )
+            self.conn.commit()
+            return new_id
+        except Exception:
+            self.conn.rollback()
+            raise
+
     def add(self, m: Memory) -> int:
         return self.add_with_status(m)[0]
 
@@ -493,6 +530,18 @@ class PGVectorBackend(MemoryBackend):
         if isinstance(row, dict):
             return self._row_to_memory(row)
         return self._row_to_memory(row)
+
+    def get_many(self, ids: list[int]) -> dict[int, Memory]:
+        """Hydrate requested memories in one query, with no work for an empty batch."""
+        if not ids:
+            return {}
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT * FROM memories WHERE id = ANY(%s) ORDER BY id",
+            (ids,),
+        )
+        memories = (self._row_to_memory(row) for row in cur.fetchall())
+        return {memory.id: memory for memory in memories}
 
     def find_by_hash(self, content_hash: str, scope: dict | None = None) -> Memory | None:
         where, params = scope_sql(scope, alias="m", include_global=False)
@@ -759,6 +808,19 @@ class PGVectorBackend(MemoryBackend):
         cur.execute("DELETE FROM memories WHERE id = %s", (id,))
         self.conn.commit()
 
+        """Delete relations then memories atomically; evidence/claims retain history."""
+        if not ids:
+            return
+        cur = self.conn.cursor()
+        try:
+            cur.execute("DELETE FROM relations WHERE memory_id = ANY(%s)", (ids,))
+            cur.execute("DELETE FROM memories WHERE id = ANY(%s)", (ids,))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+
     def rehome_memory_references(self, source_id: int, target_id: int) -> None:
         """Preserve evidence/claims/graph edges when a duplicate is removed."""
         cur = self.conn.cursor()
@@ -781,6 +843,42 @@ class PGVectorBackend(MemoryBackend):
         cur.execute("SELECT * FROM memories ORDER BY id")
         rows = cur.fetchall()
         return [self._row_to_memory(r) for r in rows]
+
+    def temporal_scan(
+        self,
+        limit: int | None = None,
+        scope: dict | None = None,
+        include_global: bool = True,
+        include_observed: bool = False,
+    ) -> list[tuple[int, str, int]]:
+        """Score only scoped, currently valid candidates without hydrating payloads."""
+        where, params = scope_sql(
+            scope, alias="m", include_global=include_global,
+            valid_only=True, dialect="postgres",
+        )
+        date_column = "COALESCE(m.observed_at, m.created_at)" if include_observed else "m.created_at"
+        sql = (
+            f"SELECT m.id, {date_column} AS temporal_at, m.access_count "
+            f"FROM memories m WHERE {where.replace('?', '%s')}"
+        )
+        if limit is not None:
+            sql += " LIMIT %s"
+            params.append(int(limit))
+        cur = self.conn.cursor()
+        cur.execute(sql, tuple(params))
+        return [(int(row[0]), str(row[1]), _safe_int(row[2])) for row in cur.fetchall()]
+
+    def touch_memories(self, ids: list[int]) -> None:
+        cur.execute(sql, tuple(params))
+        if not ids:
+            return
+        cur = self.conn.cursor()
+        cur.execute(
+            "UPDATE memories SET access_count = access_count + 1, "
+            "last_accessed_at = CURRENT_TIMESTAMP WHERE id = ANY(%s)",
+            (ids,),
+        )
+        self.conn.commit()
 
     def add_many_with_status(self, memories: list[Memory]) -> list[tuple[int, bool]]:
         if not memories:
@@ -857,10 +955,14 @@ class PGVectorBackend(MemoryBackend):
         min_importance: float = 0.0,
         scope: dict | None = None,
         include_global: bool = True,
+        valid_only: bool = False,
     ) -> list[Memory]:
         """Return complete memories for strict recall fallback/core loading."""
         cur = self.conn.cursor()
-        where, params = scope_sql(scope, alias="m", include_global=include_global)
+        where, params = scope_sql(
+            scope, alias="m", include_global=include_global,
+            valid_only=valid_only, dialect="postgres",
+        )
         where = where.replace("?", "%s")
         cur.execute(
             f"SELECT m.* FROM memories m WHERE {where} AND m.importance >= %s "
@@ -905,7 +1007,10 @@ class PGVectorBackend(MemoryBackend):
         if not terms or (limit is not None and int(limit) == 0):
             return []
         cur = self.conn.cursor()
-        where, scope_params = scope_sql(scope, alias="m", include_global=include_global)
+        where, scope_params = scope_sql(
+            scope, alias="m", include_global=include_global,
+            valid_only=True, dialect="postgres",
+        )
         where = where.replace("?", "%s")
         patterns = [f"%{term}%" for term in terms]
         match_clause = " OR ".join("m.content ILIKE %s" for _ in terms)
@@ -944,7 +1049,10 @@ class PGVectorBackend(MemoryBackend):
         if limit is not None and int(limit) == 0:
             return []
         cur = self.conn.cursor()
-        where, scope_params = scope_sql(scope, alias="m", include_global=include_global)
+        where, scope_params = scope_sql(
+            scope, alias="m", include_global=include_global,
+            valid_only=True, dialect="postgres",
+        )
         where = where.replace("?", "%s")
         if limit is None:
             cur.execute(

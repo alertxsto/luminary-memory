@@ -1,5 +1,7 @@
 from luminary_memory.api import MemoryClient
 from luminary_memory.cli import _clamp_limit
+from luminary_memory.config import Settings
+from luminary_memory.types import Memory
 
 
 def test_api_list_limit_zero_returns_all(tmp_path):
@@ -35,10 +37,21 @@ def test_cli_clamp_limit_positive_unchanged():
     assert _clamp_limit(1) == 1
 
 
-def test_recall_limit_zero_returns_not_clamped(tmp_path):
-    c = MemoryClient(db_path=str(tmp_path / "t.db"))
-    c.ingest("deploy target is staging cluster")
-    c.ingest("deploy infra uses kubernetes")
-    res = c.recall("deploy", limit=0)
-    # limit 0 = unlimited, so should return all relevant ids
-    assert len(res.memories) >= 1
+def test_recall_limit_zero_returns_all_distinct_hits_past_dedup_window(tmp_path):
+    class ConstantEngine:
+        def embed(self, text):
+            return [1.0, 0.0]
+
+    c = MemoryClient(
+        settings=Settings(db_path=str(tmp_path / "t.db"), query_planner=False,
+                          recall_cliff_threshold=1.0, token_budget=100_000),
+        engine=ConstantEngine(),
+    )
+    ids = c.backend.add_many([
+        Memory(content=f"item unique token{i:04d}", embedding=[1.0, 0.0])
+        for i in range(501)
+    ])
+    res = c.recall("item", limit=0)
+    assert {m.id for m in res.memories} == set(ids)
+    assert len(res.memories) == len(res.scores) == len(res.fused_scores) == 501
+    c.close()

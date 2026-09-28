@@ -49,49 +49,73 @@ fail() { printf '\033[1;31m[luminary]\033[0m ERROR: %s\n' "$*" >&2; exit 1; }
 # 1. Python package (provider + entry point)
 # ------------------------------------------------------------------ #
 if [ "$DO_PROVIDER" -eq 1 ]; then
-  log "installing luminary-memory[hermes] ..."
-  "$LUMINARY_PYTHON" -m pip install -q "luminary-memory[hermes]" || fail "pip install failed"
+  # Read the minimum from this checkout, not a hard-coded installer constant.
+  # Use the same interpreter as Hermes for pip, metadata, and activation.
+  REQUIRED_VERSION="$("$LUMINARY_PYTHON" - "$REPO_DIR/pyproject.toml" <<'PY'
+import sys
+import tomllib
 
-  # Check capabilities, never a Hermes release number.  This keeps an
-  # unsupported host from silently falling back to native memory or leaving
-  # two persistent stores active.
-  if ! "$LUMINARY_PYTHON" - <<'PY'
+with open(sys.argv[1], "rb") as project:
+    print(tomllib.load(project)["project"]["version"])
+PY
+)" || fail "could not read checkout version"
+  log "installing luminary-memory[hermes]>=0.3.0 (checkout minimum $REQUIRED_VERSION) ..."
+  "$LUMINARY_PYTHON" -m pip install -q --upgrade \
+    "luminary-memory[hermes]>=$REQUIRED_VERSION" || fail "pip install failed"
+
+  # Verify what THIS Hermes interpreter actually imports before touching its
+  # configuration. Metadata alone can describe a stale/broken entry point.
+  if ! "$LUMINARY_PYTHON" - "$REQUIRED_VERSION" <<'PY'
+import re
+import sys
 from importlib import metadata
+
+minimum = sys.argv[1]
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", minimum):
+    raise SystemExit(f"invalid checkout version: {minimum!r}")
+installed = metadata.distribution("luminary-memory")
+version = installed.version
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+    raise SystemExit(f"invalid installed distribution version: {version!r}")
+if tuple(map(int, version.split("."))) < tuple(map(int, minimum.split("."))):
+    raise SystemExit(f"stale luminary-memory {version}; checkout requires >= {minimum}")
+
+import luminary_memory
+
+if luminary_memory.__version__ != version:
+    raise SystemExit(
+        f"interpreter imports luminary-memory {luminary_memory.__version__}, "
+        f"but installed distribution metadata says {version}"
+    )
 
 from agent.memory_provider import MemoryProvider
 
-required = (
-    "name",
-    "is_available",
-    "initialize",
-    "get_tool_schemas",
-    "replaces_builtin_memory",
-)
+required = ("name", "is_available", "initialize", "get_tool_schemas", "replaces_builtin_memory")
 missing = [name for name in required if not hasattr(MemoryProvider, name)]
 if missing:
-    raise SystemExit(
-        "Hermes public MemoryProvider contract is missing: " + ", ".join(missing)
-    )
+    raise SystemExit("Hermes public MemoryProvider contract is missing: " + ", ".join(missing))
 
-entry_points = metadata.entry_points()
-if hasattr(entry_points, "select"):
-    installed = {entry.name for entry in entry_points.select(group="hermes_agent.memory_providers")}
-else:
-    installed = {
-        entry.name
-        for entry in entry_points
-        if getattr(entry, "group", "") == "hermes_agent.memory_providers"
-    }
-if "luminary" not in installed:
-    raise SystemExit("Luminary entry point is not visible to the Hermes interpreter")
+entry_points = [
+    entry for entry in installed.entry_points
+    if entry.group == "hermes_agent.memory_providers" and entry.name == "luminary"
+]
+if len(entry_points) != 1:
+    raise SystemExit(f"expected one luminary entry point in installed distribution, found {len(entry_points)}")
+provider_module = entry_points[0].load()
+provider_type = provider_module.LuminaryMemoryProvider
+if not issubclass(provider_type, MemoryProvider):
+    raise SystemExit("installed Luminary provider does not implement the Hermes contract")
+if provider_type().name != "luminary":
+    raise SystemExit("installed Luminary provider name is not luminary")
 PY
   then
-    fail "Hermes does not expose the public memory-provider capabilities required by Luminary"
+    fail "installed Luminary distribution or Hermes provider contract is invalid; config unchanged"
   fi
 
   CONFIG="$HERMES_HOME/config.yaml"
   log "activating Luminary through Hermes config.yaml ..."
   "$LUMINARY_PYTHON" -m luminary_memory.hermes.activation --all-profiles "$CONFIG" || fail "could not update Hermes memory configs"
+fi
 fi
 
 # ------------------------------------------------------------------ #

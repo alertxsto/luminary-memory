@@ -66,18 +66,18 @@ Controls how stored memories are matched and ranked against a query.
 
 | Field | Env var | Default | Meaning |
 |-------|---------|---------|---------|
-| `rrf_k` | `LUMINARY_RRF_K` | `60` | Reciprocal Rank Fusion constant. Higher smooths score differences across the fusion strategies. |
+| `rrf_k` | `LUMINARY_RRF_K` | `60` | Nonnegative RRF constant; fused score is Σ `strategy_weight / (rrf_k + zero_based_rank + 1)`. Larger values smooth rank differences. |
 | `strategy_weights.semantic` | `LUMINARY_WEIGHT_SEMANTIC` | `0.4` | Fusion weight for embedding similarity. |
 | `strategy_weights.keyword` | `LUMINARY_WEIGHT_KEYWORD` | `0.3` | Fusion weight for lexical/FTS keyword match. |
 | `strategy_weights.graph` | `LUMINARY_WEIGHT_GRAPH` | `0.2` | Fusion weight for entity-graph relationships. |
 | `strategy_weights.temporal` | `LUMINARY_WEIGHT_TEMPORAL` | `0.1` | Fusion weight for recency. |
-| `recall_cliff_threshold` | `LUMINARY_RECALL_CLIFF_THRESHOLD` | `0.45` | Adaptive cutoff: results that drop more than 45% below the top score are trimmed. Higher = more aggressive trimming. |
-| `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | `0.85` | Near-duplicates (token-overlap Jaccard ≥ this) are removed before ranking. Lower = more aggressive dedup. |
-| `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` | Hard cap on total tokens injected by a recall, so memory never overflows the agent context. |
-| `importance_recall_boost` | `LUMINARY_IMPORTANCE_RECALL_BOOST` | `1.0` | Ranking multiplier applied to memories at importance ≥ 0.8, so durable rules surface before chit-chat in recall. |
-| `recall_min_score` | `LUMINARY_RECALL_MIN_SCORE` | `0.0` | Score floor for recall results; memory below this is dropped (0 = off). Provider/CLI may return an empty result when no evidence survives. |
-| `query_planner` | `LUMINARY_QUERY_PLANNER` | `true` | Apply conservative strategy guards (for example, skip graph when no entity signal exists, or temporal when a strong lexical match is present). Semantic and keyword candidates remain enabled. |
-| `query_planner_keyword_threshold` | `LUMINARY_QUERY_PLANNER_KEYWORD_THRESHOLD` | `0.9` | Score above which a keyword match is trusted so the planner skips semantic/graph passes. |
+| `recall_cliff_threshold` | `LUMINARY_RECALL_CLIFF_THRESHOLD` | `0.45` | After confidence reranking, cut at the first adjacent confidence drop `(previous-current)/previous >= threshold` (finite limits only). Lower values trim more aggressively. |
+| `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | `0.85` | After the confidence cliff, drop near-duplicates with token Jaccard ≥ threshold. Lower values deduplicate more aggressively. |
+| `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` | Hard cap on total returned recall tokens, including fallback results; oversized memories are excluded. |
+| `importance_recall_boost` | `LUMINARY_IMPORTANCE_RECALL_BOOST` | `1.0` | Multiplies fused candidate scores for memories with importance ≥ 0.8 before the final confidence rerank; it does not guarantee an irrelevant memory survives. |
+| `recall_min_score` | `LUMINARY_RECALL_MIN_SCORE` | `0.0` | Minimum **final confidence** in normal and fallback results; 0 disables the floor. It applies after deduplication and before token budgeting. |
+| `query_planner` | `LUMINARY_QUERY_PLANNER` | `true` | Skip temporal when keyword evidence is strong, or graph when the query has no entity tokens; semantic and keyword remain enabled. |
+| `query_planner_keyword_threshold` | `LUMINARY_QUERY_PLANNER_KEYWORD_THRESHOLD` | `0.9` | Top keyword **term coverage** at or above this value skips temporal, not semantic or graph. Coverage is distinct query terms shared with a memory divided by distinct query terms, in [0, 1]; SQLite BM25 and PG matching scores only rank candidates within each backend. |
 
 > ### Persistent context (removed in v0.2.18)
 >
@@ -98,10 +98,8 @@ Controls how stored memories are matched and ranked against a query.
 | `abstention_min_margin` | `LUMINARY_ABSTENTION_MIN_MARGIN` | `0.04` | Minimum top-vs-second margin for ambiguous strict results. |
 | `evidence_required` | `LUMINARY_EVIDENCE_REQUIRED` | `false` for legacy library clients | Requires evidence/source provenance for strict results and maintenance mutations. Hermes and CLI enable it explicitly. |
 
-Provider and CLI also disable destructive semantic rule replacement. Direct
-library clients retain the historical default for compatibility; use
-`rule_auto_replace=False` when correctness is more important than legacy
-behavior.
+Writes with a `claim_key` preserve conflicting versions until a caller supplies
+the exact eligible `supersedes_id` for explicit versioning.
 
 ## Runtime scope identity
 
@@ -147,7 +145,7 @@ The Luminary equivalent of Hermes `MEMORY.md`, stored in the DB.
 | Field | Env var | Default | Meaning |
 |-------|---------|---------|---------|
 | `ingest_llm` | `LUMINARY_INGEST_LLM` | `false` | Enrich retained turns and run the provider's grounded incremental review (drops chit-chat, stores a factual summary, and checks for captures/corrections instead of storing raw transcript). |
-| `ingest_whitelist` | `LUMINARY_INGEST_WHITELIST` | `[]` | Comma-separated list of content prefixes/tags allowed to be ingested; empty = everything. |
+| `ingest_whitelist` | `LUMINARY_INGEST_WHITELIST` | `[]` | Comma-separated case-insensitive regular expressions searched against content (not tags); empty = unrestricted. Invalid or blank patterns raise `ValueError` when constructing `MemoryClient`, rather than disabling the restriction. |
 
 ## LLM enrichment
 
@@ -170,8 +168,6 @@ behavioral estimator, and conflicting claims require an explicit supersession.
 |-------|---------|---------|---------|
 | `rule_keywords` | `LUMINARY_RULE_KEYWORDS` | `""` | Compatibility input for callers of the standalone phrase matcher. It is not read by the active durability/importance pipeline. |
 | `rule_importance` | `LUMINARY_RULE_IMPORTANCE` | `0.9` | Pin threshold used by core/importance protection. It is not assigned because a phrase matches. |
-| `rule_auto_replace` | `LUMINARY_RULE_AUTO_REPLACE` | `true` (legacy library default) | Enables the explicit replacement compatibility path. A `supersedes_id` is still required; without it, different same-key claims remain auditable conflicts. Hermes/CLI disable this path by default. |
-| `rule_auto_replace_threshold` | `LUMINARY_RULE_AUTO_REPLACE_THRESHOLD` | `0.85` | Similarity threshold used only after the caller explicitly authorizes replacement. |
 
 ---
 

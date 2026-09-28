@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from luminary_memory.scope import memory_matches_scope, normalize_scope
+from luminary_memory.scope import SCOPE_FIELDS, memory_matches_scope, normalize_scope
 
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 EXPORT_FORMAT = "luminary-memory-export"
-EXPORT_VERSION = 1
+EXPORT_VERSION = 2
 
 
 def _mem_to_dict(m) -> dict:
@@ -28,6 +28,7 @@ def _mem_to_dict(m) -> dict:
         importance = 0.5
     importance = max(0.0, min(1.0, importance))
     return {
+        "id": m.id,
         "content": m.content,
         "tags": list(m.tags or []),
         "metadata": dict(m.metadata or {}),
@@ -125,6 +126,16 @@ def import_memories(
     # Build Memory objects; optionally recompute embeddings when absent.
     from luminary_memory.types import Memory
 
+
+    def _owner(m: Memory) -> tuple[str, ...]:
+        return tuple(
+            str(value) if value is not None else ""
+            for field in SCOPE_FIELDS
+            for value in (getattr(m, field, None),)
+        )
+        return tuple(str(getattr(m, field) or "") for field in SCOPE_FIELDS)
+
+
     def _hash(content: str) -> str:
         normalized = " ".join((content or "").strip().split()).casefold()
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
@@ -135,8 +146,10 @@ def import_memories(
         try:
             vector = [float(item) for item in value]
         except (TypeError, ValueError):
-            return None
-        return vector if all(math.isfinite(item) for item in vector) else None
+    memories: list[Memory] = []
+    source_ids: list[int | None] = []
+    memories: list[Memory] = []
+    source_ids: list[int | None] = []
 
     memories: list[Memory] = []
     normalized_scope = normalize_scope(scope)
@@ -145,6 +158,16 @@ def import_memories(
     for d in memories_data:
         if not isinstance(d, dict):
             raise TypeError("each exported memory must be an object")
+        source_id = d.get("id")
+        if source_id is not None and (
+            isinstance(source_id, bool) or not isinstance(source_id, int) or source_id <= 0
+        ):
+            raise ValueError("exported memory id must be a positive integer")
+        parent_id = d.get("supersedes_id")
+        if parent_id is not None and (
+            isinstance(parent_id, bool) or not isinstance(parent_id, int) or parent_id <= 0
+        ):
+            raise ValueError("exported supersedes_id must be a positive integer")
         if not str(d.get("content") or "").strip():
             raise ValueError("exported memory content cannot be empty")
         emb = d.get("embedding")
@@ -230,58 +253,67 @@ def import_memories(
                     break
                 setattr(m, field, value)
             if mismatched:
+        source_ids.append(source_id)
                 continue
         memories.append(m)
 
     if not memories:
-        return {"imported": 0}
+    # Resolve source lineage only against rows in this export. An old ID is
+    # never a destination ID, even when a same-numbered destination row exists.
+    source_rows: dict[int, Memory] = {}
+    for m, old_id in zip(memories, source_ids):
+        if old_id is not None:
+            if old_id in source_rows:
+                raise ValueError(f"duplicate exported memory id: {old_id}")
+            source_rows[old_id] = m
+    for m in memories:
+        if m.supersedes_id is None:
+            continue
+        parent = source_rows.get(m.supersedes_id)
+        if parent is None:
+            raise ValueError(f"unresolved supersedes_id: {m.supersedes_id}")
+        if parent is m or _owner(parent) != _owner(m):
+            raise ValueError(f"invalid supersedes_id ownership: {m.supersedes_id}")
 
-    # Dedup guard: skip memories whose content already exists in the store.
-    # Prevents bulk imports (e.g. MEMORY.md/USER.md merges) from creating
-    # duplicate entries.
-    existing_contents: set[str] = set()
-    # An explicit target scope always uses exact ownership for deduplication;
-    # ``include_global`` only applies to an unbound/compatibility lookup.
-    dedup_include_global = bool(include_global) and not bool(normalized_scope)
-    try:
-        for existing in backend.all():
-            # Import deduplication mirrors the active-row database invariant.
-            # A retracted/superseded history row must not block restoring the
-            # same fact as a new active row.
-            if str(getattr(existing, "status", "active") or "active") != "active":
-                continue
-            if normalized_scope and not memory_matches_scope(
-                existing,
-                normalized_scope,
-                # A global compatibility row is readable by a scoped caller,
-                # but it is not the same ownership key as the target import.
-                include_global=dedup_include_global,
-                active_only=True,
-            ):
-                continue
-            c = getattr(existing, "content", None)
-            if c:
-                existing_contents.add(_hash(c))
-    except Exception:  # noqa: BLE001 -- dedup is best-effort
-        existing_contents = set()
+    # COALESCE(owner, '') and the normalized content hash are exactly the
+    # columns in the active-row unique index. Inactive history remains distinct.
+    existing_contents: dict[tuple[tuple[str, ...], str], Memory] = {}
+    for existing in backend.all():
+        if str(getattr(existing, "status", "active") or "active") == "active":
+            existing_contents[(_owner(existing), _hash(existing.content))] = existing
 
     deduped: list[Memory] = []
+    targets: dict[int, Memory] = {}
+    canonical: dict[int, Memory] = {}
+    canonical: dict[int, Memory] = {}
     skipped_dups = 0
-    for m in memories:
-        key = _hash(m.content)
-        if key and key in existing_contents:
+    parents: list[tuple[Memory, int]] = []
+    for m, old_id in zip(memories, source_ids):
+        if m.supersedes_id is not None:
+            parents.append((m, m.supersedes_id))
+            # Insert without the source ID; restore mapped references only
+            # after all destination IDs (including forward refs) are known.
+            m.supersedes_id = None
+        key = (_owner(m), m.content_hash)
+        canonical[id(m)] = match if match is not None else m
+        match = existing_contents.get(key) if m.status == "active" else None
+        canonical[id(m)] = match if match is not None else m
+        if match is not None:
             skipped_dups += 1
+            if old_id is not None:
+                targets[old_id] = match
             continue
-        existing_contents.add(key)
+        if m.status == "active":
+            existing_contents[key] = m
         deduped.append(m)
+    for m, old_parent_id in parents:
+        if canonical[id(m)] is canonical[id(source_rows[old_parent_id])]:
+            raise ValueError(f"supersedes_id {old_parent_id} resolves to the child itself")
+        if old_id is not None:
+            targets[old_id] = m
 
-    if not deduped:
-        return {"imported": 0, "skipped_duplicates": skipped_dups}
-
-    # Prefer the status-aware batch path when available. The pre-check above
-    # is only an optimization; concurrent importers can still race between
-    # reading existing rows and inserting. A loser must not append a second
-    # episode/evidence/graph lineage for the canonical row.
+    # Prefer the status-aware batch path when available. A DB-level race
+    # winner also becomes a valid source-ID target, without duplicated ledgers.
     add_many_with_status = getattr(backend, "add_many_with_status", None)
     if callable(add_many_with_status):
         added = add_many_with_status(deduped)
@@ -291,7 +323,47 @@ def import_memories(
             added = [(mid, True) for mid in add_many(deduped)]
         else:
             added = [(backend.add(m), True) for m in deduped]
+    if len(added) != len(deduped):
+        raise RuntimeError("backend returned incomplete import IDs; lineage was not restored")
+    for m, (mid, inserted) in zip(deduped, added):
+        m.id = mid
+        if not inserted:
+    for m, (mid, inserted) in zip(deduped, added):
+            winner = backend.get(mid)
+            if winner is None or _owner(winner) != _owner(m) or _hash(winner.content) != m.content_hash:
+                raise RuntimeError(f"backend returned an invalid duplicate import ID: {mid}")
+            canonical[id(m)] = winner
+            for old_id, target in targets.items():
+                if target is m:
+                    targets[old_id] = winner
+            # The batch result represents an existing row, not this new
+            # object; never rewrite it while restoring source lineage.
+            canonical[id(m)] = backend.get(mid)
+            for old_id, target in targets.items():
+                if target is m:
+                    targets[old_id] = canonical[id(m)]
+    for m, old_parent_id in parents:
+        if canonical[id(m)] is parent or (canonical[id(m)] is m and m.id == parent.id):
+            raise ValueError(f"supersedes_id {old_parent_id} resolves to the child itself")
+        target = canonical[id(m)]
+        if parent is None or parent.id is None:
+            raise ValueError(f"unresolved destination supersedes_id: {old_parent_id}")
+        if _owner(parent) != _owner(m):
+            raise ValueError(f"destination supersedes_id ownership mismatch: {old_parent_id}")
+        target = canonical[id(m)]
+        if target.id is None:
+            raise ValueError("unresolved destination ID for imported lineage")
+        if target is not m:
+            if target.supersedes_id != parent.id:
+                raise ValueError("existing duplicate has conflicting supersedes lineage")
+            continue
+        m.supersedes_id = parent.id
+        backend.update(m)
+
+    if not deduped:
+        return {"imported": 0, "skipped_duplicates": skipped_dups}
     from luminary_memory.recall.graph import index_memory_entities
+            added = [(backend.add(m), True) for m in deduped]
 
     secondary_failures = 0
     imported_count = 0
@@ -317,6 +389,12 @@ def import_memories(
                 if not isinstance(claim, dict):
                     continue
                 claim_row = dict(claim)
+                claim_row["status"] = (
+                    m.status if m.status != "active" else str(claim_row.get("status") or "active")
+                )
+                claim_row["valid_from"] = claim_row.get("valid_from") or m.valid_from
+                claim_row["valid_to"] = claim_row.get("valid_to") or m.valid_to
+                claim_row["observed_at"] = claim_row.get("observed_at") or m.observed_at
                 claim_quote = str(claim_row.get("evidence_quote") or "").strip()
                 if not claim_quote or (
                     claim_quote not in m.content

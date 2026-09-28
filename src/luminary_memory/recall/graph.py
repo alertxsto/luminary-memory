@@ -34,39 +34,24 @@ def _exec(backend, sqlite_sql: str, params: tuple = ()):
 
 
 def extract_entities(m) -> list[str]:
-    entities: set[str] = set()
+    """Return unique tags then content tokens in their original salience order."""
+    entities: dict[str, None] = {}
     for tag in getattr(m, "tags", []) or []:
-        if tag:
-            entities.add(tag.casefold().strip())
+        name = str(tag).casefold().strip()
+        if name:
+            entities[name] = None
     content = getattr(m, "content", "") or ""
     for token in _TOKEN_RE.findall(content.casefold()):
         # Keep the filter structural rather than linguistic: no stopword list
         # should privilege one language or silently discard another script.
         if any(character.isalpha() for character in token):
-            entities.add(token)
-    return sorted(entities)
+            entities[token] = None
+    return list(entities)
 
 
-def _entity_id(backend, name: str) -> int:
-    if _is_pg(backend):
-        _exec(
-            backend,
-            "INSERT INTO entities (name) VALUES (?) ON CONFLICT (name) DO NOTHING",
-            (name,),
-        )
-    else:
-        _exec(backend, "INSERT OR IGNORE INTO entities (name) VALUES (?)", (name,))
-    row = _exec(backend, "SELECT id FROM entities WHERE name = ?", (name,)).fetchone()
-    return int(row[0])
-
-
-# Cap on co-occurrence edges per memory. Without a cap, a memory with k
-# entities creates k*(k-1) directed edges — a memory with 8 entities yields
-# 56 relations, and 5k memories explode into ~280k rows that dominate both
-# storage and graph-recall latency. Capping keeps the graph sparse while
-# retaining the strongest connections (earliest entities are the most
-# salient in the source text).
-MAX_RELATIONS_PER_MEMORY = 8
+# Bound indexing work per memory. A star connects every selected entity to
+# the first (most salient) one with O(k) edges rather than O(k²) pairs.
+MAX_RELATIONS_PER_MEMORY = 16
 
 
 def index_memory_entities(backend, memory) -> None:
@@ -76,34 +61,36 @@ def index_memory_entities(backend, memory) -> None:
     # entities. Otherwise a rename/removal leaves stale graph evidence that
     # can keep an obsolete memory in recall.
     _exec(backend, "DELETE FROM relations WHERE memory_id = ?", (memory.id,))
-    ents = extract_entities(memory)
-    if not ents:
+    ents = extract_entities(memory)[:MAX_RELATIONS_PER_MEMORY + 1]
+    if len(ents) < 2:
         backend.conn.commit()
         return
-    ids = [_entity_id(backend, e) for e in ents]
-    # Generate pairs in salience order (first entities are most salient),
-    # then cap the total so dense memories don't explode the graph.
-    pairs: list[tuple[int, int]] = []
-    for i, source_id in enumerate(ids):
-        for target_id in ids[i + 1:]:
-            pairs.append((source_id, target_id))
-            if len(pairs) >= MAX_RELATIONS_PER_MEMORY:
-                break
-        if len(pairs) >= MAX_RELATIONS_PER_MEMORY:
-            break
-    for source_id, target_id in pairs:
+    placeholders = ",".join("(?)" for _ in ents)
+    if _is_pg(backend):
         _exec(
             backend,
-            "INSERT INTO relations (source_id, target_id, relation_type, weight, memory_id) "
-            "VALUES (?, ?, 'cooccur', 1.0, ?)",
-            (source_id, target_id, memory.id),
+            f"INSERT INTO entities (name) VALUES {placeholders} ON CONFLICT (name) DO NOTHING",
+            tuple(ents),
         )
-        _exec(
-            backend,
-            "INSERT INTO relations (source_id, target_id, relation_type, weight, memory_id) "
-            "VALUES (?, ?, 'cooccur', 1.0, ?)",
-            (target_id, source_id, memory.id),
-        )
+    else:
+        _exec(backend, f"INSERT OR IGNORE INTO entities (name) VALUES {placeholders}", tuple(ents))
+    names = ",".join("?" for _ in ents)
+    ids = {
+        name: int(entity_id)
+        for entity_id, name in _exec(
+            backend, f"SELECT id, name FROM entities WHERE name IN ({names})", tuple(ents)
+        ).fetchall()
+    }
+    anchor = ids[ents[0]]
+    for name in ents[1:]:
+        target_id = ids[name]
+        for source_id, destination_id in ((anchor, target_id), (target_id, anchor)):
+            _exec(
+                backend,
+                "INSERT INTO relations (source_id, target_id, relation_type, weight, memory_id) "
+                "VALUES (?, ?, 'cooccur', 1.0, ?)",
+                (source_id, destination_id, memory.id),
+            )
     backend.conn.commit()
 
 
@@ -144,6 +131,8 @@ def graph_recall(
         scope,
         alias="m",
         include_global=include_global,
+        valid_only=True,
+        dialect="postgres" if _is_pg(backend) else "sqlite",
     )
     rel_rows = _exec(
         backend,

@@ -17,13 +17,15 @@ def test_keyword_recall_finds_matching_memory(tmp_path):
     assert res[0][2] == "keyword"
 
 
-def test_keyword_recall_scoring_is_bm25_negated(tmp_path):
+def test_keyword_recall_keeps_bm25_order_but_reports_normalized_evidence(tmp_path):
     b = _mk(tmp_path)
     b.add(Memory(content="postgres vector index is fast and postgres again"))
     b.add(Memory(content="postgres appears once"))
+    backend_order = [m.id for m, _ in b.keyword_search("postgres", limit=10)]
     res = keyword_recall(b, "postgres", limit=10)
-    assert res[0][1] > res[1][1]
-
+    assert [m.id for m, _, _ in res] == backend_order
+    assert [score for _, score, _ in res] == [1.0, 1.0]
+    b.close()
 
 def test_keyword_recall_no_match_returns_empty(tmp_path):
     b = _mk(tmp_path)
@@ -59,9 +61,9 @@ def test_keyword_recall_multi_term_or_not_and(tmp_path):
     # The memory with the most term overlap ranks first.
     assert res[0][0].content.startswith("aturan format tabel")
 
-    # bm25 still distinguishes: the doc matching two terms beats one-term docs.
-    scores = [s for _, s, _ in res]
-    assert scores == sorted(scores, reverse=True), "bm25 ordering must hold"
+    # Planner evidence counts distinct matched terms; BM25 still decides
+    # backend ordering rather than being compared with a cross-backend floor.
+    assert [score for _, score, _ in res] == [2 / 3, 1 / 3]
 
 
 def test_keyword_scan_empty_query_returns_empty(tmp_path):

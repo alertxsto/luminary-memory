@@ -21,10 +21,9 @@ console = Console()
 
 
 def _client(db_path: str | None, backend: str | None) -> MemoryClient:
-    # CLI is an accuracy-facing surface: unrelated queries must abstain and
-    # destructive rule replacement stays opt-in. Scope can be supplied by the
-    # runner without putting identity values into command history.
-    settings = Settings(strict_recall=True, evidence_required=True, rule_auto_replace=False)
+    # CLI is an accuracy-facing surface: unrelated queries must abstain. Scope
+    # can be supplied by the runner without putting identity in command history.
+    settings = Settings(strict_recall=True, evidence_required=True)
     if db_path is not None:
         settings.db_path = db_path
     if backend is not None:

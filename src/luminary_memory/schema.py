@@ -178,17 +178,21 @@ def init_schema(conn: sqlite3.Connection) -> None:
     for name, definition in legacy_base_columns.items():
         if existing_before and name not in existing_before:
             conn.execute(f"ALTER TABLE memories ADD COLUMN {name} {definition}")
-    # Rebuild the external-content FTS index when upgrading a database created
-    # by an older schema that predates the FTS5 table. In that case the virtual
-    # table is created empty and the AFTER INSERT/UPDATE/DELETE triggers never
-    # fire for rows that already existed, so keyword search would silently
-    # return zero hits. Detecting virtual tables in sqlite_master is the cheap,
-    # reliable signal (SELECT count(*) on an external-content FTS table counts
-    # the content rows, not the index, so it cannot be used). Runs at most once:
-    # only the first connection that creates the FTS table performs the rebuild.
+    # Rebuild derived FTS data on the first open of a pre-FTS database, or
+    # after a missing trigger allowed content updates to bypass the index.
+    # An external-content FTS table reports the source table's row count even
+    # when its index is stale, so inspect table/trigger metadata instead.
+    # Capture trigger presence before DDL recreates any missing trigger.
     had_fts = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories_fts'"
     ).fetchone() is not None
+    trigger_names_before = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'memories_%'"
+        ).fetchall()
+    }
+    expected_triggers = {"memories_ai", "memories_au", "memories_ad"}
     conn.executescript(SCHEMA_SQL)
     rebuild_fts = not had_fts
     if had_fts:
@@ -199,14 +203,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
             str(row[1])
             for row in conn.execute("PRAGMA table_info(memories_fts)").fetchall()
         }
-        trigger_names = {
-            str(row[0])
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'memories_%'"
-            ).fetchall()
-        }
-        expected_triggers = {"memories_ai", "memories_au", "memories_ad"}
-        if not {"content", "tags"} <= fts_columns or not expected_triggers <= trigger_names:
+        if not {"content", "tags"} <= fts_columns or not expected_triggers <= trigger_names_before:
             conn.execute("DROP TABLE IF EXISTS memories_fts")
             conn.executescript(SCHEMA_SQL)
             rebuild_fts = True

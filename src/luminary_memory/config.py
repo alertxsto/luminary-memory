@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -114,8 +115,6 @@ class Settings:
     # longer infers durability from language-specific keyword lists.
     rule_keywords: str = field(default_factory=lambda: os.environ.get("LUMINARY_RULE_KEYWORDS", ""))
     rule_importance: float = field(default_factory=lambda: _env_float("LUMINARY_RULE_IMPORTANCE", 0.9))
-    rule_auto_replace: bool = field(default_factory=lambda: _env_bool("LUMINARY_RULE_AUTO_REPLACE", True))
-    rule_auto_replace_threshold: float = field(default_factory=lambda: _env_float("LUMINARY_RULE_AUTO_REPLACE_THRESHOLD", 0.85))
     # query planner
     query_planner: bool = field(default_factory=lambda: _env_bool("LUMINARY_QUERY_PLANNER", True))
     query_planner_keyword_threshold: float = field(
@@ -125,6 +124,56 @@ class Settings:
     pg_hnsw_index: bool = field(default_factory=lambda: _env_bool("LUMINARY_PG_HNSW_INDEX", False))
     pg_hnsw_m: int = field(default_factory=lambda: _env_int("LUMINARY_PG_HNSW_M", 16))
     pg_hnsw_ef_construction: int = field(default_factory=lambda: _env_int("LUMINARY_PG_HNSW_EF_CONSTRUCTION", 64))
+
+    def __post_init__(self) -> None:
+        """Reject unsafe recall/lifecycle settings before any query is run."""
+        for name in (
+            "rrf_k", "token_budget", "core_top_n", "core_budget",
+            "llm_timeout", "llm_max_tokens", "pg_hnsw_m",
+            "pg_hnsw_ef_construction", "embedding_dim",
+        ):
+            value = getattr(self, name)
+            minimum = 1 if name in {
+                "pg_hnsw_m", "pg_hnsw_ef_construction", "embedding_dim"
+            } else 0
+            if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                raise ValueError(f"{name} must be an integer >= {minimum}")
+        for name in ("max_memories", "ttl_default_seconds"):
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+            ):
+                raise ValueError(f"{name} must be None or a nonnegative integer")
+        for name in (
+            "dedup_jaccard_threshold", "recall_cliff_threshold",
+            "recall_min_score", "abstention_min_confidence",
+            "abstention_min_margin", "prune_min_importance",
+            "consolidate_jaccard_threshold", "rule_importance",
+            "query_planner_keyword_threshold",
+        ):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or not 0 <= value <= 1
+            ):
+                raise ValueError(f"{name} must be finite and between 0 and 1")
+        boost = self.importance_recall_boost
+        if (
+            isinstance(boost, bool) or not isinstance(boost, (int, float))
+            or not math.isfinite(boost) or boost < 0
+        ):
+            raise ValueError("importance_recall_boost must be finite and nonnegative")
+        weights = self.strategy_weights
+        if (
+            not isinstance(weights, dict) or not weights
+            or any(
+                not isinstance(value, (int, float)) or isinstance(value, bool)
+                or not math.isfinite(value) or value < 0
+                for value in weights.values()
+            )
+            or not any(value > 0 for value in weights.values())
+        ):
+            raise ValueError("strategy_weights must contain finite nonnegative weights and a positive weight")
 
     def as_dict(self) -> dict[str, Any]:
         """Return settings as a plain dict (useful for CLI `show` and config dumps)."""
@@ -161,8 +210,6 @@ class Settings:
             "llm_max_tokens": self.llm_max_tokens,
             "rule_keywords": self.rule_keywords,
             "rule_importance": self.rule_importance,
-            "rule_auto_replace": self.rule_auto_replace,
-            "rule_auto_replace_threshold": self.rule_auto_replace_threshold,
             "query_planner": self.query_planner,
             "query_planner_keyword_threshold": self.query_planner_keyword_threshold,
             "pg_hnsw_index": self.pg_hnsw_index,

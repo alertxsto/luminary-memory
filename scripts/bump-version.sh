@@ -1,75 +1,78 @@
 #!/usr/bin/env bash
-# bump-version.sh — bump version consistently across EVERY file that carries it.
-# Usage: ./bump-version.sh 0.2.7
-# Run from repo root. Verifies no stale version remains afterwards.
-# Uses python3 for in-place edits (sed -i / perl -i are unreliable on some
-# filesystems — python's write is atomic and portable).
+# Bump only current release metadata; historical changelog entries stay historical.
+# Usage (from repository root): bash scripts/bump-version.sh X.Y.Z
 set -euo pipefail
 
-OLD="$(sed -n 's/^version = "\([0-9]\+\.[0-9]\+\.[0-9]\+\)"/\1/p' pyproject.toml | head -1)"
-NEW="${1:?usage: ./bump-version.sh X.Y.Z}"
+NEW="${1:?usage: scripts/bump-version.sh X.Y.Z}"
+"${PYTHON:-python3}" - "$NEW" <<'PY'
+import os
+import re
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
 
-if [[ "$NEW" == "$OLD" ]]; then
-  echo "already at $NEW — nothing to do"; exit 0
-fi
+new = sys.argv[1]
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", new):
+    raise SystemExit("expected a release version X.Y.Z")
+project = Path("pyproject.toml")
+old = tomllib.loads(project.read_text(encoding="utf-8"))["project"]["version"]
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", old):
+    raise SystemExit(f"invalid current project version: {old!r}")
 
-echo "bumping $OLD → $NEW"
+# Each anchored expression matches an actual current-release field, never a
+# historical changelog entry or an unrelated occurrence of the version.
+# Expected counts must be checked on EVERY file before the first write.
+fields = {
+    "pyproject.toml": [(rf'(?m)^version = "{re.escape(old)}"$', 1)],
+    "src/luminary_memory/__init__.py": [(rf'(?m)^__version__ = "{re.escape(old)}"$', 1)],
+    "src/luminary_memory/hermes/plugin.yaml": [
+        (rf'(?m)^version: {re.escape(old)}$', 1),
+        (rf'(?m)^  - "luminary-memory>={re.escape(old)}"$', 1),
+    ],
+    "hermes/install.sh": [(rf'luminary-memory\[hermes\]>={re.escape(old)}', 1)],
+    "website/index.html": [(rf'>v{re.escape(old)}</span>', 2)],
+    "website/docs.html": [(rf'>v{re.escape(old)}</span>', 2)],
+    "website/js/docs-guides.js": [
+        (rf'The repository declares v{re.escape(old)}\.', 1),
+        (rf'\["Declared version", "{re.escape(old)} / Python 3\.11\+"\]', 1),
+    ],
+}
 
-PYBIN="${PYTHON:-python3}"
-"$PYBIN" - "$OLD" "$NEW" <<'PY'
-import re, sys
-old, new = sys.argv[1], sys.argv[2]
-# (path, regex, replacement) — regex matches ANY 0.2.X so a file missed by a
-# previous bump still gets caught up.
-edits = [
-    ("pyproject.toml", r'^version = "0\.2\.[0-9]+"', f'version = "{new}"'),
-    ("src/luminary_memory/__init__.py", r'__version__ = "0\.2\.[0-9]+"', f'__version__ = "{new}"'),
-    ("src/luminary_memory/hermes/plugin.yaml", r'^version: 0\.2\.[0-9]+$', f"version: {new}"),
-    ("website/index.html", r'v0\.2\.[0-9]+ - Self-Hosted Memory Layer', f"v{new} - Self-Hosted Memory Layer"),
-    ("docs/ROADMAP.md", r'Current release:\*\* v0\.2\.[0-9]+', f"Current release:** v{new}"),
-    ("README.md", r'v0\.2\.[0-9]+ → v1\.0\.0', f"v{new} → v1.0.0"),
-    ("docs/ROADMAP.md", r'v0\.2\.[0-9]+ → v1\.0\.0', f"v{new} → v1.0.0"),
-]
-for path, pat, repl in edits:
+pending = {}
+errors = []
+for filename, patterns in fields.items():
+    path = Path(filename)
     try:
-        s = open(path).read()
-    except FileNotFoundError:
+        content = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(f"{filename}: {exc}")
         continue
-    n = len(re.findall(pat, s, re.M))
-    if n:
-        open(path, "w").write(re.sub(pat, repl, s, flags=re.M))
-        print(f"  {path}: {n} replacement(s)")
-
-# pip requirement floors — any >=0.2.X
-for path in ("hermes/install.sh", "hermes/SKILL.md", "hermes/README.md", "src/luminary_memory/hermes/plugin.yaml"):
+    updated = content
+    for literal_pattern, expected in patterns:
+        matches = list(re.finditer(literal_pattern, content))
+        if len(matches) != expected:
+            errors.append(f"{filename}: expected {expected} current {old} anchor(s) for {literal_pattern!r}, found {len(matches)}")
+        updated = re.sub(literal_pattern, lambda match: match.group().replace(old, new), updated)
+    pending[path] = updated
+if errors:
+    raise SystemExit("release version preflight failed (no files changed):\n" + "\n".join(errors))
+if new == old:
+    print(f"already at {new}; all release anchors verified")
+    raise SystemExit(0)
+for path, content in pending.items():
+    if content == path.read_text(encoding="utf-8"):
+        continue
+    mode = path.stat().st_mode
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as output:
+        temp_name = output.name
+        output.write(content)
     try:
-        s = open(path).read()
-    except FileNotFoundError:
-        continue
-    n = len(re.findall(r'luminary-memory\[hermes\]>=0\.2\.[0-9]+', s))
-    if n:
-        open(path, "w").write(re.sub(r'luminary-memory\[hermes\]>=0\.2\.[0-9]+', f"luminary-memory[hermes]>={new}", s))
-        print(f"  {path}: {n} pip-floor replacement(s)")
+        os.chmod(temp_name, mode)
+        os.replace(temp_name, path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+    print(f"  {path}: updated")
+print(f"release metadata: {old} -> {new}")
 PY
-
-# CHANGELOG — prepend new entry if not present
-if ! grep -q "## \[$NEW\]" CHANGELOG.md; then
-  TMP="$(mktemp)"
-  awk -v n="$NEW" -v d="$(date +%Y-%m-%d)" '
-    NR==1 { print; print ""; print "## [" n "] - " d; print ""; print "### Added"; print ""; print "- _(fill in)_"; print ""; next }
-    { print }
-  ' CHANGELOG.md > "$TMP"
-  mv "$TMP" CHANGELOG.md
-fi
-
-echo ""
-echo "=== verify: any stale $OLD left? ==="
-STALE=$(grep -rnoE "0\.2\.[0-9]+" --include="*.md" --include="*.toml" --include="*.py" --include="*.yml" --include="*.yaml" --include="*.html" --include="*.sh" . 2>/dev/null \
-  | grep -vE "\.git/|docs/api/|\.pytest_cache|CHANGELOG|PLAN|REPORT|benchmarks/RESULTS|\.commandcode" \
-  | grep -vE "${NEW//./\\.}" || true)
-if [[ -n "$STALE" ]]; then
-  echo "⚠️  stale versions remain (review manually — may be historical refs):"
-  echo "$STALE"
-else
-  echo "✅ all version references consistent at $NEW"
-fi

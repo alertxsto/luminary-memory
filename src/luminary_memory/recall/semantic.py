@@ -58,25 +58,23 @@ def semantic_recall(
             include_global=include_global,
         )
     except TypeError:
-        # A legacy vector backend may only know about query + limit. Do not
-        # let its unscoped top-k hide valid in-scope memories; over-fetch and
-        # apply the same scope predicate used by the native backends.
-        fallback_limit = None if needs_local_filter else limit
+        # A legacy backend cannot filter validity before its own top-k.
         try:
-            raw = backend.vector_search(query_vec, limit=fallback_limit)
+            raw = backend.vector_search(query_vec, limit=None)
         except TypeError:
-            raw = backend.vector_search(query_vec, fallback_limit)
+            raw = backend.vector_search(query_vec, None)
+        needs_local_filter = True
     rows = [
         (m, float(score), "semantic")
         for m, score in raw
         if not needs_local_filter
-        or memory_matches_scope(m, scope, include_global=include_global)
+        or memory_matches_scope(m, scope, include_global=include_global, valid_only=True)
     ]
     if needs_local_filter and not rows:
         rows = [
             (m, float(score), "semantic")
             for m, score in _legacy_vector_scan(backend, query_vec)
-            if memory_matches_scope(m, scope, include_global=include_global)
+            if memory_matches_scope(m, scope, include_global=include_global, valid_only=True)
         ]
     return rows if limit is None else rows[: max(0, int(limit))]
 
@@ -119,7 +117,7 @@ def _expand_with_entities(
     include_global: bool = True,
 ) -> str:
     try:
-        from luminary_memory.recall.graph import _exec, _query_entities
+        from luminary_memory.recall.graph import _exec, _is_pg, _query_entities
 
         qents = _query_entities(query or "")
         if not qents:
@@ -136,16 +134,26 @@ def _expand_with_entities(
         sid_ph = ",".join("?" for _ in start_ids)
         from luminary_memory.scope import scope_sql
 
-        scope_where, scope_params = scope_sql(scope, alias="m", include_global=include_global)
+        scope_where, scope_params = scope_sql(
+            scope, alias="m", include_global=include_global,
+            valid_only=True, dialect="postgres" if _is_pg(backend) else "sqlite",
+        )
         rel_rows = _exec(
             backend,
-            f"SELECT DISTINCT t.name FROM relations r "
-            f"JOIN entities s ON s.id = r.source_id "
-            f"JOIN entities t ON t.id = r.target_id "
+            f"WITH starts AS ("
+            f"SELECT r.target_id, r.memory_id, r.weight FROM relations r "
             f"JOIN memories m ON m.id = r.memory_id "
-            f"WHERE s.id IN ({sid_ph}) AND t.name NOT IN ({ph}) AND {scope_where} "
-            f"ORDER BY r.weight DESC LIMIT ?",
-            (*start_ids, *qents, *scope_params, max_extra),
+            f"WHERE r.source_id IN ({sid_ph}) AND {scope_where}), "
+            f"candidates AS ("
+            f"SELECT target_id AS entity_id, weight FROM starts "
+            f"UNION ALL "
+            f"SELECT hop.target_id, starts.weight FROM starts "
+            f"JOIN relations hop ON hop.source_id = starts.target_id "
+            f"AND hop.memory_id = starts.memory_id) "
+            f"SELECT t.name FROM candidates c JOIN entities t ON t.id = c.entity_id "
+            f"WHERE t.name NOT IN ({ph}) "
+            f"GROUP BY t.name ORDER BY MAX(c.weight) DESC, t.name LIMIT ?",
+            (*start_ids, *scope_params, *qents, max_extra),
         ).fetchall()
         extra = [str(r[0]) for r in rel_rows if str(r[0]) not in words]
         if not extra:
@@ -179,6 +187,7 @@ def _expand_with_rules(
                 min_importance=0.8,
                 scope=scope,
                 include_global=include_global,
+                valid_only=True,
             )
         except TypeError:
             # The old signature has no scope parameters. Scan/filter locally
@@ -192,6 +201,7 @@ def _expand_with_rules(
                     memory,
                     scope,
                     include_global=include_global,
+                    valid_only=True,
                 )
             ]
             rules.sort(

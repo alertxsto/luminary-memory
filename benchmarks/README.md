@@ -30,6 +30,11 @@ Gold quality fields include `recall@10`, `mrr`, `precision@10`,
 `abstention_accuracy`, `unsupported_answer_rate`,
 `evidence_support_precision`, `cross_scope_leakage`, and per-case results.
 
+See [RESULTS.md](RESULTS.md) for dated historical results and the current
+checkout smoke. The fake-engine controlled gold run on the current checkout
+scored recall@10 0.60, below the historical 0.95; do not reuse an older
+quality figure as a claim about this checkout or the real embedding model.
+
 ## Hindsight-parity benchmark (provider)
 
 `benchmarks/hermes_provider_bench.py` measures the resource + latency profile of the

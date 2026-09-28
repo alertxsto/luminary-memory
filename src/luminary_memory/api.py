@@ -13,12 +13,15 @@ from luminary_memory.config import Settings
 from luminary_memory.embeddings.fastembed import FastembedEngine
 from luminary_memory.ingest.llm import LLMEnricher, NoopEnricher
 from luminary_memory.ingest.whitelist import WhitelistFilter
-from luminary_memory.scope import memory_matches_scope, normalize_scope
+from luminary_memory.scope import SCOPE_FIELDS, memory_matches_scope, normalize_scope
 from luminary_memory.types import Memory, RecallResult
 
 logger = logging.getLogger(__name__)
 
-_VALID_MEMORY_STATUSES = frozenset(
+class SearchError(RuntimeError):
+    """The keyword backend failed; an empty search is a successful no-match."""
+
+
     {"candidate", "active", "conflicted", "superseded", "expired", "deleted"}
 )
 
@@ -384,21 +387,21 @@ class MemoryClient:
                 )
 
     def _find_exact_duplicate(self, content_hash: str, scope: dict[str, str]) -> Memory | None:
+                (getattr(memory, field) or None) == (scope.get(field) or None)
+                for field in SCOPE_FIELDS
+            )
+
         finder = getattr(self.backend, "find_by_hash", None)
         if callable(finder):
             try:
                 found = finder(content_hash, scope=scope)
-                if found is not None and memory_matches_scope(
-                    found, scope, include_global=False, active_only=True
-                ):
+                if found is not None and exact_active_owner(found):
                     return found
             except Exception:
                 logger.debug("backend hash lookup failed", exc_info=True)
         for existing in self.backend.all():
             existing_hash = existing.content_hash or _content_hash(existing.content)
-            if existing_hash == content_hash and memory_matches_scope(
-                existing, scope, include_global=False, active_only=True
-            ):
+            if existing_hash == content_hash and exact_active_owner(existing):
                 return existing
         return None
 
@@ -540,89 +543,95 @@ class MemoryClient:
 
             m.importance = estimate_importance(m)
 
-        # Exact duplicates are suppressed before any semantic replacement.
-        # This is scope-aware and leaves an audit event so health diagnostics
-        # can still report repeated write attempts.
-        duplicate = self._find_exact_duplicate(m.content_hash, effective_scope)
+        return self._persist_memory(m, claim_source, enriched_claims)
+
+    def _persist_memory(
+        self, m: Memory, claim_source: str, claims: list[dict], *, batch: bool = False,
+    ) -> int:
+        """Apply single-item duplicate, claim and lineage semantics to a prepared memory."""
+
+        scope = {
+            if getattr(m, field) is not None
+        }
+        predecessor = None
+        if m.supersedes_id is not None:
+            predecessor = self.backend.get(m.supersedes_id)
+            if (
+                not m.claim_key
+                or predecessor is None
+                or predecessor.claim_key != m.claim_key
+                or predecessor.status not in {"active", "conflicted"}
+                or any(
+                    (getattr(predecessor, field) or None) != (getattr(m, field) or None)
+                    for field in SCOPE_FIELDS
+                )
+            ):
+                raise ValueError("invalid supersede predecessor: id, owner, key or status")
+
+        existing_claims = (
+            [
+                existing for existing in self.backend.find_by_claim_key(m.claim_key, scope=scope)
+                if existing.status in {"active", "conflicted"}
+                and existing.claim_key == m.claim_key
+                and all(
+                    (getattr(existing, field) or None) == (getattr(m, field) or None)
+                    for field in SCOPE_FIELDS
+                )
+            ]
+            if m.claim_key else []
+        )
+
+        # Validate the requested predecessor even when the content duplicates
+        # another existing row: a bogus lineage reference is never a no-op.
+        duplicate = self._find_exact_duplicate(m.content_hash, scope)
+        if duplicate is None:
+            duplicate = next(
+                (existing for existing in existing_claims
+                 if existing.content_hash == m.content_hash),
+                None,
+            )
+        if predecessor is not None and duplicate is not None and duplicate.id != predecessor.id:
+            raise ValueError("supersede successor duplicates another memory")
         if duplicate is not None:
+        if predecessor is not None and duplicate is not None and duplicate.id != predecessor.id:
+            raise ValueError("supersede successor duplicates another memory")
             self._record_event("duplicate_suppressed", duplicate.id, before=duplicate, after=m)
             return duplicate.id
 
-        # Explicit claim keys enable safe versioning.  A new value without an
-        # explicit supersession is retained as a conflict instead of erasing
-        # the prior claim.
-        if canonical_claim_key:
-            finder = getattr(self.backend, "find_by_claim_key", None)
-            existing_claims = []
-            if callable(finder):
-                try:
-                    existing_claims = finder(canonical_claim_key, scope=effective_scope)
-                except Exception:  # noqa: BLE001
-                    existing_claims = []
+        if predecessor is not None:
+            retired_at = _utc_now()
+            mid = self.backend.supersede_and_add(predecessor, m, retired_at)
+            retired = self.backend.get(predecessor.id)
+            self._record_event("supersede", predecessor.id, before=predecessor, after=retired)
+        else:
             for existing in existing_claims:
-                if not memory_matches_scope(
-                    existing, effective_scope, include_global=False, active_only=False
-                ):
+                if existing.content_hash == m.content_hash:
                     continue
-                if existing.status not in {"active", "conflicted"}:
-                    continue
-                if supersedes_id is not None and existing.id == supersedes_id:
-                    existing_before = self.backend.get(existing.id)
-                    existing.status = "superseded"
-                    existing.valid_to = existing.valid_to or now
+                m.status = "conflicted"
+                if existing.status == "active":
+                    before = self.backend.get(existing.id)
+                    existing.status = "conflicted"
                     self.backend.update(existing)
-                    self._sync_claim_status(existing.id, "superseded", existing.valid_to)
-                    self._record_event("supersede", existing.id, before=existing_before, after=existing)
-                elif existing.content_hash != m.content_hash and supersedes_id is not None:
-                    existing_before = self.backend.get(existing.id)
-                    existing.status = "superseded"
-                    existing.valid_to = existing.valid_to or now
-                    self.backend.update(existing)
-                    self._sync_claim_status(existing.id, "superseded", existing.valid_to)
+                    self._sync_claim_status(existing.id, "conflicted")
                     self._record_event(
-                        "supersede_chain", existing.id, before=existing_before, after=existing
+                        "conflict", existing.id, before=before, after=existing,
                     )
-                elif existing.content_hash != m.content_hash:
-                    m.status = "conflicted"
-                    if existing.status == "active":
-                        existing_before = self.backend.get(existing.id)
-                        existing.status = "conflicted"
-                        self.backend.update(existing)
-                        self._sync_claim_status(existing.id, "conflicted")
-                        self._record_event("conflict", existing.id, before=existing_before, after=existing)
-
-        # Similarity is only a candidate signal. Never infer permission to
-        # overwrite a memory from wording, language, or importance alone:
-        # contradictory observations remain inspectable unless the caller
-        # explicitly supplies a supersession relationship.
-        should_try_replace = self.settings.rule_auto_replace and supersedes_id is not None
-        if should_try_replace:
-            replaced = self._maybe_replace_explicit(
-                content,
-                m,
-                source_text=claim_source,
-                claims=enriched_claims,
+            mid, inserted = self.backend.add_with_status(m)
+            if not inserted:
+            add_with_status = getattr(self.backend, "add_with_status", None)
+            mid, inserted = (
+                add_with_status(m) if callable(add_with_status) else (self.backend.add(m), True)
             )
-            if replaced is not None:
-                return replaced
+                self._record_event("duplicate_suppressed", mid, before=existing, after=m)
+                return mid
 
-        add_with_status = getattr(self.backend, "add_with_status", None)
-        if callable(add_with_status):
-            mid, inserted = add_with_status(m)
-        else:  # pragma: no cover - compatibility for third-party backends
-            mid, inserted = self.backend.add(m), True
-        if not inserted:
-            existing = self.backend.get(mid)
-            self._record_event("duplicate_suppressed", mid, before=existing, after=m)
-            return mid
         m.id = mid
-        self._record_episode_and_claims(m, claim_source, enriched_claims)
+        self._record_episode_and_claims(m, claim_source, claims)
         self._record_event("ingest", mid, after=m)
-        self._record_evidence(m, extractor="enricher" if enriched_claims else "direct")
+        self._record_evidence(m, extractor="batch" if batch else "direct")
         _try_index_graph(self.backend, m)
         return mid
 
-    def _maybe_replace_explicit(
         self,
         content: str,
         new_memory: Memory,
@@ -671,7 +680,6 @@ class MemoryClient:
                 ):
                     continue
                 score = cosine_similarity(new_vec, existing.embedding)
-                if score > best_score:
                     best_score = score
                     best_id = existing.id
             threshold = float(self.settings.rule_auto_replace_threshold)
@@ -747,7 +755,6 @@ class MemoryClient:
         are computed in a single ``embed_batch`` call. Enrichment applies
         per item (same semantics as :meth:`ingest`).
         """
-        if not texts:
             return []
 
         n = len(texts)
@@ -766,12 +773,8 @@ class MemoryClient:
         result: list[int | None] = [None] * n
         enriched_contents: list[str] = []
         enriched_idx_map: list[int] = []  # position in enriched_contents -> orig idx
-
-        for i, raw_text in enumerate(texts):
-            raw_text = str(raw_text or "").strip()
-            if not self.whitelist.accepts(raw_text):
-                continue
-            content, summary, entities, extra_tags = raw_text, None, [], []
+        # Prepare memories with one batch embedding pass; keyed persistence
+        # below observes preceding writes in input order.
             if enrich and self.enricher is not None:
                 enriched = self.enricher.enrich(raw_text)
                 if not bool(getattr(enriched, "worth_saving", True)):
@@ -810,78 +813,20 @@ class MemoryClient:
                     if all(parts):
                         item_metadata["claim_key"] = "|".join(parts)
                 if (
-                    confidence is None
-                    and item_metadata.get("confidence") is None
-                    and first_claim.get("confidence") is not None
-                ):
-                    item_metadata["confidence"] = first_claim.get("confidence")
-                if valid_from is None and item_metadata.get("valid_from") is None:
-                    item_metadata["valid_from"] = first_claim.get("valid_from")
-                if valid_to is None and item_metadata.get("valid_to") is None:
-                    item_metadata["valid_to"] = first_claim.get("valid_to")
-                if evidence_quote is None and not item_metadata.get("evidence_quote"):
-                    item_metadata["evidence_quote"] = first_claim.get("evidence_quote")
-            else:
-                item_metadata.pop("claims", None)
-            item_quote = str(item_metadata.get("evidence_quote") or evidence_quote or raw_text)
-            if item_quote not in raw_text and item_quote not in str(content or ""):
-                item_quote = str(content or raw_text)
-            item_metadata["evidence_quote"] = item_quote
-            effective_scope = self._effective_scope(
-                user_id=user_id,
-                session_id=session_id,
-                workspace_id=workspace_id,
-                agent_id=agent_id,
-            )
-            base_tags = _clean_tags(tag_lists[i])
-            enriched_tags = _clean_tags(extra_tags)
-            merged_tags = base_tags + [tag for tag in enriched_tags if tag not in base_tags]
-            # Keep the immutable raw episode separate from the enriched
-            # memory content.  A summary/quote is useful for recall, but it
-            # must never replace the original source lineage.
-            prepared.append((i, raw_text, content, merged_tags, item_metadata, effective_scope))
-            enriched_contents.append(content)
-            enriched_idx_map.append(i)
-
-        if not prepared:
+        # Keyed writes depend on earlier items in this very batch. Persist in
+        # input order, retaining the single embed_batch call above. Unkeyed
+        # writes can still use the backend's fast batch insertion path.
+        if any(mem.claim_key or mem.supersedes_id is not None for mem in memories):
+            for mem, orig_idx in zip(memories, mem_orig_idx):
+                result[orig_idx] = self._persist_memory(
+                    mem, raw_sources[orig_idx], list(mem.metadata.get("claims") or []),
+                    batch=True,
+                )
             return result
-        raw_sources = {item[0]: item[1] for item in prepared}
 
-        # Single embedding pass.
-        embeddings: list[list[float]]
-        try:
-            batch_fn = getattr(self.engine, "embed_batch", None)
-            if batch_fn is not None:
-                embeddings = batch_fn(enriched_contents)
-            else:
-                embeddings = [self.engine.embed(t) for t in enriched_contents]
-        except Exception:  # noqa: BLE001 -- embedding failure falls back per-item
-            embeddings = [_embed_safely(self.engine, t) for t in enriched_contents]
-        if len(embeddings) != len(prepared):
-            embeddings = [_embed_safely(self.engine, t) for t in enriched_contents]
+        to_insert = memories
+        to_insert_idx = mem_orig_idx
 
-        # Build memories for surviving items — reuse ingest() semantics per
-        # item: importance hint + auto-estimate + rule auto-replace. Each item
-        # is still covered by the single embed_batch above (emb already holds
-        # the final content's embedding), so this stays batch-efficient while
-        # honouring the anti-contradiction + pin contract.
-        result: list[int | None]
-        memories: list[Memory] = []
-        mem_orig_idx: list[int] = []
-        for (orig_idx, _raw_text, content, merged_tags, item_metadata, effective_scope), emb in zip(prepared, embeddings):
-            importance_hint: float | None = importance
-            confidence_value = _clean_unit_score(
-                confidence if confidence is not None else item_metadata.get("confidence", 1.0),
-                default=1.0,
-            )
-            m = Memory(
-                content=content,
-                metadata=item_metadata,
-                source=source,
-                tags=merged_tags,
-                ttl_seconds=_clean_ttl(self.settings.ttl_default_seconds),
-                embedding=_clean_embedding(emb),
-                user_id=effective_scope.get("user_id"),
                 session_id=effective_scope.get("session_id"),
                 workspace_id=effective_scope.get("workspace_id"),
                 agent_id=effective_scope.get("agent_id"),
@@ -1161,30 +1106,46 @@ class MemoryClient:
         self._record_event("update", memory.id, before=before, after=memory)
         if claim_status_after_update is not None:
             self._sync_claim_status(memory.id, claim_status_after_update, _utc_now())
-        self._record_evidence(memory, extractor="update")
-        if changed_content or before.tags != memory.tags:
-            _try_index_graph(self.backend, memory)
+        except TypeError as exc:
+            import inspect
 
-    def delete(self, id: int) -> None:
-        """Delete a memory, recording the pre-delete snapshot first."""
-        before = self.backend.get(id)
-        if before is None:
-            return
-        self._assert_mutable(before)
-        self._record_event("delete", id, before=before)
-        self._sync_claim_status(id, "deleted", _utc_now())
-        self.backend.delete(id)
-
-    def list(
-        self,
-        limit: int = 100,
-        offset: int = 0,
-        scope: dict | None = None,
-    ) -> list[Memory]:
-        """List memories, most recent first (SQL-level pagination when supported).
-
-        ``limit=0`` means unlimited (return all). Negative limits raise ``ValueError``.
-        """
+            try:
+                inspect.signature(self.backend.keyword_search).bind(
+                    query, limit=eff, scope=effective_scope,
+                    include_global=bool(getattr(self.settings, "scope_include_global", True)),
+                )
+            except TypeError:
+                pass  # Legacy backend signature: retry without scope parameters.
+            else:
+                logger.exception("keyword search failed")
+                raise SearchError(f"keyword search failed: {exc}") from exc
+                raise SearchError(f"keyword search failed: {exc}") from exc
+                include_global = bool(getattr(self.settings, "scope_include_global", True))
+                needs_local_filter = bool(effective_scope) or not include_global
+                try:
+                    fallback = self.backend.keyword_search(query, limit=None)
+                except TypeError:
+                    try:
+                        inspect.signature(self.backend.keyword_search).bind(query, limit=None)
+                    except TypeError:
+                        fallback = self.backend.keyword_search(query, None)
+                    else:
+                        raise
+                    row
+                    for row in fallback
+                    if not needs_local_filter
+                    if memory_matches_scope(
+                        include_global=include_global, valid_only=True,
+                    )
+                ]
+                return filtered if eff is None else filtered[:eff]
+            except Exception as fallback_exc:
+                logger.exception("keyword search failed")
+                raise SearchError(f"keyword search failed: {fallback_exc}") from fallback_exc
+                raise SearchError(f"keyword search failed: {fallback_exc}") from fallback_exc
+            logger.exception("keyword search failed")
+            raise SearchError(f"keyword search failed: {exc}") from exc
+            raise SearchError(f"keyword search failed: {exc}") from exc
         n = int(limit)
         if n < 0:
             raise ValueError("limit must be >= 0 (0 means unlimited)")
@@ -1437,13 +1398,15 @@ class MemoryClient:
                 if not b_tokens:
                     continue
                 jac = len(a_tokens & b_tokens) / len(a_tokens | b_tokens)
-                if jac > self.settings.dedup_jaccard_threshold:
-                    dup_count += 1
+                from luminary_memory.recall.graph import _exec, _is_pg
+                from luminary_memory.recall.graph import _is_pg
                     # The original broke per-anchor (short-circuited). We
                     # still count each anchor at most once, but now we only
                     # scan candidates instead of the full tail. Mark j so the
                     # outer loop skips spent anchors (simulates the original
                     # break-per-anchor logic).
+                    valid_only=True,
+                    dialect="postgres" if _is_pg(self.backend) else "sqlite",
                     break
         # Exact duplicates are now suppressed at write time.  Count the
         # suppressed attempts as pollution pressure too, otherwise the new
@@ -1674,7 +1637,7 @@ class MemoryClient:
             return {"reviewed": len(memories), "deleted": 0, "updated": 0, "error": "bad LLM response"}
 
         deleted = updated = skipped = 0
-        by_id = {m.id: m for m in memories}
+            from luminary_memory.recall.graph import _exec, _is_pg
         for act in actions:
             if not isinstance(act, dict):
                 continue
@@ -1683,6 +1646,8 @@ class MemoryClient:
             except (TypeError, ValueError):
                 continue
             if mid not in by_id:
+                valid_only=True,
+                dialect="postgres" if _is_pg(self.backend) else "sqlite",
                 continue
             action = act.get("action")
             if action not in {"delete", "update"}:
@@ -1737,7 +1702,7 @@ class MemoryClient:
             include_embeddings=include_embeddings,
             scope=self.scope,
             include_global=bool(getattr(self.settings, "scope_include_global", True)),
-        )
+        from luminary_memory.recall.keyword import keyword_recall, keyword_tokens, term_coverage
 
     def import_memories(self, path) -> dict:
         """Import memories from *path* (recomputes embeddings when absent)."""
@@ -1819,6 +1784,24 @@ class MemoryClient:
         token_budget: int | None = None,
         tags: list[str] | None = None,
         tag_mode: str = "any",
+        failed_strategies: list[str] = []
+
+        def _run_strategy(name: str, fn) -> list[tuple]:
+            try:
+                return fn()
+            except Exception:
+                failed_strategies.append(name)
+                logger.exception("recall strategy %s failed", name)
+                return []
+
+        def _result_state(has_hits: bool, status: str, reason: str | None = None) -> dict:
+            if failed_strategies:
+                return {
+                    "status": "degraded" if has_hits else "error",
+                    "reason": "strategy_failure: " + ", ".join(failed_strategies),
+                }
+            return {"status": status, "reason": reason}
+
         scope: dict | None = None,
         strict: bool | None = None,
         include_conflicted: bool = False,
@@ -1826,12 +1809,7 @@ class MemoryClient:
         query = str(query or "").strip()
         n_limit = int(limit)
         if n_limit < 0:
-            raise ValueError("limit must be >= 0 (0 means unlimited)")
-        output_limit: int | None = None if n_limit == 0 else n_limit
-        from luminary_memory.recall.dedup import dedup_jaccard
-        from luminary_memory.recall.fusion import reciprocal_rank_fusion
-        from luminary_memory.recall.graph import graph_recall
-        from luminary_memory.recall.keyword import keyword_recall
+            kw_rows = strat_map["keyword"] = _run_strategy("keyword", strat_fns[1][1])
         from luminary_memory.recall.semantic import semantic_recall
         from luminary_memory.recall.temporal import temporal_recall
 
@@ -1842,19 +1820,13 @@ class MemoryClient:
         )
         if tag_mode not in {"any", "all", "strict"}:
             raise ValueError("tag_mode must be one of: any, all, strict")
-        if not query:
-            return RecallResult(
-                memories=[],
-                scores=[],
+                strat_map[name] = _run_strategy(name, fn)
                 strategies_hit={},
                 status="abstain" if strict_policy else "empty",
                 reason="empty_query",
             )
-        # Keep the user's query intact. Retrieval gets language-neutral signal
-        # from embeddings, graph entities, keyword matches, and temporal
-        # evidence; a baked-in synonym table would silently privilege one
-        # vocabulary and can create false positives.
-        query_for_retrieval = query
+            for name, fn in strat_fns:
+                strategies.append(_run_strategy(name, fn))
 
         budget = token_budget if token_budget is not None else self.settings.token_budget
         rrf_k = self.settings.rrf_k
@@ -1949,6 +1921,54 @@ class MemoryClient:
                 except Exception:  # noqa: BLE001
                     strategies.append([])
 
+        def _finish_fallback(rows: list[tuple[Memory, float]], kind: str) -> RecallResult:
+            """Apply the public confidence floor, dedup, budget and limit to fallback hits."""
+            candidate_count = len(rows)
+            deduped = dedup_jaccard(rows, threshold=dedup_threshold)
+            min_score = float(getattr(self.settings, "recall_min_score", 0.0))
+            eligible = [row for row in deduped if row[1] >= min_score]
+            included = truncate([m for m, _score in eligible], token_budget=budget)
+            included_ids = {id(memory) for memory in included}
+            selected = [(m, score) for m, score in eligible if id(m) in included_ids]
+            if output_limit is not None:
+                selected = selected[:output_limit]
+            memories = [m for m, _score in selected]
+            scores = [score for _m, score in selected]
+            try:
+                from luminary_memory.recall.snippets import extract_snippet
+
+                for memory in memories:
+                    memory.snippet = extract_snippet(memory.content, query)
+            except Exception:
+                logger.debug("could not attach fallback snippets", exc_info=True)
+                for memory in memories:
+                    memory.snippet = extract_snippet(memory.content, query)
+            except Exception:
+                logger.debug("could not attach fallback snippets", exc_info=True)
+                kind if selected else
+                "below_min_score" if deduped and not eligible else
+                "token_budget_exhausted" if eligible else "no_supported_candidate"
+            )
+            state = _result_state(bool(selected), "fallback" if selected else "empty", reason)
+            return RecallResult(
+                memories=memories,
+                scores=scores,
+                fused_scores=[None] * len(selected),
+                strategies_hit={**strategies_hit, kind: candidate_count},
+                confidence=scores[0] if scores else (deduped[0][1] if deduped else 0.0),
+                provenance=[
+                    {
+                        "memory_id": memory.id, "source": memory.source,
+                        "source_id": memory.source_id, "evidence_quote": memory.evidence_quote,
+                        "observed_at": memory.observed_at, "valid_from": memory.valid_from,
+                        "valid_to": memory.valid_to, "confidence": score,
+                        "fused_score": None, "status": memory.status,
+                    }
+                    for memory, score in selected
+                ],
+                **state,
+            )
+
         # Scope/tag/status filtering happens before fusion and before any
         # fallback.  This is intentionally duplicated defensively for custom
         # backends whose search methods do not yet understand scope.
@@ -2041,99 +2061,89 @@ class MemoryClient:
                 logger.debug("could not hydrate fallback memories", exc_info=True)
                 return memories
             return [full.get(memory.id, memory) for memory in memories]
-
-        evidence_candidates_seen = 0
-        if evidence_required:
-            evidence_candidates_seen = sum(
-                1
-                for strat in strategies
-                for row in strat
-                if row
-                and _is_current(row[0])
-                and not _has_required_evidence(row[0])
-            )
-
-        filtered_strategies: list[list[tuple]] = []
-        for strat in strategies:
-            filtered_strategies.append([
-                row
-                for row in strat
-                if row
-                and _is_current(row[0])
-                and (not evidence_required or _has_required_evidence(row[0]))
-            ])
-        strategies = filtered_strategies
-
-        # Conflict rows are intentionally excluded from normal candidate
-        # generation. An explicit diagnostic request may include them, but
-        # only after scope/tag/time checks and a direct lexical support check;
-        # this prevents unresolved claims from becoming silent answers.
-        if include_conflicted:
-            import re
-
-            query_terms = set(
-                re.findall(r"[a-z0-9][a-z0-9_./:+#@=-]*", query_for_retrieval.casefold())
-            )
-            existing_ids = {
-                memory.id
-                for strategy in strategies
-                for row in strategy
-                for memory in [row[0]]
-                if memory.id is not None
-            }
-            extras: list[tuple] = []
-            for memory in self.backend.all():
-                if memory.id in existing_ids or memory.status != "conflicted":
-                    continue
-                if not _is_current(memory) or not query_terms:
-                    continue
-                if evidence_required and not _has_required_evidence(memory):
-                    continue
-                content_terms = set(
-                    re.findall(r"[a-z0-9][a-z0-9_./:+#@=-]*", memory.content.casefold())
+        if not scored:
+            if evidence_required and evidence_candidates_seen:
+                return RecallResult(
+                    memories=[], scores=[], strategies_hit=strategies_hit,
+                    **_result_state(False, "abstain" if strict_policy else "empty", "missing_evidence"),
                 )
-                overlap = len(query_terms & content_terms) / len(query_terms)
-                if overlap > 0:
-                    extras.append((memory, overlap, "keyword"))
-            strategies[1].extend(extras)
+            if strict_policy:
+                return RecallResult(
+                    memories=[], scores=[], strategies_hit=strategies_hit,
+                    **_result_state(False, "abstain", "no_supported_candidate"),
+                )
+            imp_min = float(getattr(self.settings, "prune_min_importance", 0.2) or 0.2)
+            top_by = getattr(self.backend, "top_by_importance", None)
+            important: list[Memory] = []
+            if callable(top_by):
+                try:
+                    important = top_by(
+                        top_n=max(1, self.backend.count()),
+                        min_importance=imp_min,
+                        scope=effective_scope,
+                        include_global=include_global,
+                        valid_only=True,
+                    )
+                except TypeError:
+                    import inspect
 
-        id_to_mem: dict[int, Memory] = {}
-        raw_scores: dict[int, dict[str, float]] = {}
-        strategies_hit: dict[str, int] = {}
-        ranked_lists: list[list[int]] = []
-        for strat in strategies:
-            ranked_lists.append([m.id for m, _, _ in strat if m.id is not None])
-            for m, score, label in strat:
-                if m.id is None:
-                    continue
-                strategies_hit[label] = strategies_hit.get(label, 0) + 1
-                id_to_mem[m.id] = m
-                per_strategy = raw_scores.setdefault(m.id, {})
-                per_strategy[label] = max(float(score), per_strategy.get(label, float("-inf")))
-
-        fused = reciprocal_rank_fusion(
-            ranked_lists,
-            k=rrf_k,
-            weights=self.settings.strategy_weights,
-            strategy_labels=[name for name, _ in strat_fns],
-        )
-        scored: list[tuple[Memory, float]] = [
-            (id_to_mem[mid], score) for mid, score in fused if mid in id_to_mem
-        ]
-
-        # Importance boost: high-importance memories (durable rules, critical
-        # facts) get a ranking bonus so they surface even when the query only
-        # loosely matches. Importance alone never tops an exact match, but it
-        # lifts critical rules above weak-but-recent noise.
-        if scored:
-            boost = self.settings.importance_recall_boost
-            if boost > 1.0:
-                scored = [
-                    (m, s * (boost if float(getattr(m, "importance", 0.5)) >= 0.8 else 1.0))
-                    for m, s in scored
-                ]
-                scored.sort(key=lambda x: -x[1])
-
+                    try:
+                        inspect.signature(top_by).bind(
+                            top_n=1, min_importance=imp_min, scope=effective_scope,
+                            include_global=include_global, valid_only=True,
+                        )
+                    except TypeError:
+                        # Legacy top-k cannot filter validity/scope first. Scan
+                        # all rows and only then apply the final output limit.
+                        important = [
+                            memory for memory in self.backend.all()
+                            if float(getattr(memory, "importance", 0.0) or 0.0) >= imp_min
+                            and memory_matches_scope(
+                                memory, effective_scope, include_global=include_global,
+                                valid_only=True,
+                            )
+                        ]
+                        important.sort(
+                            key=lambda memory: (
+                                -float(getattr(memory, "importance", 0.0) or 0.0),
+                                -int(getattr(memory, "access_count", 0) or 0),
+                                -(int(memory.id) if memory.id is not None else 0),
+                            )
+                        )
+                    else:
+                        failed_strategies.append("importance_fallback")
+                        logger.exception("recall strategy importance_fallback failed")
+                except Exception:
+                    failed_strategies.append("importance_fallback")
+                    logger.exception("recall strategy importance_fallback failed")
+            important = [
+                m for m in _hydrate(important)
+                if _is_current(m) and (not evidence_required or _has_required_evidence(m))
+            ]
+            if important:
+                return _finish_fallback(
+                    [(m, 0.1 * _clean_unit_score(m.importance, 0.0)) for m in important],
+                    "importance_fallback",
+                )
+            fallback = _run_strategy(
+                "temporal_fallback",
+                lambda: temporal_recall(
+                    self.backend, limit=None, scope=effective_scope,
+                    include_global=include_global,
+                ),
+            )
+            fallback_pairs = [
+                (m, max(0.0, min(1.0, float(score) * 0.1)))
+                for m, score, _label in fallback
+                if _is_current(m) and (not evidence_required or _has_required_evidence(m))
+            ]
+            if fallback_pairs:
+                return _finish_fallback(fallback_pairs, "temporal_fallback")
+            return RecallResult(
+                memories=[], scores=[], strategies_hit=strategies_hit,
+                **_result_state(False, "empty"),
+            )
+        query_tokens = keyword_tokens(query_for_retrieval)
         if not scored:
             if evidence_required and evidence_candidates_seen:
                 return RecallResult(
@@ -2144,11 +2154,8 @@ class MemoryClient:
                     reason="missing_evidence",
                 )
             if strict_policy:
-                return RecallResult(
-                    memories=[],
-                    scores=[],
-                    strategies_hit=strategies_hit,
-                    status="abstain",
+            keyword_score = max(0.0, min(1.0, float(signals.get("keyword", 0.0))))
+            lexical = term_coverage(query_tokens, memory.content)
                     reason="no_supported_candidate",
                 )
             imp_min = float(getattr(self.settings, "prune_min_importance", 0.2) or 0.2)
@@ -2195,8 +2202,7 @@ class MemoryClient:
                     memories=important,
                     scores=[float(getattr(m, "importance", 0.5) or 0.5) * 0.1 for m in important],
                     strategies_hit={**strategies_hit, "importance_fallback": len(important)},
-                    status="fallback",
-                    reason="importance_fallback",
+                    **_result_state(False, "abstain", "low_confidence_or_ambiguous"),
                 )
             fallback = temporal_recall(
                 self.backend,
@@ -2208,17 +2214,14 @@ class MemoryClient:
                 row
                 for row in fallback
                 if _is_current(row[0])
-                and (not evidence_required or _has_required_evidence(row[0]))
-            ]
-            fallback_pairs: list[tuple] = [(m, s * 0.1) for m, s, _label in fallback]
+                    strategies_hit=strategies_hit,
+                    **_result_state(False, "abstain", "low_confidence_or_ambiguous"),
             if fallback_pairs:
-                return RecallResult(
-                    memories=[m for m, _s in fallback_pairs],
-                    scores=[s for _m, s in fallback_pairs],
-                    strategies_hit={**strategies_hit, "temporal_fallback": len(fallback_pairs)},
-                    status="fallback",
-                    reason="temporal_fallback",
-                )
+        # Confidence reranking is intentional: weighted RRF selects candidate
+        # evidence, while the public scores and final order measure confidence.
+        # A sparse store need not pad up to the requested limit: detect a
+        # relative cliff in confidence (not the separate fused RRF scores).
+        # Skip this cutoff in unlimited recall, which requests every candidate.
             return RecallResult(memories=[], scores=[], strategies_hit=strategies_hit, status="empty")
 
         def _token_set(value: str) -> set[str]:
@@ -2231,7 +2234,15 @@ class MemoryClient:
 
         def _signal_confidence(memory: Memory) -> float:
             signals = raw_scores.get(memory.id or -1, {})
-            semantic_score = float(signals.get("semantic", 0.0))
+        scored = dedup_jaccard(scored, threshold=dedup_threshold)
+        min_score = float(getattr(self.settings, "recall_min_score", 0.0))
+        scored = [(m, score) for m, score in scored if confidence_by_id.get(m.id, 0.0) >= min_score]
+        if not scored:
+            return RecallResult(
+                memories=[], scores=[], strategies_hit=strategies_hit,
+                status="abstain" if strict_policy else "empty",
+                confidence=top_confidence,
+                **_result_state(False, "abstain" if strict_policy else "empty", "below_min_score"),
             # Constant/degenerate vectors are common in test doubles and do
             # not constitute semantic evidence.
             emb = memory.embedding or []
@@ -2245,8 +2256,9 @@ class MemoryClient:
                 lexical = len(query_tokens & content_tokens) / len(query_tokens)
             identifier_tokens = {
                 token for token in query_tokens if any(char in token for char in "+-/:.@=#")
-            }
-            identifier_hit = any(
+        id_to_fused = dict(fused)
+        final_scores = [confidence_by_id[m.id] for m in memories_ordered]
+        final_fused_scores = [id_to_fused[m.id] for m in memories_ordered]
                 token in memory.content.casefold() for token in identifier_tokens
             )
             # One generic-token FTS hit is not enough to support a fact. Treat
@@ -2291,6 +2303,7 @@ class MemoryClient:
                     status="abstain",
                     reason="low_confidence_or_ambiguous",
                     confidence=top_confidence,
+                "fused_score": id_to_fused[m.id],
                 )
             scored.sort(key=lambda pair: confidence_by_id.get(pair[0].id, 0.0), reverse=True)
             top_confidence = confidence_by_id.get(scored[0][0].id, 0.0)
@@ -2298,10 +2311,12 @@ class MemoryClient:
             if top_confidence < min_conf or (
                 top_confidence < 0.6 and top_confidence - second_confidence < min_margin
             ):
+            fused_scores=final_fused_scores[:output_limit],
                 return RecallResult(
                     memories=[],
-                    scores=[],
-                    strategies_hit=strategies_hit,
+            confidence=final_scores[0] if final_scores else top_confidence,
+            **_result_state(bool(selected), "ok" if selected else "empty",
+                            None if selected else "token_budget_exhausted"),
                     status="abstain",
                     reason="low_confidence_or_ambiguous",
                     confidence=top_confidence,

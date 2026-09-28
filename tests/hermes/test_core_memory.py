@@ -26,7 +26,6 @@ def _init_provider(tmp_path, **overrides):
 
 def _seed_core(p, texts):
     tag = p._core_tag()
-    p._client.settings.rule_auto_replace = False  # fake embeddings are collinear -> would merge
     for t in texts:
         p._client.ingest(t, tags=[tag], source="test")
 
@@ -200,7 +199,6 @@ def test_core_never_sourced_from_recall_or_importance(tmp_path):
     _seed_core(p, ["rule inti pakai markdown table"])
     # A NON-core memory with maximum importance — would dominate any
     # importance/recall-based selection, but must NOT leak into core.
-    p._client.settings.rule_auto_replace = False
     mid = p._client.ingest(
         "aturan sangat penting tapi bukan core memory", tags=["biasa"], source="test")
     assert mid is not None
@@ -262,7 +260,6 @@ def test_core_add_promotes_exact_duplicate_without_creating_second_row(tmp_path)
 def test_core_and_persistent_same_memory_not_duplicated(tmp_path):
     """The same memory surfaced by core AND persistent context appears once."""
     p = _init_provider(tmp_path)
-    p._client.settings.rule_auto_replace = False
     # High-importance non-core memory that would be picked by persistent context
     p._client.ingest("aturan sering dipakai biar muncul di persistent", tags=["biasa"],
                      source="test")

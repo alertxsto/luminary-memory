@@ -66,3 +66,30 @@ def test_init_schema_rebuild_is_idempotent_and_cheap_on_reopen(tmp_path):
         "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH 'world'").fetchone()[0]
     assert n == 1, f"reopen must keep the FTS index in sync, got {n}"
     conn.close()
+
+
+def test_init_schema_repairs_fts_after_missing_update_trigger(tmp_path):
+    db = tmp_path / "missing-trigger.db"
+    conn = sqlite3.connect(db)
+    init_schema(conn)
+    conn.execute(
+        "INSERT INTO memories (content, content_hash) VALUES (?, ?)",
+        ("originalalpha", "original-hash"),
+    )
+    conn.execute("DROP TRIGGER memories_au")
+    conn.execute("UPDATE memories SET content = ? WHERE id = 1", ("replacementbeta",))
+    conn.commit()
+    conn.close()
+
+    conn = sqlite3.connect(db)
+    init_schema(conn)
+    old_count = conn.execute(
+        "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH ?",
+        ("originalalpha",),
+    ).fetchone()[0]
+    new_count = conn.execute(
+        "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH ?",
+        ("replacementbeta",),
+    ).fetchone()[0]
+    assert (old_count, new_count) == (0, 1)
+    conn.close()

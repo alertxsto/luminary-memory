@@ -19,6 +19,14 @@ class MemoryBackend(ABC):
         default implementation.
         """
         return self.add(m), True
+    def supersede_and_add(self, predecessor: Memory, successor: Memory, retired_at: str) -> int:
+        """Atomically retire exactly predecessor and insert successor.
+
+        Backends without a transaction implementation cannot safely support
+        explicit supersession.
+        """
+        raise NotImplementedError("explicit supersession requires transactional storage")
+
     @abstractmethod
     def get(self, id: int) -> Memory | None: ...
     @abstractmethod

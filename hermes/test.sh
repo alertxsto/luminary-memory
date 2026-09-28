@@ -80,7 +80,6 @@ class _E:
     def embed(self, t): return [0.1]*384
     def embed_batch(self, ts): return [[0.1]*384 for _ in ts]
 p._client.engine = _E()
-p._client.settings.rule_auto_replace = False
 
 # core memory
 r = p.handle_tool_call("luminary_core_add", {"content": "always use markdown tables for all reports"})
@@ -100,11 +99,14 @@ assert len(d["core"]) == 1, d
 cid = d["core"][0]["id"]
 r = json.loads(p.handle_tool_call("luminary_core_remove", {"id": cid}))
 assert "removed from core" in r["result"], r
-# recall still works
-res = p._client.recall("riset", limit=5)
-assert len(res.memories) >= 0
+# Exercise a real provider write/read roundtrip after core removal.
+content = "riset teknologi smoke fact is available"
+stored = json.loads(p.handle_tool_call("luminary_ingest", {"content": content}))
+assert "id=" in stored.get("result", ""), stored
+recalled = json.loads(p.handle_tool_call("luminary_recall", {"query": "riset teknologi"}))
+assert any(m.get("content") == content for m in recalled.get("memories", [])), recalled
 p.shutdown()
-print("  Hermes runtime smoke: OK (core add/list/remove, prefetch, anti-dup, system prompt)")
+print("  Hermes runtime smoke: OK (core add/list/remove, prefetch, anti-dup, provider ingest/recall)")
 PY
 fi
 

@@ -141,9 +141,10 @@ durable memory are not the same thing.
 
 ## Accuracy-first provider defaults
 
-Hermes and the CLI enable strict recall, require evidence/provenance, and
-disable destructive rule replacement. An unrelated query therefore returns an
-explicit abstention instead of a plausible-looking top result:
+Hermes and the CLI enable strict recall and require evidence/provenance.
+Same-key corrections require an explicit eligible predecessor ID; similar text
+alone never replaces a claim. An unrelated query therefore returns an explicit
+abstention instead of a plausible-looking top result:
 
 ```json
 {
@@ -174,8 +175,6 @@ All settings accept a `LUMINARY_*` env var:
 | `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` |
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` |
 | `importance_recall_boost` | `LUMINARY_IMPORTANCE_RECALL_BOOST` | `1.0` |
-| `rule_auto_replace` | `LUMINARY_RULE_AUTO_REPLACE` | `true` |
-| `rule_auto_replace_threshold` | `LUMINARY_RULE_AUTO_REPLACE_THRESHOLD` | `0.85` |
 | `rule_importance` | `LUMINARY_RULE_IMPORTANCE` | `0.9` |
 
 Scope can be supplied without putting identity values in shell history:

@@ -58,14 +58,17 @@ Embedding similarity between the query and stored memories. Handles paraphrasing
 
 ### 2. Keyword
 
-FTS5 (SQLite) or `ILIKE` (pgvector) term matching. Handles exact names, proper nouns, and technical terms.
+SQLite FTS5 BM25 (or PostgreSQL lexical matching) orders each backend's
+candidate list. Planner and confidence use **distinct query-term coverage**:
+`|query_terms ∩ memory_terms| / |query_terms|`, in [0, 1], independent of raw
+BM25 units. This handles exact names, proper nouns, and technical terms.
 
 ### 3. Temporal
 
 Recency decay × access popularity:
 
 ```
-score = exp(-age_hours / half_life_hours) × (1 + log1p(access_count))
+score = exp(-age_hours / half_life_hours) × (1 + log1p(max(0, access_count)))
 ```
 
 Handles "what did we do recently?" and surfaces frequently-used memories.
@@ -93,6 +96,16 @@ score(m) = Σ weight(strategy) / (k + rank(m) + 1)
 `k` is configurable (`LUMINARY_RRF_K`, default 60). The query planner
 additionally gates strategies: temporal is skipped when a strong keyword
 match exists, and graph is skipped when the query has no entity tokens.
+
+Scope, active status, and validity windows are checked **before** each
+strategy's top-K and graph/content query expansion. RRF scores select
+candidates; a high-importance multiplier may alter fused candidate order.
+Evidence confidence then **reranks** final hits and drives strict abstention.
+`RecallResult.scores` are final confidences in returned order;
+`fused_scores` give parallel weighted RRF values, or `None` for fallback
+hits without a fusion pass. A failed strategy marks results `degraded` if
+others still return hits or `error` without hits; successful no-match is
+`empty`.
 
 ## Query expansion
 
@@ -138,11 +151,13 @@ Memories that keep getting recalled have their importance re-estimated immediate
 
 ## Adaptive cutoff
 
-After fusion, the ranked list is cut at the first **steep score drop**
-(cliff detection). Only the relevant cluster survives:
+After confidence reranking and strict abstention, a finite-limit ranked list
+is cut at the first **adjacent confidence drop** (not an RRF-score drop or a
+comparison to the top hit):
 
 ```
-if (prev_score - cur_score) / prev_score >= cliff_threshold: cut here
+if (previous_confidence - current_confidence) / previous_confidence >= cliff_threshold:
+    cut_here()
 ```
 
 | Behavior | Example |
@@ -150,15 +165,19 @@ if (prev_score - cur_score) / prev_score >= cliff_threshold: cut here
 | Sparse store | 3 strong matches among 20 candidates → returns 3, not padded to the limit |
 | Dense relevant store | 15 all-relevant candidates → keeps all 15 (no over-filtering) |
 
-Threshold configurable via `LUMINARY_RECALL_CLIFF_THRESHOLD` (default `0.45`).
+Threshold configurable via `LUMINARY_RECALL_CLIFF_THRESHOLD` (default `0.45`);
+lower values cut more aggressively. `recall(limit=0)` disables this cliff and
+requests all candidates.
 
-## Dedup
+## Dedup, score floor, and budget
 
-Jaccard similarity (token overlap) removes near-duplicates above a threshold (`LUMINARY_DEDUP_JACCARD_THRESHOLD`, default 0.85).
-
-## Budget
-
-Results are truncated to a token budget (`LUMINARY_TOKEN_BUDGET`, default 4096) so memory injection never overflows the agent's context.
+After the cliff, Jaccard token similarity removes near-duplicates above
+`LUMINARY_DEDUP_JACCARD_THRESHOLD` (default 0.85). Unlimited recall checks
+each candidate against at most 500 retained results but does not discard the
+remaining candidates. `LUMINARY_RECALL_MIN_SCORE` removes final-confidence
+scores below its threshold in both regular and fallback recall. Finally
+`LUMINARY_TOKEN_BUDGET` (default 4096) excludes memories that do not fit;
+fallback and ordinary results share this hard cap and the output limit.
 
 ## Tuning
 
@@ -166,7 +185,8 @@ Results are truncated to a token budget (`LUMINARY_TOKEN_BUDGET`, default 4096) 
 |------|---------|--------|
 | `rrf_k` | `LUMINARY_RRF_K` | higher = smoother fusion across strategies |
 | `strategy_weights` | `LUMINARY_WEIGHT_{SEMANTIC,KEYWORD,GRAPH,TEMPORAL}` | per-strategy fusion weight (default 0.4/0.3/0.2/0.1) |
-| `recall_cliff_threshold` | `LUMINARY_RECALL_CLIFF_THRESHOLD` | higher = more aggressive adaptive cutoff (default 0.45) |
+| `recall_cliff_threshold` | `LUMINARY_RECALL_CLIFF_THRESHOLD` | lower = more aggressive adjacent-confidence cutoff (finite limits only; default 0.45) |
+| `recall_min_score` | `LUMINARY_RECALL_MIN_SCORE` | minimum final confidence for normal and fallback hits |
 | `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | lower = more aggressive dedup |
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | caps total injected tokens |
 | `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | quality/speed tradeoff |

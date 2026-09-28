@@ -1,6 +1,6 @@
 # Hermes integration
 
-Use luminary-memory as a first-class **memory provider** for [Hermes Agent](https://github.com/NousResearch/hermes-agent). The recommended path is the pip entry-point provider (`luminary`), which replaces the standalone-skill approach described below. The provider uses the strict accuracy path: scoped candidates, evidence-required results, abstention, and non-destructive rule updates.
+Use luminary-memory as a first-class **memory provider** for [Hermes Agent](https://github.com/NousResearch/hermes-agent). The recommended path is the pip entry-point provider (`luminary`), which replaces the standalone-skill approach described below. The provider uses the strict accuracy path: scoped candidates, evidence-required results, abstention, and explicit claim supersession.
 
 ## Preferred: install the provider
 
@@ -141,9 +141,9 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `core_top_n` | `12` | Max core memories injected into the system prompt |
 | `core_budget` | `8000` | Max characters of core memory injected into the system prompt |
 
-The provider internally sets `strict_recall=true`, `evidence_required=true`,
-and `rule_auto_replace=false` regardless of the legacy direct-client defaults.
-This keeps weak results abstainable and contradictory claims auditable.
+The provider internally enables strict recall and evidence requirements.
+There is no semantic rule auto-replacement setting: same-key conflicting
+claims remain auditable until an eligible predecessor is explicitly superseded.
 
 ### Core memory (DB-backed, v0.2.13+)
 
@@ -266,10 +266,10 @@ Two safeguards keep rules accurate and non-contradictory:
   summary**: with `ingest_llm: true`, a turn whose enrichment fails or returns
   nothing durable is not stored verbatim (avoids polluting the store with
   conversation noise).
-- **Non-destructive provider writes**: Hermes disables semantic rule
-  auto-replacement. A same-key, different-value claim remains `conflicted`
-  until the caller supplies an explicit supersession and evidence. The direct
-  library client keeps its legacy `rule_auto_replace` default for compatibility.
+- **Non-destructive provider writes**: a same-key, different-value claim
+  remains `conflicted` until the caller supplies explicit supersession naming
+  the exact eligible predecessor and grounded evidence. Direct library writes
+  follow the same rule; similarity alone never replaces a claim.
 - **Rule pinning**: memories at importance ≥ 0.9 are pinned — never pruned by
   importance or the `max_memories` cap, and never deleted by consolidation.
 

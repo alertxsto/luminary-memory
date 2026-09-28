@@ -18,13 +18,16 @@ def reciprocal_rank_fusion(
     weights: dict[str, float] | None = None,
     strategy_labels: list[str] | None = None,
 ) -> list[tuple[int, float]]:
-    """Weighted reciprocal rank fusion.
+    """Return candidates by weighted reciprocal-rank fusion.
 
-    Each strategy contributes ``weight / (k + rank)`` instead of the default
-    ``1 / (k + rank)``, so high-signal strategies (semantic, keyword) dominate
-    the fused ranking and low-signal ones (temporal) cannot push irrelevant
-    recent memories to the top.
+    A strategy contributes ``weight / (k + zero_based_rank + 1)`` for
+    each hit. The result is a fused candidate list, not the final public
+    ranking: ``MemoryClient.recall`` reranks surviving hits by evidence
+    confidence, exposes confidence as ``RecallResult.scores``, and retains
+    these RRF values separately as ``fused_scores``.
     """
+    if isinstance(k, bool) or not isinstance(k, int) or k < 0:
+        raise ValueError("k must be a nonnegative integer")
     w = weights or STRATEGY_WEIGHTS
     scores: dict[int, float] = {}
     for i, lst in enumerate(ranked_lists):

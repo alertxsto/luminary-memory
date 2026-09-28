@@ -1,4 +1,4 @@
-# Debugging Scope — Historical v0.2.17 Investigation, Current Status
+# Debugging Scope — Historical v0.2.17 Investigation and Follow-up
 
 **Project:** Luminary Memory
 **Original cycle:** v0.2.17
@@ -93,8 +93,8 @@ ruff check .
 python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-gold.json
 ```
 
-The current workspace record is `505 passed, 3 skipped`, 83% full-source
-coverage, and a controlled 12-case gold suite with zero cross-scope leakage;
-`ruff check src tests hermes/hooks` is clean. The current implementation audit
-also covers atomic cross-process deduplication, replacement lineage, evidence
-fail-closed behavior, scoped JSONL transparency, and real pgvector integration.
+At the time of the v0.2.17 investigation, the workspace record was
+`505 passed, 3 skipped`, 83% full-source coverage, and a controlled 12-case
+gold suite with zero cross-scope leakage; `ruff check src tests hermes/hooks`
+was clean. Those historical results are not the current checkout verification
+record (see [`FIXES.md`](../FIXES.md)).
