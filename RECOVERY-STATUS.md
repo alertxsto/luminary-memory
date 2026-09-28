@@ -56,6 +56,16 @@ reconstruct cleanly, and no complete post-edit snapshot exists to fall back on.
 Because `FIXES.md` records every finding with `file:line`, the fix set is
 re-derivable — but re-doing it is a fresh effort, not a restore.
 
+## Preserved on the remote
+
+Committed and pushed as branch `recovered/fix-pass` (commit `d49b2fa`, based on
+`420e6ca` = `origin/main`), so this partial state is no longer only on one disk:
+
+    https://github.com/alertxsto/luminary-memory/tree/recovered/fix-pass
+
+Branch only. No pull request, no merge into `main`; the 4 broken files above
+make this branch non-buildable by design.
+
 ## Attempt to recover the 4 broken files (option a)
 
 Every reconstruction route was tried and exhausted:
