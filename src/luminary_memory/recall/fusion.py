@@ -26,6 +26,8 @@ def reciprocal_rank_fusion(
     recent memories to the top.
     """
     w = weights or STRATEGY_WEIGHTS
+    if isinstance(k, bool) or not isinstance(k, int) or k < 0:
+        raise ValueError(f"rrf k must be a non-negative integer, got {k!r}")
     scores: dict[int, float] = {}
     for i, lst in enumerate(ranked_lists):
         label = strategy_labels[i] if strategy_labels else None

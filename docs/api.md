@@ -69,6 +69,13 @@ versioning path. A different value with the same claim key but no explicit
 supersession remains a visible conflict instead of silently replacing the old
 fact.
 
+`supersedes_id` names one specific predecessor and is honoured only when that
+row exists, is still `active` or `conflicted`, belongs to the successor's exact
+ownership scope, and carries the same `claim_key`. Anything else raises
+`ValueError` before any write, so a typo, a stale reference, or content that
+already belongs to a different row can never retire a valid claim. The
+predecessor is retired and the successor inserted as a single transaction.
+
 `ingest_batch()` mirrors these write rules and returns one ID/`None` per input;
 its `tags` and `metadata` arguments are parallel lists. `list(limit=0)` means
 unlimited, and `count()` is the active, scope-visible public count. `search()`
@@ -123,8 +130,16 @@ raw turns into durable semantic memories.
   `user_id`/`workspace_id`/`agent_id`/`session_id` scope. A concurrent duplicate
   write returns the canonical ID and does not create a second episode,
   evidence row, or graph lineage.
-- Export/import deduplication follows the same active-row rule: deleted or
+- Export/import deduplication keys on the normalized full ownership tuple
+  (`user_id`/`workspace_id`/`agent_id`/`session_id`) plus the content hash, so
+  two tenants holding identical text both survive a restore. Deleted or
   superseded history does not block restoring an active copy.
+- Import remaps supersession lineage to destination IDs. Exports carry the
+  source row `id`, and a `supersedes_id` that cannot be resolved inside the
+  export or to an existing row in the same ownership scope is rejected before
+  anything is written, instead of being repointed at an unrelated record.
+  Structured claims are exported and restored with the parent's status and
+  validity, so an inactive memory cannot come back with active claims.
 - With `evidence_required=True`, recall only returns quotes grounded in the
   stored content, including permissive and fallback paths.
 

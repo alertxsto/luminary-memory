@@ -147,7 +147,7 @@ The Luminary equivalent of Hermes `MEMORY.md`, stored in the DB.
 | Field | Env var | Default | Meaning |
 |-------|---------|---------|---------|
 | `ingest_llm` | `LUMINARY_INGEST_LLM` | `false` | Enrich retained turns and run the provider's grounded incremental review (drops chit-chat, stores a factual summary, and checks for captures/corrections instead of storing raw transcript). |
-| `ingest_whitelist` | `LUMINARY_INGEST_WHITELIST` | `[]` | Comma-separated list of content prefixes/tags allowed to be ingested; empty = everything. |
+| `ingest_whitelist` | `LUMINARY_INGEST_WHITELIST` | `[]` | Comma-separated list of content prefixes/tags allowed to be ingested; empty = everything. A pattern that is blank or not a valid regular expression raises `ValueError` at startup: a misconfigured policy fails closed instead of silently widening to allow everything. |
 
 ## LLM enrichment
 

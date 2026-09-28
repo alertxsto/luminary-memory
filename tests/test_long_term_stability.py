@@ -32,7 +32,7 @@ def _client(path, **kwargs) -> MemoryClient:
 
 
 def _race_worker(path, barrier, output) -> None:
-    client = _client(path, settings=Settings(db_path=str(path), rule_auto_replace=False))
+    client = _client(path, settings=Settings(db_path=str(path)))
     try:
         barrier.wait(timeout=10)
         output.put(client.ingest("concurrent exact durable fact"))
@@ -192,8 +192,6 @@ def test_rule_replace_preserves_new_raw_episode_and_claim_lineage(tmp_path):
     db = tmp_path / "replace-lineage.db"
     settings = Settings(
         db_path=str(db),
-        rule_auto_replace=True,
-        rule_auto_replace_threshold=0.0,
         strict_recall=True,
         evidence_required=True,
         importance_auto=False,
@@ -203,9 +201,13 @@ def test_rule_replace_preserves_new_raw_episode_and_claim_lineage(tmp_path):
         engine=RuleEngine(),
         enricher=RuleEnricher(),
     )
-    first = client.ingest("Policy alpha")
-    second = client.ingest("Policy beta", supersedes_id=first)
-    assert second == first
+    first = client.ingest("Policy alpha", claim_key="policy-version")
+    second = client.ingest("Policy beta", claim_key="policy-version", supersedes_id=first)
+    assert second != first
+    assert client.backend.get(first).content == "Policy alpha"
+    assert client.backend.get(first).status == "superseded"
+    assert client.backend.get(second).content == "Policy beta"
+    assert client.backend.get(second).supersedes_id == first
     episodes = client.backend.conn.execute(
         "SELECT id, content FROM episodes ORDER BY created_at, id"
     ).fetchall()
@@ -251,7 +253,6 @@ def test_lifecycle_second_run_is_idempotent_after_consolidation(tmp_path):
 def test_lifecycle_consolidation_does_not_cross_owner_scope(tmp_path):
     settings = Settings(
         db_path=str(tmp_path / "scope-consolidation.db"),
-        rule_auto_replace=False,
         importance_auto=False,
         max_memories=None,
         consolidate_jaccard_threshold=0.8,

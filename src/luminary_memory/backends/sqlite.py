@@ -278,8 +278,10 @@ class SQLiteBackend(MemoryBackend):
             out.update({int(r["id"]): self._row_to_memory(r) for r in rows})
         return out
 
-    def find_by_hash(self, content_hash: str, scope: dict | None = None) -> Memory | None:
-        where, params = scope_sql(scope, alias="m", include_global=False)
+    def find_by_hash(
+        self, content_hash: str, scope: dict | None = None, active_only: bool = True
+    ) -> Memory | None:
+        where, params = scope_sql(scope, alias="m", include_global=False, active_only=active_only)
         row = self.conn.execute(
             f"SELECT m.* FROM memories m WHERE m.content_hash = ? AND {where} "
             "ORDER BY m.id LIMIT 1",
@@ -454,6 +456,53 @@ class SQLiteBackend(MemoryBackend):
                 (claim_id, quote, claim.get("source_episode_id"), confidence),
             )
             self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def supersede_and_add(
+        self, predecessor: Memory, successor: Memory, retired_at: str
+    ) -> int:
+        """Retire the exact predecessor and insert its successor atomically.
+
+        The eligibility predicate is re-checked inside the transaction using
+        the successor's own scope and claim key, so a predecessor that is
+        missing, owned by another tenant, keyed differently, or already
+        retired is rejected without writing anything.
+        """
+        if predecessor.id is None or successor.supersedes_id != predecessor.id:
+            raise ValueError("invalid supersede predecessor: id, owner, key or status")
+        if not successor.claim_key:
+            raise ValueError("invalid supersede predecessor: id, owner, key or status")
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            cur = self.conn.execute(
+                "UPDATE memories SET status = 'superseded', valid_to = COALESCE(valid_to, ?) "
+                "WHERE id = ? AND claim_key = ? AND status IN ('active', 'conflicted') "
+                "AND COALESCE(user_id, '') = COALESCE(?, '') "
+                "AND COALESCE(workspace_id, '') = COALESCE(?, '') "
+                "AND COALESCE(agent_id, '') = COALESCE(?, '') "
+                "AND COALESCE(session_id, '') = COALESCE(?, '')",
+                (
+                    retired_at,
+                    predecessor.id,
+                    successor.claim_key,
+                    successor.user_id,
+                    successor.workspace_id,
+                    successor.agent_id,
+                    successor.session_id,
+                ),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("invalid supersede predecessor: id, owner, key or status")
+            inserted = self._insert_row(successor)
+            self.conn.execute(
+                "UPDATE claims SET status = 'superseded', valid_to = COALESCE(valid_to, ?) "
+                "WHERE memory_id = ? AND status IN ('active', 'conflicted')",
+                (retired_at, predecessor.id),
+            )
+            self.conn.commit()
+            return int(inserted.lastrowid)
         except Exception:
             self.conn.rollback()
             raise

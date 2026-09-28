@@ -13,7 +13,7 @@ from luminary_memory.config import Settings
 from luminary_memory.embeddings.fastembed import FastembedEngine
 from luminary_memory.ingest.llm import LLMEnricher, NoopEnricher
 from luminary_memory.ingest.whitelist import WhitelistFilter
-from luminary_memory.scope import memory_matches_scope, normalize_scope
+from luminary_memory.scope import SCOPE_FIELDS, memory_matches_scope, normalize_scope
 from luminary_memory.types import Memory, RecallResult
 
 logger = logging.getLogger(__name__)
@@ -206,8 +206,10 @@ class MemoryClient:
         if ingest_whitelist is not None:
             self.settings.ingest_whitelist = ingest_whitelist
 
-        self.backend = backend or get_backend(self.settings)
+        # Validate the allowlist before touching the store: a misconfigured
+        # policy must fail closed without creating or migrating a database.
         self.whitelist = WhitelistFilter(self.settings.ingest_whitelist)
+        self.backend = backend or get_backend(self.settings)
         self.engine = engine or FastembedEngine(model_name=self.settings.embedding_model)
         requested_scope = dict(scope or {})
         requested_scope.update(
@@ -384,20 +386,37 @@ class MemoryClient:
                 )
 
     def _find_exact_duplicate(self, content_hash: str, scope: dict[str, str]) -> Memory | None:
+        """Return an existing row holding the same normalized content.
+
+        Rows that are still part of the live claim lifecycle (``active`` or
+        ``conflicted``) count as duplicates. Superseded or deleted rows do
+        not: re-asserting a retired fact is a new observation, not a repeat.
+        """
+        eligible = {"active", "conflicted"}
         finder = getattr(self.backend, "find_by_hash", None)
         if callable(finder):
             try:
-                found = finder(content_hash, scope=scope)
-                if found is not None and memory_matches_scope(
-                    found, scope, include_global=False, active_only=True
+                found = finder(content_hash, scope=scope, active_only=False)
+                if (
+                    found is not None
+                    and str(getattr(found, "status", "active") or "active") in eligible
+                    and memory_matches_scope(
+                        found, scope, include_global=False, active_only=False
+                    )
                 ):
                     return found
+            except TypeError:
+                # Backend without the active_only keyword: fall through to the
+                # portable scan below rather than guessing its semantics.
+                pass
             except Exception:
                 logger.debug("backend hash lookup failed", exc_info=True)
         for existing in self.backend.all():
+            if str(getattr(existing, "status", "active") or "active") not in eligible:
+                continue
             existing_hash = existing.content_hash or _content_hash(existing.content)
             if existing_hash == content_hash and memory_matches_scope(
-                existing, scope, include_global=False, active_only=True
+                existing, scope, include_global=False, active_only=False
             ):
                 return existing
         return None
@@ -540,85 +559,115 @@ class MemoryClient:
 
             m.importance = estimate_importance(m)
 
-        # Exact duplicates are suppressed before any semantic replacement.
-        # This is scope-aware and leaves an audit event so health diagnostics
-        # can still report repeated write attempts.
-        duplicate = self._find_exact_duplicate(m.content_hash, effective_scope)
+        # Duplicate suppression, claim conflicts and explicit supersession all
+        # live in one write path shared with ingest_batch.
+        return self._persist_memory(m, claim_source, enriched_claims)
+
+    def _validate_predecessor(self, m: Memory) -> Memory | None:
+        """Resolve and validate an explicitly requested predecessor.
+
+        A ``supersedes_id`` is a claim of a specific lineage edge. It is only
+        honoured when the referenced row exists, is still eligible, belongs to
+        the successor's exact scope, and carries the same claim key. Anything
+        else is rejected before any write, so a typo or a stale reference can
+        never retire a valid claim or point at an unrelated record.
+        """
+        if m.supersedes_id is None:
+            return None
+        if not m.claim_key:
+            raise ValueError("invalid supersede predecessor: id, owner, key or status")
+        predecessor = self.backend.get(m.supersedes_id)
+        if predecessor is None:
+            raise ValueError("invalid supersede predecessor: id, owner, key or status")
+        if predecessor.claim_key != m.claim_key:
+            raise ValueError("invalid supersede predecessor: id, owner, key or status")
+        if predecessor.status not in {"active", "conflicted"}:
+            raise ValueError("invalid supersede predecessor: id, owner, key or status")
+        for field in SCOPE_FIELDS:
+            if (getattr(predecessor, field) or None) != (getattr(m, field) or None):
+                raise ValueError("invalid supersede predecessor: id, owner, key or status")
+        return predecessor
+
+    def _persist_memory(
+        self,
+        m: Memory,
+        claim_source: str,
+        claims: list[dict],
+    ) -> int:
+        """Apply duplicate, claim and lineage semantics to a prepared memory.
+
+        This is the single write path shared by :meth:`ingest` and
+        :meth:`ingest_batch`, so both entry points enforce identical
+        supersession and conflict rules.
+        """
+        scope = {
+            field: getattr(m, field)
+            for field in SCOPE_FIELDS
+            if getattr(m, field) is not None
+        }
+
+        # Validate an explicitly requested predecessor before anything else:
+        # a bogus lineage reference is never a no-op, even when the content
+        # happens to duplicate an unrelated row.
+        predecessor = self._validate_predecessor(m)
+
+        duplicate = self._find_exact_duplicate(m.content_hash, scope)
         if duplicate is not None:
+            if predecessor is not None and duplicate.id != predecessor.id:
+                # The caller named one predecessor but supplied content that
+                # already belongs to a different row. Retiring the named row
+                # would silently move another row's identity, so refuse.
+                raise ValueError(
+                    "invalid supersede predecessor: content already belongs to another memory"
+                )
             self._record_event("duplicate_suppressed", duplicate.id, before=duplicate, after=m)
             return duplicate.id
 
-        # Explicit claim keys enable safe versioning.  A new value without an
-        # explicit supersession is retained as a conflict instead of erasing
-        # the prior claim.
-        if canonical_claim_key:
-            finder = getattr(self.backend, "find_by_claim_key", None)
-            existing_claims = []
-            if callable(finder):
-                try:
-                    existing_claims = finder(canonical_claim_key, scope=effective_scope)
-                except Exception:  # noqa: BLE001
-                    existing_claims = []
-            for existing in existing_claims:
-                if not memory_matches_scope(
-                    existing, effective_scope, include_global=False, active_only=False
-                ):
-                    continue
-                if existing.status not in {"active", "conflicted"}:
-                    continue
-                if supersedes_id is not None and existing.id == supersedes_id:
-                    existing_before = self.backend.get(existing.id)
-                    existing.status = "superseded"
-                    existing.valid_to = existing.valid_to or now
-                    self.backend.update(existing)
-                    self._sync_claim_status(existing.id, "superseded", existing.valid_to)
-                    self._record_event("supersede", existing.id, before=existing_before, after=existing)
-                elif existing.content_hash != m.content_hash and supersedes_id is not None:
-                    existing_before = self.backend.get(existing.id)
-                    existing.status = "superseded"
-                    existing.valid_to = existing.valid_to or now
-                    self.backend.update(existing)
-                    self._sync_claim_status(existing.id, "superseded", existing.valid_to)
-                    self._record_event(
-                        "supersede_chain", existing.id, before=existing_before, after=existing
-                    )
-                elif existing.content_hash != m.content_hash:
+        if predecessor is not None:
+            mid = self.backend.supersede_and_add(predecessor, m, _utc_now())
+            retired = self.backend.get(predecessor.id)
+            self._record_event("supersede", predecessor.id, before=predecessor, after=retired)
+        else:
+            if m.claim_key:
+                finder = getattr(self.backend, "find_by_claim_key", None)
+                existing_claims = []
+                if callable(finder):
+                    try:
+                        existing_claims = finder(m.claim_key, scope=scope)
+                    except Exception:  # noqa: BLE001
+                        existing_claims = []
+                for existing in existing_claims:
+                    if not memory_matches_scope(
+                        existing, scope, include_global=False, active_only=False
+                    ):
+                        continue
+                    if existing.status not in {"active", "conflicted"}:
+                        continue
+                    if existing.content_hash == m.content_hash:
+                        continue
                     m.status = "conflicted"
                     if existing.status == "active":
                         existing_before = self.backend.get(existing.id)
                         existing.status = "conflicted"
                         self.backend.update(existing)
                         self._sync_claim_status(existing.id, "conflicted")
-                        self._record_event("conflict", existing.id, before=existing_before, after=existing)
+                        self._record_event(
+                            "conflict", existing.id, before=existing_before, after=existing
+                        )
+            add_with_status = getattr(self.backend, "add_with_status", None)
+            if callable(add_with_status):
+                mid, inserted = add_with_status(m)
+            else:  # pragma: no cover - compatibility for third-party backends
+                mid, inserted = self.backend.add(m), True
+            if not inserted:
+                existing = self.backend.get(mid)
+                self._record_event("duplicate_suppressed", mid, before=existing, after=m)
+                return mid
 
-        # Similarity is only a candidate signal. Never infer permission to
-        # overwrite a memory from wording, language, or importance alone:
-        # contradictory observations remain inspectable unless the caller
-        # explicitly supplies a supersession relationship.
-        should_try_replace = self.settings.rule_auto_replace and supersedes_id is not None
-        if should_try_replace:
-            replaced = self._maybe_replace_explicit(
-                content,
-                m,
-                source_text=claim_source,
-                claims=enriched_claims,
-            )
-            if replaced is not None:
-                return replaced
-
-        add_with_status = getattr(self.backend, "add_with_status", None)
-        if callable(add_with_status):
-            mid, inserted = add_with_status(m)
-        else:  # pragma: no cover - compatibility for third-party backends
-            mid, inserted = self.backend.add(m), True
-        if not inserted:
-            existing = self.backend.get(mid)
-            self._record_event("duplicate_suppressed", mid, before=existing, after=m)
-            return mid
         m.id = mid
-        self._record_episode_and_claims(m, claim_source, enriched_claims)
+        self._record_episode_and_claims(m, claim_source, claims)
         self._record_event("ingest", mid, after=m)
-        self._record_evidence(m, extractor="enricher" if enriched_claims else "direct")
+        self._record_evidence(m, extractor="enricher" if claims else "direct")
         _try_index_graph(self.backend, m)
         return mid
 
@@ -905,102 +954,15 @@ class MemoryClient:
             memories.append(m)
             mem_orig_idx.append(orig_idx)
 
-        # Filter through the same explicit replacement guard as ingest().
-        to_insert: list[Memory] = []
-        to_insert_idx: list[int] = []
+        # Route every surviving item through the same write path as ingest()
+        # so batch and sequential writes cannot diverge on conflicts,
+        # duplicates or explicit supersession.
         for mem, orig_idx in zip(memories, mem_orig_idx):
-            duplicate = self._find_exact_duplicate(mem.content_hash, {
-                key: value
-                for key, value in {
-                    "user_id": mem.user_id,
-                    "session_id": mem.session_id,
-                    "workspace_id": mem.workspace_id,
-                    "agent_id": mem.agent_id,
-                }.items()
-                if value is not None
-            })
-            if duplicate is not None:
-                self._record_event("duplicate_suppressed", duplicate.id, before=duplicate, after=mem)
-                result[orig_idx] = duplicate.id
-                continue
-            if mem.claim_key:
-                finder = getattr(self.backend, "find_by_claim_key", None)
-                mem_scope = {
-                    key: value
-                    for key, value in {
-                        "user_id": mem.user_id,
-                        "session_id": mem.session_id,
-                        "workspace_id": mem.workspace_id,
-                        "agent_id": mem.agent_id,
-                    }.items()
-                    if value is not None
-                }
-                try:
-                    existing_claims = finder(mem.claim_key, scope=mem_scope) if finder else []
-                except Exception:
-                    logger.debug("batch claim lookup failed", exc_info=True)
-                    existing_claims = []
-                for existing in existing_claims:
-                    if not memory_matches_scope(
-                        existing, mem_scope, include_global=False, active_only=False
-                    ):
-                        continue
-                    if existing.status not in {"active", "conflicted"}:
-                        continue
-                    if mem.supersedes_id is not None:
-                        before = self.backend.get(existing.id)
-                        existing.status = "superseded"
-                        existing.valid_to = existing.valid_to or _utc_now()
-                        self.backend.update(existing)
-                        self._sync_claim_status(existing.id, "superseded", existing.valid_to)
-                        self._record_event("supersede", existing.id, before=before, after=existing)
-                    elif existing.content_hash != mem.content_hash:
-                        mem.status = "conflicted"
-                        if existing.status == "active":
-                            before = self.backend.get(existing.id)
-                            existing.status = "conflicted"
-                            self.backend.update(existing)
-                            self._sync_claim_status(existing.id, "conflicted")
-                            self._record_event("conflict", existing.id, before=before, after=existing)
-            content = mem.content
-            should_try = self.settings.rule_auto_replace and supersedes_id is not None
-            if should_try:
-                replaced = self._maybe_replace_explicit(
-                    content,
-                    mem,
-                    source_text=raw_sources[orig_idx],
-                    claims=list(mem.metadata.get("claims") or []),
-                )
-                if replaced is not None:
-                    result[orig_idx] = replaced
-                    continue
-            to_insert.append(mem)
-            to_insert_idx.append(orig_idx)
-
-        if to_insert:
-            add_many_with_status = getattr(self.backend, "add_many_with_status", None)
-            if callable(add_many_with_status):
-                added = add_many_with_status(to_insert)
-            else:  # pragma: no cover - compatibility for third-party backends
-                added = [(mid, True) for mid in self.backend.add_many(to_insert)]
-            for mem, (mid, inserted), orig_idx in zip(to_insert, added, to_insert_idx):
-                mem.id = mid
-                if not inserted:
-                    existing = self.backend.get(mid)
-                    self._record_event(
-                        "duplicate_suppressed", mid, before=existing, after=mem
-                    )
-                    result[orig_idx] = mid
-                    continue
-                self._record_event("ingest", mid, after=mem)
-                self._record_episode_and_claims(
-                    mem,
-                    raw_sources[orig_idx],
-                    list(mem.metadata.get("claims") or []),
-                )
-                self._record_evidence(mem, extractor="batch")
-                _try_index_graph(self.backend, mem)
-                result[orig_idx] = mid
+            result[orig_idx] = self._persist_memory(
+                mem,
+                raw_sources[orig_idx],
+                list(mem.metadata.get("claims") or []),
+            )
         return result
 
     def get(self, id: int, scope: dict | None = None) -> Memory | None:
