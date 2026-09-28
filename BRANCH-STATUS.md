@@ -30,3 +30,13 @@ imports it.
 - Do not attribute test results from any other tree to this branch.
 - The fix set is re-derivable from `FIXES.md`, which records every finding with
   `file:line`; re-doing it is a fresh effort, not a restore.
+
+## Preserved on the remote
+
+Committed and pushed as branch `recovered/fix-pass` (commit `d49b2fa`, based on
+`420e6ca` = `origin/main`), so this partial state is no longer only on one disk:
+
+    https://github.com/alertxsto/luminary-memory/tree/recovered/fix-pass
+
+Branch only. No pull request, no merge into `main`; the four files above make
+this branch non-buildable by design.
