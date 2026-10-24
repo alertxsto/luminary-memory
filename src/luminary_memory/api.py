@@ -2225,13 +2225,19 @@ class MemoryClient:
             import re
 
             tokens = re.findall(r"[^\W_][\w./:+#@=-]*", (value or "").casefold(), re.UNICODE)
-            return {token for token in tokens if len(token) >= 2}
+            # The pattern above keeps `.` `:` `/` so identifiers such as
+            # `gpt-4o` and `https://host/path` survive as one token, but it
+            # also swallows sentence-final punctuation. Without this strip the
+            # last word of every memory ("production.", "cluster.") can never
+            # match a query token, which silently zeroes lexical coverage for
+            # exactly the words that carry the fact.
+            cleaned = (token.strip(".,;:!?") for token in tokens)
+            return {token for token in cleaned if len(token) >= 2}
 
         query_tokens = _token_set(query_for_retrieval)
         semantic_floor = semantic_support_floor(
             getattr(self.settings, "embedding_model", None)
         )
-
         def _signal_confidence(memory: Memory) -> float:
             signals = raw_scores.get(memory.id or -1, {})
             semantic_score = float(signals.get("semantic", 0.0))
