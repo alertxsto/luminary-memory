@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/luminary-memory?color=8ab4e8)](https://pypi.org/project/luminary-memory)
 [![License](https://img.shields.io/github/license/alertxsto/luminary-memory?color=8ab4e8)](LICENSE)
 [![CI](https://github.com/alertxsto/luminary-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/alertxsto/luminary-memory/actions)
-[![Tests](https://img.shields.io/badge/tests-505%2B%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
+[![Tests](https://img.shields.io/badge/tests-541%2B%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
 [![Coverage](https://img.shields.io/badge/coverage-83%25-8ab4e8)](https://github.com/alertxsto/luminary-memory)
 [![Stars](https://img.shields.io/github/stars/alertxsto/luminary-memory?color=8ab4e8)](https://github.com/alertxsto/luminary-memory)
 

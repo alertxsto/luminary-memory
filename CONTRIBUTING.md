@@ -75,10 +75,11 @@ embedder.
 - TDD where feasible, test first, then implement.
 - Keep the public API (`MemoryClient`) stable; add rather than break.
 - Full-source coverage is reported and must not regress from the current
-  evidence-backed baseline (`83%`, 5,037 statements). Every changed behavior
-  needs a targeted regression or invariant test; do not inflate coverage with
-  tests that only execute lines without checking outcomes. PostgreSQL-only
-  branches are verified separately by the pgvector integration job.
+  evidence-backed baseline (`83%`, 5,092 statements, 876 missed). Every changed
+  behavior needs a targeted regression or invariant test; do not inflate
+  coverage with tests that only execute lines without checking outcomes.
+  PostgreSQL-only branches are verified separately by the pgvector integration
+  job.
 
 ### Long-run checks
 
@@ -127,7 +128,7 @@ contributor communication; keep it concise and in your own voice.
 Run the full suite (SQLite + unit tests) locally:
 
 ```bash
-python -m pytest          # 505 passed, 3 skipped at the current baseline
+python -m pytest          # 541 passed, 3 skipped at the current baseline
 python -m ruff check src tests hermes/hooks
 ```
 
@@ -137,7 +138,8 @@ Coverage (full-source baseline):
 python -m pytest --cov=luminary_memory --cov-report=term
 ```
 
-The current local baseline is `83%` (`5,037` statements, `881` missed). The
+The current local baseline is `541 passed, 3 skipped` at `83%` (`5,092`
+statements, `876` missed). The
 number is intentionally reported honestly while the defensive PostgreSQL and
 failure branches continue to receive integration coverage; the quality gate
 is the invariant-focused test suite plus the CI/verification coverage gate

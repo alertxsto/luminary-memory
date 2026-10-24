@@ -3,6 +3,13 @@
 > Historical pipeline-smoke numbers plus the current controlled gold-set run.
 > These results do not by themselves establish superiority over Mem0,
 > Hindsight, or another provider.
+>
+> The current controlled run is recall@10 `0.85`, MRR `0.90`, precision@10
+> `0.90`, abstention `1.00`, wrong-hit `0.00`, source-grounded `1.00`, leakage
+> `0`. The recorded artefact is `benchmarks/baselines/gold-real-v3.json`. The
+> per-turn bookkeeping and strategy-latency sections are historical
+> measurements kept for comparability; the gold-set tables below reflect the
+> current configuration.
 
 ## Historical pipeline run (2026-08-18, v0.2.15)
 
@@ -79,18 +86,25 @@ ingest at **18.51 ms** and end-to-end recall at **2.29 ms p50** (**2.59 ms
 mean**). These are engineering smoke measurements, not a production capacity
 claim; the report was generated from an uncommitted working tree.
 
-The independent gold arm remained unchanged:
+The independent gold arm, re-run on the current configuration:
 
 | Metric | Result |
 |--------|--------|
 | Gold cases | 12 (10 answer, 2 no-answer) |
-| Recall@10 | 0.95 |
-| MRR | 1.00 |
-| Precision@10 | 1.00 |
+| Recall@10 | 0.85 |
+| MRR | 0.90 |
+| Precision@10 | 0.90 |
 | Abstention accuracy | 1.00 |
 | Unsupported answer rate | 0.00 |
-| Evidence support precision | 1.00 |
+| Wrong-hit rate | 0.00 |
+| Source-grounded rate | 1.00 |
 | Cross-scope leakage | 0 |
+
+`evidence_support_precision` is gone: it measured whether a returned row
+carried a stored source, which is not relevance, and reading it as accuracy
+hid a fully-sourced but off-topic row. `wrong_hit_rate` covers relevance and
+`source_grounded_rate` covers grounding, reported separately. The recorded
+baseline is `benchmarks/baselines/gold-real-v3.json`.
 
 ## Independent gold-set run
 
@@ -107,13 +121,20 @@ run reported:
 | Metric | Result |
 |--------|--------|
 | Gold cases | 12 (10 answer, 2 no-answer) |
-| Recall@10 | 0.95 |
-| MRR | 1.00 |
-| Precision@10 | 1.00 |
+| Recall@10 | 0.85 |
+| MRR | 0.90 |
+| Precision@10 | 0.90 |
 | Abstention accuracy | 1.00 |
 | Unsupported answer rate | 0.00 |
-| Evidence support precision | 1.00 |
+| Wrong-hit rate | 0.00 |
+| Source-grounded rate | 1.00 |
 | Cross-scope leakage | 0 |
+
+`evidence_support_precision` is gone: it measured whether a returned row
+carried a stored source, which is not relevance, and reading it as accuracy
+hid a fully-sourced but off-topic row. `wrong_hit_rate` covers relevance and
+`source_grounded_rate` covers grounding, reported separately. The recorded
+baseline is `benchmarks/baselines/gold-real-v3.json`.
 
 This is a regression signal for the controlled fixture, not a competitor
 ranking. The next accuracy milestone is a matched LongMemEval/competitor

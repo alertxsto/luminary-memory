@@ -209,8 +209,9 @@ ruff check .
 python3 -m benchmarks.run_benchmarks --n 40 --report /tmp/luminary-gold.json
 ```
 
-The current repository verification record is `505 passed, 3 skipped`, 83%
-full-source coverage, and clean Ruff. The controlled gold run reports
+The verification record at the time of this investigation was `505 passed,
+3 skipped`, 83% full-source coverage, and clean Ruff. Those figures are a
+v0.2.17 snapshot; `CONTRIBUTING.md` carries the current baseline. The controlled gold run reports
 recall@10 `0.95`, MRR `1.00`, abstention accuracy `1.00`, evidence support
 precision `1.00`, and zero cross-scope leakage. These are regression numbers,
 not a matched Mem0/Hindsight claim.

@@ -926,8 +926,8 @@
           title: "Current release snapshot",
           paragraphs: ["The public package and website are aligned to v0.3.0. This release is the strict CLI/Hermes accuracy path: scope isolation, evidence/provenance, conflict history, abstention, scoped transparency events, and exact-session continuity fallback."],
           table: table("Release checks", ["Surface", "Current contract"], [
-            ["Version", "0.3.0 / Python 3.11+"],
-            ["Release baseline", "505 passed, 3 skipped; 83% full-source coverage"],
+            ["Version", "0.3.1 / Python 3.11+"],
+            ["Release baseline", "541 passed, 3 skipped; 83% full-source coverage"],
             ["Current workspace check", "534 passed, 3 skipped; 83% full-source coverage"],
             ["Accuracy boundary", "Controlled gold fixture is a regression signal, not a competitor ranking"],
             ["Native Hermes memory", "Disabled through documented config switches when Luminary is active"]
