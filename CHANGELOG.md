@@ -1,5 +1,40 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Release gate on public strict recall** — the publish workflow had no
+  real-model job, so a release could ship on a green unit suite while strict
+  recall returned a confident wrong answer. `scripts/smoke-real-model.py` now
+  drives `MemoryClient.recall` end to end with the real default model on an
+  isolated store and asserts which facts come back, including abstention, scope
+  isolation and expiry. `pypi` requires it.
+- **`--engine real|fake` for gold evaluation** — accuracy runs can use the real
+  embedding model while the latency smoke keeps its deterministic engine.
+  Reports record engine, model, Python/NumPy/Fastembed versions, the evaluation
+  clock and per-case returned/excluded ids.
+- **Recorded baseline** — `benchmarks/baselines/gold-real-v1.json`.
+
+### Changed
+
+- **Semantic-evidence floor is model-scoped** — a single global `0.78` cosine
+  constant threw away correct paraphrases whose lexical coverage was also low.
+  `semantic_support_floor()` returns a floor measured per embedding model
+  (`0.70` for `BAAI/bge-small-en-v1.5`) and keeps the conservative `0.78` for
+  any unmeasured model, so an unmeasured model can only abstain more.
+  Gold-set recall@10 with the real default model moves from `0.70` to `0.90`.
+
+### Fixed
+
+- **Gold evaluation is date-invariant** — fixture timestamps are rebased so the
+  newest `observed_at` equals run time, preserving relative ages and validity
+  windows. The same commit now scores the same on any date.
+- **Grounding no longer reported as relevance** — `evidence_support_precision`
+  counted a fully sourced but off-topic row as supported. It is replaced by
+  `wrong_hit_rate` / `wrong_hit_rows` / per-case `wrong_hit_ids` for relevance
+  and `source_grounded_rate` for stored-source grounding.
+
 ## [0.3.0] - 2026-08-24
 
 ### Summary
