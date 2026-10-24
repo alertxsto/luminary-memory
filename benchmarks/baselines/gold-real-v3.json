@@ -1,0 +1,243 @@
+{
+  "n": 500,
+  "backend": "sqlite",
+  "quality": {
+    "protocol": "independent_gold_v2",
+    "cases": 12,
+    "answer_cases": 10,
+    "no_answer_cases": 2,
+    "recall@10": 0.85,
+    "mrr": 0.9,
+    "precision@10": 0.9,
+    "abstention_accuracy": 1.0,
+    "unsupported_answer_rate": 0.0,
+    "wrong_hit_rate": 0.0,
+    "wrong_hit_rows": 0,
+    "source_grounded_rate": 1.0,
+    "cross_scope_leakage": 0,
+    "case_results": [
+      {
+        "key": "exact_deploy",
+        "query": "What is the project Luminary deploy target?",
+        "expected_ids": [
+          2,
+          12
+        ],
+        "retrieved_ids": [
+          2,
+          12
+        ],
+        "wrong_hit_ids": [],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.8856631642501965,
+        "hit_count": 2
+      },
+      {
+        "key": "paraphrase_deploy",
+        "query": "Where will Luminary go live now?",
+        "expected_ids": [
+          2,
+          12
+        ],
+        "retrieved_ids": [
+          2
+        ],
+        "wrong_hit_ids": [],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.5664199041003144,
+        "hit_count": 1
+      },
+      {
+        "key": "latest_only",
+        "query": "Current deployment destination",
+        "expected_ids": [
+          2,
+          12
+        ],
+        "retrieved_ids": [],
+        "wrong_hit_ids": [],
+        "status": "abstain",
+        "abstained": true,
+        "reason": "low_confidence_or_ambiguous",
+        "confidence": 0.5442726270986185,
+        "hit_count": 0
+      },
+      {
+        "key": "scope_isolation",
+        "query": "What is the deploy target?",
+        "expected_ids": [
+          4
+        ],
+        "retrieved_ids": [
+          4
+        ],
+        "wrong_hit_ids": [],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.6886126667585992,
+        "hit_count": 1
+      },
+      {
+        "key": "cpp_identifier",
+        "query": "Which compiler is used: C++20 or something else?",
+        "expected_ids": [
+          5
+        ],
+        "retrieved_ids": [
+          5
+        ],
+        "wrong_hit_ids": [],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.7114681657523584,
+        "hit_count": 1
+      },
+      {
+        "key": "gpt_identifier",
+        "query": "Which GPT-4o variant is used for judging?",
+        "expected_ids": [
+          6
+        ],
+        "retrieved_ids": [
+          6
+        ],
+        "wrong_hit_ids": [],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.7554043709168894,
+        "hit_count": 1
+      },
+      {
+        "key": "url_identifier",
+        "query": "Where is the canonical API reference URL?",
+        "expected_ids": [
+          7
+        ],
+        "retrieved_ids": [
+          7
+        ],
+        "wrong_hit_ids": [],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.7490027534542186,
+        "hit_count": 1
+      },
+      {
+        "key": "preference",
+        "query": "What display theme does the user prefer?",
+        "expected_ids": [
+          8
+        ],
+        "retrieved_ids": [
+          8
+        ],
+        "wrong_hit_ids": [],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.6802543989423647,
+        "hit_count": 1
+      },
+      {
+        "key": "rule",
+        "query": "What must happen before release?",
+        "expected_ids": [
+          11
+        ],
+        "retrieved_ids": [
+          11
+        ],
+        "wrong_hit_ids": [],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.5917453608390388,
+        "hit_count": 1
+      },
+      {
+        "key": "indonesian",
+        "query": "Apa target deploy project Luminary sekarang?",
+        "expected_ids": [
+          2,
+          12
+        ],
+        "retrieved_ids": [
+          12,
+          2
+        ],
+        "wrong_hit_ids": [],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.7715612470540592,
+        "hit_count": 2
+      },
+      {
+        "key": "no_answer_password",
+        "query": "What is the office WiFi password?",
+        "expected_ids": [],
+        "retrieved_ids": [],
+        "wrong_hit_ids": [],
+        "status": "abstain",
+        "abstained": true,
+        "reason": "low_confidence_or_ambiguous",
+        "confidence": 0.25,
+        "hit_count": 0
+      },
+      {
+        "key": "no_answer_other_user",
+        "query": "What is the private cluster access token?",
+        "expected_ids": [],
+        "retrieved_ids": [],
+        "wrong_hit_ids": [],
+        "status": "abstain",
+        "abstained": true,
+        "reason": "low_confidence_or_ambiguous",
+        "confidence": 0.25,
+        "hit_count": 0
+      }
+    ]
+  },
+  "evaluation": {
+    "dataset": {
+      "type": "meta",
+      "format": "luminary-memory-gold",
+      "version": 1,
+      "name": "controlled-micro-v1",
+      "language": [
+        "en",
+        "id"
+      ],
+      "sha256": "3646de5812b3d900fc57656d1f9d48c1f3530d441ed914058e99ec1249a35e23"
+    },
+    "engine": {
+      "name": "fastembed",
+      "model": "BAAI/bge-small-en-v1.5"
+    },
+    "evaluation_clock": {
+      "anchor": "2026-08-11T10:00:00+00:00",
+      "policy": "fixture timestamps rebased so the newest observed_at equals run time; relative ages are preserved"
+    },
+    "runtime": {
+      "python": "3.11.15",
+      "numpy": "2.4.3",
+      "fastembed": "0.8.0"
+    },
+    "latency_engine": "fake-deterministic",
+    "config": {
+      "strict_recall": true,
+      "evidence_required": true,
+      "rule_auto_replace": false
+    },
+    "git_revision": "13ab0c8bf11afa7384e7f39ebbbfffbe8937dee4",
+    "labels_are_system_generated": false
+  }
+}

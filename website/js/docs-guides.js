@@ -380,7 +380,7 @@
           title: "Calibrated confidence",
           paragraphs: ["A weak signal is not evidence: one generic token match cannot answer a question the store does not cover. The cosine value that separates a real answer from a topically adjacent memory depends on the embedding model, so the semantic support floor is resolved per model rather than fixed in the library."],
           table: table("Semantic support floor", ["Model", "Floor", "Consequence"], [
-            ["BAAI/bge-small-en-v1.5 (default)", "0.74", "Measured on the controlled gold fixtures"],
+            ["BAAI/bge-small-en-v1.5 (default)", "0.635", "Midpoint of the measured answer/no-answer gap"],
             ["any model without a measurement", "0.78", "Conservative: can only abstain more, never answer more"]
           ]),
           tips: ["Switching LUMINARY_EMBEDDING_MODEL to an unmeasured model makes strict recall more conservative, not less.", "Re-measure before lowering a floor for a new model; the gold fixture is the reference."]

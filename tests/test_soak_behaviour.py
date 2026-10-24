@@ -23,7 +23,6 @@ CONTROL = "Project Luminary deploy target is production."
 CONTROL_QUERY = "What is the project Luminary deploy target?"
 NO_ANSWER_QUERY = "What is the office WiFi password?"
 
-
 def _client(tmp_path) -> MemoryClient:
     return MemoryClient(
         settings=Settings(

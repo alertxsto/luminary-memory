@@ -1,5 +1,67 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Harness-neutral UTF-8 JSON memory bridge with exact user/workspace/agent
+  ownership, strict recall, synchronous explicit writes, ID-scoped retraction,
+  current activity snapshots, and opt-in user-evidenced automatic curation.
+- Packaged native OpenCode 1.19.4, pi and omp adapters, installed with
+  `luminary-memory hook install`. Native tools plus pi/omp `/luminary` commands
+  support terminal interaction and serializable results for compatible clients.
+  Existing config and unrelated dependencies are preserved.
+- Supported-harness capability/setup guide, generic subprocess contract and
+  explicit desktop/web/Telegram interaction limits.
+- Luminary-maintained native npm package sources for pi, OpenCode and omp, built
+  from the canonical adapters with a locked Node/esbuild workspace. Installable
+  tarballs contain compiled ESM and native discovery metadata without bundling
+  host frameworks or embedding a maintainer's Python path.
+- Plugin build/consumer checks, version-synchronized release artifacts and
+  explicitly opt-in npm trusted publishing after the Python release gates.
+- Official website discovery preparation: pi's `pi-package` catalog metadata is
+  release-gated, and an OpenCode Ecosystem documentation patch is ready for
+  upstream submission. Neither a local package nor that patch claims a live
+  registry/catalog listing.
+
+### Fixed
+
+- Telegram activity no longer treats global new memory IDs as this turn's
+  writes. Routing, profile-local secrets, exact ownership/session cursors,
+  expiry/validity filtering, evidence/ID visibility, and acknowledgement of
+  displayed rows prevent cross-chat disclosure and silent backlog loss.
+- Telegram cursor locking now works on Windows and POSIX, fails closed, and
+  never yields a contextmanager body twice after a delivery/state failure.
+- **Query expansion no longer decides what answers a question.** Expanded text
+  appends entity names harvested from the graph neighbourhood of a shared
+  entity, and those names usually belong to the neighbour memory itself, so
+  scoring against them let a memory supply its own evidence: one shared entity
+  lifted an unrelated memory from `0.5436` to `0.8024` and made "what is the
+  cluster fingerprint?" return a memory about load tests. Expansion now only
+  selects candidates; every candidate is scored against the question as asked.
+  The reported documentation-URL answer for "where will Luminary go live now?"
+  is gone, and `tests/test_query_expansion.py` pins it through public
+  `MemoryClient.recall`.
+- **Dense similarity decides support, not the loudest signal.** Keyword and
+  graph scores saturate (an FTS `bm25` of 2.6 and a graph weight of 8.0 both
+  normalise to 1.0), so `max(...)` let one shared word outrank the question.
+  They now stand in only for rows without a usable embedding. Combined with the
+  scoring change this takes micro recall@10 from `0.70` to `0.85` at
+  `wrong_hit_rate` `0.00`, and lifts extended-fixture abstention from `0.33` to
+  `1.00`.
+- **The support floor is re-measured, not re-tuned.** `0.74` was chosen while
+  expansion could raise a score; on the raw-query scale the highest confident
+  wrong answer is `0.5991` and the lowest correct answer `0.6439`, so the floor
+  is their midpoint, `0.635`. Nothing outside that gap could be correct.
+- **Tokenisation no longer swallows sentence-final punctuation.** `_token_set`
+  keeps `.` `:` `/` inside a token so identifiers such as `gpt-4o` and URLs
+  survive, but the same pattern absorbed the last word of every memory
+  (`production.`, `cluster.`), which could never match a query token
+  (`production`, `cluster`). Matching bug only; no benchmark metric moves.
+- **A weakly-grounded row no longer pads a well-grounded answer.** When a
+  candidate covers at least half the question's tokens, rows that cover almost
+  none are dropped instead of being returned alongside it.
+
 ## [0.3.1] - 2026-10-25
 
 Measurement and recall-calibration release. No public API breaks; the default

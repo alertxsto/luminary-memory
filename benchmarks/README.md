@@ -100,29 +100,32 @@ retrieval failure being relabelled as success.
 ### How the semantic floor was chosen
 
 `semantic_support_floor()` is the boundary between "answers the question" and
-"topically adjacent". It was set from a sweep over both fixtures plus the
-release gate, not from a single case:
+"topically adjacent". It is not fitted to one case: with every candidate scored
+against the question as asked, the two fixtures separate into two bands.
 
-| floor | micro recall / wrong-hit | extended recall / wrong-hit | release gate |
-|---:|---|---|---|
-| 0.70 | 0.90 / 0.10 | 0.88 / 0.25 | fail |
-| 0.72 | 0.90 / 0.10 | 0.88 / 0.17 | fail |
-| 0.73 | 0.70 / 0.10 | 0.79 / 0.17 | fail |
-| **0.74** | **0.70 / 0.00** | **0.79 / 0.08** | **pass** |
-| 0.78 | 0.70 / 0.00 | 0.75 / 0.08 | pass |
+| band | BAAI/bge-small-en-v1.5 |
+|---|---|
+| highest confident wrong answer | `0.5991` |
+| **floor (midpoint)** | **`0.635`** |
+| lowest correct answer | `0.6439` |
 
-0.74 is the lowest floor that stops the off-topic documentation row from being
-returned: its cosine on the exact deploy question is `0.7098`, so 0.70 admitted
-it. Higher floors buy nothing — 0.78 keeps the same wrong-hit rate and loses
-extended recall — so 0.74 is the operating point.
+0.635 sits in the middle of the gap, so it leaves the same margin on both
+sides. That is the whole derivation — no case was privileged, and a floor
+outside the gap would either admit a known wrong answer or drop a known
+correct one.
 
-This deliberately gives up some recall for zero wrong hits. For a memory layer
-a wrong answer is worse than an abstention: `preference` and `rule` abstain at
-0.74, which is safe, whereas returning a grounded but off-topic URL is not.
+Earlier releases carried `0.74`, chosen while expansion was allowed to raise a
+candidate's score. On that inflated scale the bands were different, and the
+value only made sense there; once expansion stopped setting scores it sat above
+every answer-bearing case. See `docs/recall.md` for why expansion may widen the
+candidate set but never sets the score.
 
-Because this fixture is known-red, it is a diagnostic corpus, not a gate. Do
-not add it to CI until the failures are resolved; use `gold_micro.jsonl` for
-regression and this one to check whether a candidate fix generalises.
+The extended fixture still shows one ranking failure: `release_paraphrase`
+ranks three deploy-adjacent memories above the correct answer on raw similarity
+(`0.7392`, `0.7279` versus `0.6439`). That is an embedding-quality limit rather
+than an expansion artefact, so it stays out of CI as a diagnostic corpus. Use
+`gold_micro.jsonl` for regression and this one to check whether a candidate fix
+generalises.
 
 ## Hindsight-parity benchmark (provider)
 

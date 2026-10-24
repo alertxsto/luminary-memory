@@ -2244,7 +2244,10 @@ class MemoryClient:
             # Constant/degenerate vectors are common in test doubles and do
             # not constitute semantic evidence.
             emb = memory.embedding or []
-            if len(emb) < 16 or (emb and len({round(float(v), 7) for v in emb[:16]}) <= 1):
+            usable_embedding = len(emb) >= 16 and len(
+                {round(float(value), 7) for value in emb[:16]}
+            ) > 1
+            if not usable_embedding:
                 semantic_score = 0.0
             semantic_score = max(0.0, min(1.0, semantic_score))
             keyword_score = max(0.0, min(1.0, float(signals.get("keyword", 0.0))))
@@ -2270,7 +2273,30 @@ class MemoryClient:
             if identifier_hit:
                 lexical = max(lexical, 0.85)
             strategy_bonus = min(1.0, max(0, len(signals) - 1) / 2.0)
-            support = max(semantic_score, keyword_score, lexical)
+            # Dense similarity is the only signal measured on a calibrated
+            # scale; keyword and graph scores saturate (an FTS bm25 of 2.6 and
+            # a graph weight of 8.0 both normalise to 1.0), so letting `max`
+            # pick them lets one shared word outrank the question itself.
+            # Measured on the extended fixture: every correct answer scores
+            # >= 0.6439 on the semantic scale and every confident wrong answer
+            # <= 0.5991, but the wrong ones carried keyword 2.6 and graph 8.0.
+            # Semantic therefore decides support whenever it is usable, and the
+            # lexical/graph signals only stand in when it is not (test doubles
+            # and rows without a usable embedding).
+            if usable_embedding:
+                # Dense similarity is the only signal on a calibrated scale, so
+                # it decides support whenever a real embedding exists. The
+                # floor applies to the final support, not only to thin lexical
+                # coverage: previously a candidate sharing 3/5 tokens — two of
+                # them "the" and "is" — skipped the floor and answered on
+                # semantic 0.5436. Keyword and graph scores saturate (an FTS
+                # bm25 of 2.6 and a graph weight of 8.0 both normalise to 1.0),
+                # so they may not outrank the question itself.
+                support = semantic_score if semantic_score >= semantic_floor else 0.0
+            else:
+                # No usable embedding (test doubles, legacy rows): fall back to
+                # the lexical signals, which need no calibrated scale.
+                support = max(keyword_score, lexical)
             base = (
                 0.75 * (support * support)
                 + 0.10 * strategy_bonus
@@ -2280,7 +2306,30 @@ class MemoryClient:
             )
             return max(0.0, min(1.0, base))
 
+        def _lexical_coverage(memory: Memory) -> float:
+            if not query_tokens:
+                return 0.0
+            return len(query_tokens & _token_set(memory.content)) / len(query_tokens)
+
         confidence_by_id = {m.id: _signal_confidence(m) for m, _ in scored if m.id is not None}
+        # A weakly-grounded row is redundant next to a strongly-grounded one:
+        # it adds no answer the store can stand behind, only noise. Measured on
+        # the exact-deploy question, the correct memory shares 5/7 query tokens
+        # while an off-topic API-reference row shares 2/7, yet dense similarity
+        # alone ranks the row 0.7098 against the answer's 0.9206. Drop rows
+        # whose lexical overlap is thin when a well-grounded answer exists.
+        strong_lexical = any(
+            _lexical_coverage(memory) >= 0.5 for memory, _ in scored
+        )
+        if strong_lexical:
+            kept = [
+                (memory, score)
+                for memory, score in scored
+                if _lexical_coverage(memory) >= 0.5
+                or confidence_by_id.get(memory.id, 0.0) <= 0.0
+            ]
+            if kept:
+                scored = kept
         scored.sort(key=lambda pair: confidence_by_id.get(pair[0].id, 0.0), reverse=True)
         top_confidence = confidence_by_id.get(scored[0][0].id, 0.0) if scored else 0.0
         if strict_policy:

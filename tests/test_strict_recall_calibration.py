@@ -75,7 +75,7 @@ def _seed(client: MemoryClient) -> None:
 
 def test_paraphrase_with_no_shared_tokens_is_not_abstained(tmp_path):
     # cos(query, fact) = 0.76, cos(query, distractor) = 0.42: above the measured
-    # 0.74 floor, with no shared surface token to corroborate it.
+    # 0.635 floor, with no shared surface token to corroborate it.
     client = _client(
         tmp_path, model="BAAI/bge-small-en-v1.5", query_vector=_unit(0.76, 0.42, 0.50)
     )
@@ -91,10 +91,12 @@ def test_paraphrase_with_no_shared_tokens_is_not_abstained(tmp_path):
 
 
 def test_adjacent_but_unanswered_query_still_abstains(tmp_path):
-    # cos(query, fact) = 0.66 sits below the calibrated floor: nothing in the
-    # store actually answers this, so the guard must still fire.
+    # cos(query, fact) = 0.60 sits below the calibrated floor (0.635, measured
+    # between the highest no-answer score 0.5991 and the lowest answer score
+    # 0.6439): nothing in the store actually answers this, so the guard must
+    # still fire.
     client = _client(
-        tmp_path, model="BAAI/bge-small-en-v1.5", query_vector=_unit(0.66, 0.50, 0.56)
+        tmp_path, model="BAAI/bge-small-en-v1.5", query_vector=_unit(0.60, 0.55, 0.58)
     )
     try:
         _seed(client)
@@ -127,6 +129,6 @@ def test_floor_resolution_is_model_scoped():
     # floor that stops a grounded but off-topic row from being returned while
     # still answering the exact and paraphrased deploy questions. See
     # benchmarks/README.md for the sweep.
-    assert semantic_support_floor("BAAI/bge-small-en-v1.5") == 0.74
+    assert semantic_support_floor("BAAI/bge-small-en-v1.5") == 0.635
     assert semantic_support_floor("someone/unknown-embedding") == 0.78
     assert semantic_support_floor(None) == 0.78

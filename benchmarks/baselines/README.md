@@ -7,11 +7,16 @@ historical number quoted out of context.
 | File | Fixture | Engine | floor | recall@10 | abstention | wrong-hit | leakage |
 |---|---|---|---:|---:|---:|---:|---:|
 | `gold-real-v1.json` | `gold_micro.jsonl` (`3646de58…`) | `BAAI/bge-small-en-v1.5` | 0.70 | 0.90 | 1.00 | 0.10 | 0 |
-| `gold-real-v2.json` | `gold_micro.jsonl` (`3646de58…`) | `BAAI/bge-small-en-v1.5` | **0.74** | 0.70 | 1.00 | **0.00** | 0 |
+| `gold-real-v2.json` | `gold_micro.jsonl` (`3646de58…`) | `BAAI/bge-small-en-v1.5` | 0.74 | 0.70 | 1.00 | 0.00 | 0 |
+| `gold-real-v3.json` | `gold_micro.jsonl` (`3646de58…`) | `BAAI/bge-small-en-v1.5` | **0.635** | **0.85** | 1.00 | **0.00** | 0 |
 
-`v1` is kept for comparison only. It was produced with a 0.70 floor, which
-returned a grounded but off-topic documentation URL on two answer-bearing cases.
-`v2` is the shipped configuration.
+`v1` and `v2` are kept for comparison only: `v1` used a 0.70 floor that returned
+a grounded but off-topic documentation URL on two answer-bearing cases, and
+`v2` used 0.74 while expansion could still raise a candidate's score. `v3` is
+the shipped configuration:
+it scores every candidate against the question as asked, so expansion only
+selects candidates, and the floor is the measured midpoint between the highest
+confident wrong answer and the lowest correct answer.
 
 ## Reproduce
 
@@ -32,7 +37,9 @@ python -m benchmarks.run_benchmarks --n 50 --engine real --report /tmp/gold.json
 - The latency block in a full report always comes from the deterministic fake
   engine so those figures stay comparable across releases. It is not a
   measurement of the real model.
-- The floor sweep that chose `v2` is in `benchmarks/README.md`. 0.74 is the
+- The derivation of the `v3` floor is in `benchmarks/README.md` and
+  `docs/recall.md`.
+- The floor sweep that chose `v2` is in `benchmarks/README.md`. 0.74 was the
   lowest value that stops the off-topic docs row from being returned on the
   exact and paraphrased deploy cases; 0.70 admitted it (cosine 0.7098) while
   still excluding the no-answer cases.

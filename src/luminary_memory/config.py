@@ -48,15 +48,21 @@ DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 
 # The cosine score that separates "this memory answers the question" from "this
 # memory is merely topically adjacent" is a property of the embedding model, not
-# of the library. These floors were measured on the controlled gold fixture
-# (benchmarks/gold_micro.jsonl, strict + evidence-required):
+# of the library. These floors are measured on the controlled gold fixtures
+# (benchmarks/gold_micro.jsonl and gold_extended.jsonl, strict +
+# evidence-required) with every candidate scored against the question as asked.
 #
-#   BAAI/bge-small-en-v1.5  answer-bearing cases 0.72-0.93
-#                           no-answer cases      0.66-0.68
+#   BAAI/bge-small-en-v1.5  answer-bearing cases 0.6439-0.9206
+#                           no-answer cases      0.5427-0.5991
+#
+# The gap between those two bands is the only stretch where the floor can sit.
+# 0.635 is its midpoint, so it leaves the same margin on both sides: the highest
+# confident wrong answer (0.5991) stays out and the lowest correct answer
+# (0.6439) stays in.
 #
 # Any model without a measured floor keeps the conservative default, so an
 # unmeasured model can only abstain more, never answer more.
-MEASURED_SEMANTIC_SUPPORT_FLOORS = {DEFAULT_EMBEDDING_MODEL: 0.74}
+MEASURED_SEMANTIC_SUPPORT_FLOORS = {DEFAULT_EMBEDDING_MODEL: 0.635}
 CONSERVATIVE_SEMANTIC_SUPPORT_FLOOR = 0.78
 
 

@@ -106,15 +106,19 @@ up to two tokens from a topically related important memory. Both expansions
 keep the original query tokens. There is no static alias table or
 language-specific vocabulary classifier.
 
-> **Known limitation.** Keeping the original tokens does **not** guarantee that
-> expansion cannot worsen ranking. Measured on the default model, a query about
-> where the project will be deployed ranks the correct deploy fact at cosine
-> `0.6495` and an unrelated documentation URL at `0.6255`; after expansion adds
-> `adalah api canonical deploy docs example https id`, the documentation URL
-> rises to `0.8084` and the deploy fact to `0.7074`. The expanded terms come
-> from a memory that shares only the generic entity `luminary` with the
-> question. Tracked as an open defect; the release gate fails while it
-> reproduces.
+> **Why expansion cannot raise a score.** Keeping the original tokens was not
+> enough on its own: measured on the default model, a query about where the
+> project will be deployed ranked the correct deploy fact at `0.6495` and an
+> unrelated documentation URL at `0.6255`, but after expansion added
+> `adalah api canonical deploy docs example https id` the URL rose to `0.8084`
+> and the fact to `0.7074`. The expanded terms came from a memory sharing only
+> the generic entity `luminary` with the question.
+>
+> Expansion therefore only selects candidates. Every candidate is scored
+> against the question as asked, so an expanded term can bring a memory into
+> the candidate set but can never lend it support the question does not
+> already carry. `tests/test_query_expansion.py` pins this through the public
+> `MemoryClient.recall`.
 
 ## Strict results, evidence, and conflicts
 
@@ -147,6 +151,11 @@ Strict mode scores each candidate from the signals that actually retrieved it:
 semantic similarity, keyword score, and lexical coverage between the query and
 the memory. A weak signal is not evidence:
 
+- Dense similarity decides support whenever a memory carries a real embedding.
+  Keyword and graph scores saturate (an FTS `bm25` of 2.6 and a graph weight of
+  8.0 both normalise to 1.0), so they are not allowed to outrank the question
+  itself. They stand in only for rows without a usable embedding, where no
+  calibrated scale exists.
 - When lexical coverage is below `0.5`, the keyword score is discarded and the
   semantic score is discarded unless it clears the semantic support floor. One
   generic token match is not enough to answer "what is the office WiFi
@@ -154,7 +163,7 @@ the memory. A weak signal is not evidence:
 - The semantic support floor is **calibrated per embedding model**, because the
   cosine value that separates "answers the question" from "topically adjacent"
   depends on the model. `config.semantic_support_floor()` returns the measured
-  floor for the configured model — `0.74` for the default
+  floor for the configured model — `0.635` for the default
   `BAAI/bge-small-en-v1.5` — and `0.78` for any model without a measurement.
   An unmeasured model therefore can only abstain more, never answer more.
 - Confidence stays a bounded public `[0,1]` score, and a candidate is dropped
@@ -162,12 +171,19 @@ the memory. A weak signal is not evidence:
   `abstention_min_margin` of each other. No score is boosted just because a
   strategy happened to return the row.
 
-Measured on the controlled gold fixtures with the real default model, the 0.74
-floor returns no wrong hit at all: `wrong_hit_rate` is `0.00` on the micro
-fixture and `0.08` on the extended one, and both no-answer cases abstain. The
-trade is explicit — `preference` and `rule` abstain at this floor rather than
-risk returning a grounded but off-topic row. The sweep behind the value is in
-`benchmarks/README.md`.
+Query expansion only widens the candidate set; it never sets the score. The
+expanded text appends entity names taken from the graph neighbourhood of a
+shared entity, and those names usually belong to the neighbour memory itself,
+so scoring against them lets a memory supply its own evidence. Measured on the
+extended fixture, one shared entity lifts an unrelated memory from `0.5436` to
+`0.8024`.
+
+Measured on the controlled gold fixtures with the real default model, this
+returns recall@10 `0.85` with `wrong_hit_rate` `0.00` on the micro fixture, and
+`0.75` with `0.08` on the extended one; all no-answer cases abstain. The floor
+is the midpoint of the measured gap between the highest confident wrong answer
+(`0.5991`) and the lowest correct answer (`0.6439`), so it leaves the same
+margin on both sides rather than being fitted to one case.
 
 
 ## Adaptive importance (v0.2.15)

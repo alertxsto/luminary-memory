@@ -38,6 +38,20 @@ def _legacy_vector_scan(
     return rows
 
 
+def _cosine(left, right) -> float | None:
+    """Cosine similarity between two vectors, or ``None`` when unusable."""
+    if not left or not right or len(left) != len(right):
+        return None
+    left_norm = math.sqrt(sum(float(value) ** 2 for value in left))
+    right_norm = math.sqrt(sum(float(value) ** 2 for value in right))
+    if left_norm <= 0 or right_norm <= 0:
+        return None
+    score = sum(float(a) * float(b) for a, b in zip(left, right)) / (
+        left_norm * right_norm
+    )
+    return float(score) if math.isfinite(score) else None
+
+
 def semantic_recall(
     backend: MemoryBackend,
     engine: _Embedder,
@@ -48,12 +62,29 @@ def semantic_recall(
 ) -> list[tuple]:
     if limit is not None and int(limit) == 0:
         return []
-    query_vec = engine.embed(_expand_query(backend, query, scope=scope, include_global=include_global))
+    expanded = _expand_query(backend, query, scope=scope, include_global=include_global)
+    query_vec = engine.embed(expanded)
+    # Expansion appends entity names taken from the graph neighbourhood of a
+    # shared entity, and those names usually belong to the neighbour memory
+    # itself. Letting the expanded text set the score therefore lets a memory
+    # supply its own evidence, which overturns the ranking the question itself
+    # produced. Expansion stays a candidate-generation device: the question as
+    # asked decides how well a candidate answers it.
+    support_vec = query_vec if expanded == query else engine.embed(query)
     needs_local_filter = bool(normalize_scope(scope)) or not include_global
+    # When the score is going to come from the raw question, the backend's
+    # top-k must not be chosen by the expanded one: a memory the question ranks
+    # highly would otherwise be cut before it can be scored. Over-fetch a
+    # bounded multiple rather than the whole store: scoring every row made
+    # recall grow four times slower as the store filled, and doubling the
+    # candidate set recovers the same ranking for a quarter of that cost.
+    fetch_limit = limit
+    if support_vec is not query_vec and limit is not None:
+        fetch_limit = max(int(limit) * 2, int(limit) + 16)
     try:
         raw = backend.vector_search(
             query_vec,
-            limit=limit,
+            limit=fetch_limit,
             scope=scope,
             include_global=include_global,
         )
@@ -61,7 +92,7 @@ def semantic_recall(
         # A legacy vector backend may only know about query + limit. Do not
         # let its unscoped top-k hide valid in-scope memories; over-fetch and
         # apply the same scope predicate used by the native backends.
-        fallback_limit = None if needs_local_filter else limit
+        fallback_limit = None if needs_local_filter else fetch_limit
         try:
             raw = backend.vector_search(query_vec, limit=fallback_limit)
         except TypeError:
@@ -78,6 +109,13 @@ def semantic_recall(
             for m, score in _legacy_vector_scan(backend, query_vec)
             if memory_matches_scope(m, scope, include_global=include_global)
         ]
+    if support_vec is not query_vec:
+        rescored = []
+        for memory, score, label in rows:
+            raw_score = _cosine(getattr(memory, "embedding", None), support_vec)
+            rescored.append((memory, score if raw_score is None else raw_score, label))
+        rescored.sort(key=lambda row: (-row[1], -int(getattr(row[0], "id", 0) or 0)))
+        rows = rescored
     return rows if limit is None else rows[: max(0, int(limit))]
 
 

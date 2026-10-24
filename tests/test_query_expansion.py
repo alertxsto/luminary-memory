@@ -140,3 +140,71 @@ def test_query_expansion_rule_error_falls_back(tmp_path):
             raise RuntimeError("boom")
 
     assert _expand_query(_Exploding(), "buat laporan") == "buat laporan"
+
+
+def test_expansion_cannot_outrank_the_question_itself(tmp_path):
+    """A graph-linked but off-topic memory must not beat the real answer.
+
+    Reproduces the reported failure with a scripted engine instead of a real
+    model so the ranking inversion is deterministic and offline: the raw
+    question points at the deploy fact, while the expanded text — which now
+    carries tokens harvested from the off-topic memory's own neighbourhood —
+    points at the API reference. Expansion may widen the candidate set, but it
+    must not decide that the off-topic row answers the question.
+    """
+    from luminary_memory.api import MemoryClient
+    from luminary_memory.config import Settings
+
+    def _unit(*components):
+        # 16 dimensions because anything shorter is treated as a degenerate
+        # vector by the recall scoring guard.
+        import math
+
+        vector = [0.0] * 16
+        for index, value in enumerate(components):
+            vector[index] = value
+        norm = math.sqrt(sum(value * value for value in vector))
+        return [value / norm for value in vector]
+
+    class _ScriptedEngine:
+        """Raw question -> the answer; expanded question -> the off-topic row."""
+
+        def embed(self, text):
+            probe = str(text or "").casefold()
+            if "deploy target is production" in probe:
+                return _unit(1.0, 0.0)
+            if "api reference" in probe:
+                return _unit(0.0, 1.0)
+            if probe.startswith("where will luminary go live now?"):
+                expanded = len(probe.split()) > 6
+                return _unit(0.05, 0.99) if expanded else _unit(0.99, 0.05)
+            return _unit(0.0, 0.0, 1.0)
+
+        def embed_batch(self, texts):
+            return [self.embed(text) for text in texts]
+
+    client = MemoryClient(
+        settings=Settings(
+            db_path=str(tmp_path / "expansion.db"),
+            strict_recall=True,
+            evidence_required=True,
+            rule_auto_replace=False,
+        ),
+        engine=_ScriptedEngine(),
+    )
+    answer = "Project Luminary deploy target is production."
+    off_topic = "The canonical API reference is https://docs.example.test/luminary/api."
+    try:
+        client.ingest(answer, tags=["luminary"], source="t", evidence_quote=answer)
+        client.ingest(off_topic, tags=["luminary"], source="t", evidence_quote=off_topic)
+
+        result = client.recall(
+            "Where will Luminary go live now?", limit=10, strict=True
+        )
+
+        contents = [memory.content for memory in result.memories]
+        assert answer in contents, f"expansion hid the real answer: {contents}"
+        assert off_topic not in contents, f"expansion promoted an off-topic row: {contents}"
+        assert contents[0] == answer
+    finally:
+        client.close()

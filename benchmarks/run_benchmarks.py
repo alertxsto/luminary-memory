@@ -9,9 +9,9 @@ keeps synthetic latency measurements separate and evaluates retrieval against
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import platform
+import re
 import subprocess
 import tempfile
 import time
@@ -24,14 +24,27 @@ from benchmarks.synthetic import generate_memories
 
 
 class _FakeEngine:
-    """Stable bag-of-words vectors for reproducible, dependency-light runs."""
+    """Stable bag-of-words vectors for reproducible, dependency-light runs.
+
+    Tokens get their own coordinate instead of being hashed into a fixed table.
+    Hashing collides, and a collision between two words of an exact
+    query/answer pair drops their cosine to 0.6172 where the true overlap is
+    0.7716 — below a support floor calibrated on a real model, which would make
+    every caller assert against an artefact of the double rather than against
+    recall behaviour.
+    """
+
+    _DIM = 512
+
+    def __init__(self) -> None:
+        self._vocab: dict[str, int] = {}
 
     def embed(self, text: str) -> list[float]:
-        vector = [0.0] * 384
-        for token in str(text or "").casefold().split():
-            digest = hashlib.sha256(token.encode("utf-8")).digest()
-            index = int.from_bytes(digest[:4], "big") % len(vector)
-            vector[index] += 1.0
+        vector = [0.0] * self._DIM
+        for token in re.findall(r"[a-z0-9]+", str(text or "").casefold()):
+            index = self._vocab.setdefault(token, len(self._vocab))
+            if index < self._DIM:
+                vector[index] = 1.0
         return vector
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
