@@ -148,6 +148,10 @@ Luminary should only claim a quality lead after a reproducible matched run.
 
 ### Current caveats
 
+- **Current release baseline:** see [`baselines/gold-real-v1.json`](baselines/gold-real-v1.json)
+  and [`baselines/README.md`](baselines/README.md). That run is date-invariant,
+  records its engine/model/runtime, and separates relevance from stored-source
+  grounding. Quote it instead of the historical numbers above.
 - Latency above is pipeline-only (deterministic fake embedding). With real `fastembed` ONNX models, end-to-end recall at 5k is higher (the ONNX model load is a one-time cost on first recall; embedding compute adds ~30-50 ms per query). Numbers above isolate the retrieval pipeline.
 - Competitor numbers are not included as evidence here because they are not
   measured under the same protocol.

@@ -45,6 +45,7 @@
       sections: [
         { title: "Four candidate signals", paragraphs: ["Semantic embeddings, SQLite FTS5 keyword search, temporal access patterns, and entity co-occurrence each produce candidates before fusion."], bullets: ["Semantic similarity", "Keyword relevance", "Temporal decay and access", "Entity graph relations"] },
         { title: "Evidence and abstention", paragraphs: ["Scope and status filters run first. Evidence grounding, conservative confidence, cliff cutoff, deduplication, and token budget run before serialization. If support is weak, the result is explicitly empty."], code: "{\n  \"status\": \"abstain\",\n  \"reason\": \"no_supported_candidate\"\n}" },
+        { title: "Calibrated confidence", paragraphs: ["A weak signal is not evidence: one generic token match cannot answer a question the store does not cover. The cosine value that separates a real answer from a topically adjacent memory depends on the embedding model, so the support floor is calibrated per model. An unmeasured model keeps the conservative floor and can only abstain more."], bullets: ["Measured floor for the default model", "Conservative floor for unmeasured models", "Bounded public confidence score"] },
         { title: "Continuity is separate", paragraphs: ["When durable recall has no usable block, Hermes may read a bounded window of recent immutable episodes from the exact current session. It is untrusted reference context, does not participate in ranking, and never broadens scope or becomes a durable fact by being quoted."] }
       ]
     },
@@ -114,6 +115,9 @@
       lead: "Measure latency and behavior under matched conditions without turning a controlled set into a universal superiority claim.",
       sections: [
         { title: "What is measured", paragraphs: ["The protocol covers latency, retrieval behavior, abstention accuracy, and a reproducible gold set with known scope and expected outcomes."], bullets: ["Matched local conditions", "Gold-set recall", "Abstention behavior", "Latency distribution"] },
+        { title: "Repeatable by date", paragraphs: ["Fixture timestamps are rebased at load time so the newest observation equals run time, keeping relative ages and validity windows intact. The same commit scores the same on any date, and the original anchor is recorded in the report."], bullets: ["Evaluation clock in the report", "Engine, model and runtime versions", "Recorded baselines"] },
+        { title: "Relevance is not grounding", paragraphs: ["A returned row can carry its own evidence quote and still fail to answer the question. Wrong hits are counted separately from stored-source grounding, so a sourced but off-topic row registers as a quality failure instead of a perfect evidence score."] },
+        { title: "Release gate", paragraphs: ["Tagged releases run public strict recall against the real default model before publishing. The gate asserts which facts come back, including abstention, scope isolation and expiry, and it fails closed when the model cannot run."] },
         { title: "What is not claimed", paragraphs: ["Results do not establish universal superiority over Mem0, Hindsight, or another memory system. Comparisons remain bounded by the exact environment and set described in the protocol."] }
       ]
     },

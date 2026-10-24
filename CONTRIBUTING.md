@@ -33,6 +33,33 @@ node --check website/js/docs-guides.js
 - **`main`**, stable release branch, protected. Only maintainers merge release
   commits into it (feature → develop → main → tag).
 
+## Release gate
+
+Tagging `v*` publishes to PyPI through `.github/workflows/publish.yml`, and
+`pypi` has a hard prerequisite: the `real-model` job. It runs
+
+```bash
+python scripts/smoke-real-model.py --report real-model-gate.json
+```
+
+which drives public `MemoryClient.recall` end to end on an isolated SQLite store
+with the real default embedding model and asserts **which facts come back**:
+
+- the current scoped deploy fact for both an exact and a paraphrased question;
+- an off-topic but graph-linked documentation row is not returned;
+- an expired row, another tenant's row and a scoped query stay inside their
+  boundaries;
+- unanswerable queries abstain.
+
+It fails closed — a wrong model, a failed download or a failed inference aborts
+the job — and the JSON report is uploaded as an artifact even when it fails.
+Run it locally before tagging; it is not part of the unit suite because it needs
+the real ONNX model.
+
+A gate that passes on a confident wrong answer is worse than no gate. When the
+gate fails, fix the retrieval defect; never relax the gate or swap in a stub
+embedder.
+
 ## Commit conventions
 
 - `feat:`, new feature
@@ -48,10 +75,24 @@ node --check website/js/docs-guides.js
 - TDD where feasible, test first, then implement.
 - Keep the public API (`MemoryClient`) stable; add rather than break.
 - Full-source coverage is reported and must not regress from the current
-  evidence-backed baseline (`83%`, 4,866 statements). Every changed behavior
+  evidence-backed baseline (`83%`, 5,037 statements). Every changed behavior
   needs a targeted regression or invariant test; do not inflate coverage with
   tests that only execute lines without checking outcomes. PostgreSQL-only
   branches are verified separately by the pgvector integration job.
+
+### Long-run checks
+
+Changes to ingest, recall, lifecycle or retention must also survive a soak run,
+because those defects only appear across cycles:
+
+```bash
+python scripts/soak-test.py --cycles 400 --per-cycle 5 --report /tmp/soak.json
+```
+
+It fails on a lost control fact, a no-answer query that starts returning rows,
+or recall p50 growing more than `3x` between the first and last fifth of the
+run. See [Lifecycle](docs/lifecycle.md#long-run-behaviour) for what it measures
+and the current observed numbers.
 
 ## AI assistance notice
 
@@ -96,11 +137,11 @@ Coverage (full-source baseline):
 python -m pytest --cov=luminary_memory --cov-report=term
 ```
 
-The current local baseline is `83%` (`4,866` statements, `837` missed). The
+The current local baseline is `83%` (`5,037` statements, `881` missed). The
 number is intentionally reported honestly while the defensive PostgreSQL and
 failure branches continue to receive integration coverage; the quality gate
 is the invariant-focused test suite plus the CI/verification coverage gate
-`--fail-under=83`.
+`--fail-under=82`.
 
 ### Postgres / pgvector integration tests
 

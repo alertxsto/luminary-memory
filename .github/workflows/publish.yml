@@ -10,7 +10,36 @@ permissions:
   id-token: write
 
 jobs:
+  real-model:
+    # Release gate. Runs public strict recall against the real default
+    # embedding model on an isolated SQLite store and asserts which facts come
+    # back: the current scoped fact must be retrieved, an off-topic but
+    # graph-linked row must not be, cross-scope and expired rows stay out, and
+    # unanswerable queries abstain. This fails closed: if the model cannot be
+    # downloaded or run, the release does not happen.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install package with the real embedding engine
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Gate on public strict recall with the default model
+        run: python scripts/smoke-real-model.py --report real-model-gate.json
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-model-gate
+          path: real-model-gate.json
+          if-no-files-found: ignore
+
   pypi:
+    needs: real-model
     runs-on: ubuntu-latest
     environment:
       name: pypi

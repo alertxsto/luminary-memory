@@ -97,8 +97,12 @@ def _expand_query(
     When the graph yields nothing, fall back to content-aware expansion: if the
     query overlaps a high-importance memory, append a few distinctive content
     tokens so that memory can surface even when the query wording differs.
-    Both expansions are best-effort and keep the original query tokens, so
-    recall can never get *worse* than baseline.
+    Both expansions are best-effort and keep the original query tokens.
+
+    Keeping the original tokens does not bound the result: expansion can
+    overturn the original ranking when a neighbour memory shares only a generic
+    entity with the query. That is an open defect (see docs/recall.md); do not
+    read this helper as ranking-safe.
     """
     words = [w for w in (query or "").lower().split() if len(w) > 2]
     if not words:

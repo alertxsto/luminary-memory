@@ -143,7 +143,12 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 
 The provider internally sets `strict_recall=true`, `evidence_required=true`,
 and `rule_auto_replace=false` regardless of the legacy direct-client defaults.
-This keeps weak results abstainable and contradictory claims auditable.
+This keeps weak results abstainable and contradictory claims auditable. Strict
+confidence uses a semantic support floor calibrated to the configured embedding
+model, so a paraphrase that shares no surface tokens with the stored fact can
+still be answered, while an unmeasured model falls back to the conservative
+floor and can only abstain more (see
+[Configuration reference](config-reference.md#semantic-support-floor)).
 
 ### Core memory (DB-backed, v0.2.13+)
 
