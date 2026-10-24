@@ -100,3 +100,9 @@ and submit `docs(ecosystem): add Luminary memory`. The patch adds one accurate
 itself submit or obtain acceptance of an upstream PR. Track the actual PR URL
 and verify the site after maintainers merge/deploy it; a patch or open PR is not
 a live website listing.
+
+Initial submission (2026-10-25):
+[OpenCode Ecosystem PR #58823](https://github.com/anomalyco/opencode/pull/58823)
+is submitted, with [source PR #17](https://github.com/alertxsto/luminary-memory/pull/17)
+as its source-distribution dependency. Both were open, not merged, at submission
+verification; follow those links for current status.

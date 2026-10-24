@@ -90,6 +90,14 @@ The first publication requires maintainer npm authorization. Use
 the next coordinated release; do not overwrite an already-published Python tag.
 See [contributor release instructions](../CONTRIBUTING.md).
 
+Initial submissions (2026-10-25):
+[plugin source PR #17](https://github.com/alertxsto/luminary-memory/pull/17) and
+[official OpenCode Ecosystem PR #58823](https://github.com/anomalyco/opencode/pull/58823)
+were submitted and open, not merged, when verified. These are real submissions,
+not live website listings. Follow the PR URLs for current review/deployment
+status. The pi npm package still requires npm authorization/publication before
+catalog discovery can be verified.
+
 
 ## File-copy hook installer
 
