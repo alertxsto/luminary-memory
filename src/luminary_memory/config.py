@@ -44,6 +44,29 @@ def _env_list(name: str, default: list[str] | None = None) -> list[str]:
     return [p.strip() for p in v.split(",") if p.strip()]
 
 
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+
+# The cosine score that separates "this memory answers the question" from "this
+# memory is merely topically adjacent" is a property of the embedding model, not
+# of the library. These floors were measured on the controlled gold fixture
+# (benchmarks/gold_micro.jsonl, strict + evidence-required):
+#
+#   BAAI/bge-small-en-v1.5  answer-bearing cases 0.72-0.93
+#                           no-answer cases      0.66-0.68
+#
+# Any model without a measured floor keeps the conservative default, so an
+# unmeasured model can only abstain more, never answer more.
+MEASURED_SEMANTIC_SUPPORT_FLOORS = {DEFAULT_EMBEDDING_MODEL: 0.74}
+CONSERVATIVE_SEMANTIC_SUPPORT_FLOOR = 0.78
+
+
+def semantic_support_floor(model_name: str | None) -> float:
+    """Return the semantic-evidence floor measured for ``model_name``."""
+    return MEASURED_SEMANTIC_SUPPORT_FLOORS.get(
+        str(model_name or ""), CONSERVATIVE_SEMANTIC_SUPPORT_FLOOR
+    )
+
+
 @dataclass
 class Settings:
     """Runtime settings for luminary-memory.
@@ -58,7 +81,7 @@ class Settings:
     # pgvector (only used when backend == "pgvector")
     pg_dsn: str = field(default_factory=lambda: os.environ.get("LUMINARY_PG_DSN", "postgresql://localhost/luminary_memory"))
     # embeddings
-    embedding_model: str = field(default_factory=lambda: os.environ.get("LUMINARY_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"))
+    embedding_model: str = field(default_factory=lambda: os.environ.get("LUMINARY_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL))
     embedding_dim: int = field(default_factory=lambda: _env_int("LUMINARY_EMBEDDING_DIM", 384))
     # ingest
     ingest_whitelist: list[str] = field(default_factory=lambda: _env_list("LUMINARY_INGEST_WHITELIST"))

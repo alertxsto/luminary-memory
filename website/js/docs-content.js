@@ -128,7 +128,7 @@
       label: "MEASUREMENT",
       title: "Benchmark protocol",
       source: "benchmarks/README.md",
-      related: ["benchmarks/RESULTS.md"],
+      related: ["benchmarks/RESULTS.md", "benchmarks/baselines/README.md"],
       blurb: "Reproducible latency and gold-set evaluation with an explicit boundary: the controlled set is not a superiority claim over Mem0 or Hindsight.",
       facts: ["Gold set", "Abstention accuracy", "Matched conditions"]
     },

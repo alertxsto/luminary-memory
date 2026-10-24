@@ -265,6 +265,7 @@ after, and a background lifecycle keeps the store lean.
 | [Hermes install kit](hermes/README.md) | Capability-based install, upgrade, repair utility |
 | [Debugging Guide](docs/debugging-v0.2.17.md) | Gateway envelopes, hook internals, verification |
 | [Benchmarks](benchmarks/RESULTS.md) | Pipeline smoke + independent gold-set metrics (not a competitor proof) |
+| [Recorded baselines](benchmarks/baselines/README.md) | Reproducible real-model gold runs; quote these, not historical aggregates |
 
 ---
 

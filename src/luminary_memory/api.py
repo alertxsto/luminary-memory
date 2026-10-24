@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from luminary_memory.backends import get_backend
 from luminary_memory.budget import truncate
-from luminary_memory.config import Settings
+from luminary_memory.config import Settings, semantic_support_floor
 from luminary_memory.embeddings.fastembed import FastembedEngine
 from luminary_memory.ingest.llm import LLMEnricher, NoopEnricher
 from luminary_memory.ingest.whitelist import WhitelistFilter
@@ -2228,6 +2228,9 @@ class MemoryClient:
             return {token for token in tokens if len(token) >= 2}
 
         query_tokens = _token_set(query_for_retrieval)
+        semantic_floor = semantic_support_floor(
+            getattr(self.settings, "embedding_model", None)
+        )
 
         def _signal_confidence(memory: Memory) -> float:
             signals = raw_scores.get(memory.id or -1, {})
@@ -2251,12 +2254,12 @@ class MemoryClient:
             )
             # One generic-token FTS hit is not enough to support a fact. Treat
             # keyword/semantic signals as strong only with meaningful lexical
-            # coverage, unless dense similarity is very high. This is the
-            # abstention guard for "office WiFi password" when the store only
-            # knows an office coffee machine.
+            # coverage, unless dense similarity clears the floor measured for
+            # this embedding model. This is the abstention guard for "office
+            # WiFi password" when the store only knows an office coffee machine.
             if lexical < 0.5:
                 keyword_score = 0.0
-                if semantic_score < 0.78:
+                if semantic_score < semantic_floor:
                     semantic_score = 0.0
             if identifier_hit:
                 lexical = max(lexical, 0.85)

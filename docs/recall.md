@@ -103,8 +103,18 @@ back to the raw query on any error).
 
 When the graph yields nothing, **content-aware expansion (v0.2.15)** may use
 up to two tokens from a topically related important memory. Both expansions
-keep the original query tokens, so the baseline query remains intact. There
-is no static alias table or language-specific vocabulary classifier.
+keep the original query tokens. There is no static alias table or
+language-specific vocabulary classifier.
+
+> **Known limitation.** Keeping the original tokens does **not** guarantee that
+> expansion cannot worsen ranking. Measured on the default model, a query about
+> where the project will be deployed ranks the correct deploy fact at cosine
+> `0.6495` and an unrelated documentation URL at `0.6255`; after expansion adds
+> `adalah api canonical deploy docs example https id`, the documentation URL
+> rises to `0.8084` and the deploy fact to `0.7074`. The expanded terms come
+> from a memory that shares only the generic entity `luminary` with the
+> question. Tracked as an open defect; the release gate fails while it
+> reproduces.
 
 ## Strict results, evidence, and conflicts
 
@@ -130,6 +140,34 @@ Normal results include `evidence_quote`, `source_id`, validity fields, and
 strategy provenance. Conflicted claims are hidden from ordinary recall;
 `include_conflicted=True` is a diagnostic view only. Use `supersede()` or an
 explicit versioned claim to resolve an update without deleting its history.
+
+### How strict confidence is computed
+
+Strict mode scores each candidate from the signals that actually retrieved it:
+semantic similarity, keyword score, and lexical coverage between the query and
+the memory. A weak signal is not evidence:
+
+- When lexical coverage is below `0.5`, the keyword score is discarded and the
+  semantic score is discarded unless it clears the semantic support floor. One
+  generic token match is not enough to answer "what is the office WiFi
+  password" from a memory about the office coffee machine.
+- The semantic support floor is **calibrated per embedding model**, because the
+  cosine value that separates "answers the question" from "topically adjacent"
+  depends on the model. `config.semantic_support_floor()` returns the measured
+  floor for the configured model — `0.74` for the default
+  `BAAI/bge-small-en-v1.5` — and `0.78` for any model without a measurement.
+  An unmeasured model therefore can only abstain more, never answer more.
+- Confidence stays a bounded public `[0,1]` score, and a candidate is dropped
+  below `abstention_min_confidence` or when the top two are within
+  `abstention_min_margin` of each other. No score is boosted just because a
+  strategy happened to return the row.
+
+Measured on the controlled gold fixtures with the real default model, the 0.74
+floor returns no wrong hit at all: `wrong_hit_rate` is `0.00` on the micro
+fixture and `0.08` on the extended one, and both no-answer cases abstain. The
+trade is explicit — `preference` and `rule` abstain at this floor rather than
+risk returning a grounded but off-topic row. The sweep behind the value is in
+`benchmarks/README.md`.
 
 
 ## Adaptive importance (v0.2.15)

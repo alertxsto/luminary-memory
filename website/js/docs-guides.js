@@ -377,6 +377,15 @@
           warnings: ["Importance is a ranking/pruning signal. It no longer creates an always-injected persistent-context tier; durable always-present rules belong in core memory."]
         },
         {
+          title: "Calibrated confidence",
+          paragraphs: ["A weak signal is not evidence: one generic token match cannot answer a question the store does not cover. The cosine value that separates a real answer from a topically adjacent memory depends on the embedding model, so the semantic support floor is resolved per model rather than fixed in the library."],
+          table: table("Semantic support floor", ["Model", "Floor", "Consequence"], [
+            ["BAAI/bge-small-en-v1.5 (default)", "0.74", "Measured on the controlled gold fixtures"],
+            ["any model without a measurement", "0.78", "Conservative: can only abstain more, never answer more"]
+          ]),
+          tips: ["Switching LUMINARY_EMBEDDING_MODEL to an unmeasured model makes strict recall more conservative, not less.", "Re-measure before lowering a floor for a new model; the gold fixture is the reference."]
+        },
+        {
           title: "Cutoff, deduplication, and budget",
           paragraphs: ["Adaptive cliff detection trims a sparse result set after a steep score drop. Jaccard deduplication removes near-identical candidates, and token_budget bounds serialized context. Recalled rows receive batched access bookkeeping for the next importance estimate."],
           parameters: [
@@ -804,10 +813,29 @@
           parameters: [
             parameter("--n", "int", "benchmark default", "Synthetic memory count."),
             parameter("--backend", "sqlite", "sqlite", "Current benchmark runner backend; pgvector is covered by integration tests."),
+            parameter("--engine", "fake | real", "fake", "Gold-evaluation embedding engine. The latency arm always uses the deterministic fake engine so its numbers stay comparable."),
             parameter("--gold-set PATH", "path", "gold_micro.jsonl", "Versioned independent fixture."),
             parameter("--report PATH", "path", "none", "Complete JSON report output."),
-            parameter("gold metrics", "metrics", "n/a", "recall@10, MRR, precision@10, abstention accuracy, unsupported answer rate, evidence support precision, cross-scope leakage.")
+            parameter("gold metrics", "metrics", "n/a", "recall@10, MRR, precision@10, abstention accuracy, unsupported answer rate, wrong-hit rate/rows, source-grounded rate, cross-scope leakage.")
           ]
+        },
+        {
+          title: "Repeatable by date",
+          paragraphs: ["The fixture stores absolute timestamps, so scores would drift as wall-clock time moves. Fixture timestamps are rebased at load time so the newest observation equals run time, preserving relative ages and validity windows. The original anchor is recorded in the report, so the same commit scores the same on any date."],
+          returns: ["evaluation.evaluation_clock.anchor, engine/model identity, Python/NumPy/Fastembed versions, and per-case expected/returned/wrong-hit ids."]
+        },
+        {
+          title: "Relevance is not grounding",
+          paragraphs: ["A returned row can carry its own evidence quote and still fail to answer the question. Grounding and relevance are reported as two independent numbers so a sourced but off-topic row registers as a quality failure instead of a perfect evidence score."],
+          table: table("Two independent quality numbers", ["Field", "Meaning"], [
+            ["wrong_hit_rate / wrong_hit_rows / wrong_hit_ids", "Answer-bearing cases that returned at least one irrelevant row"],
+            ["source_grounded_rate", "Share of returned rows carrying stored-source grounding. Not accuracy."]
+          ])
+        },
+        {
+          title: "Release gate",
+          paragraphs: ["Tagged releases run public strict recall against the real default model before publishing. The gate asserts which facts come back — the current scoped fact, abstention, scope isolation, expiry — not merely that the result is non-empty, and it fails closed when the model cannot run."],
+          warnings: ["A gate that passes on a confident wrong answer is worse than no gate. When it fails, fix retrieval; never relax the gate or swap in a stub embedder."]
         },
         {
           title: "Provider resource comparison",

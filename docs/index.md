@@ -2,7 +2,7 @@
 
 A lightweight, self-hosted memory layer for AI agents.
 
-> Released baseline: `0.3.0` — the strict CLI/Hermes accuracy path: scope
+> Released baseline: `0.3.1` — the strict CLI/Hermes accuracy path: scope
 > isolation, evidence/provenance, conflict history, abstention, delivery-safe
 > Telegram activity reporting, scoped JSONL transparency events, and
 > exact-session continuity fallback. Current verification: `505 passed,
@@ -64,5 +64,6 @@ working material, not part of the source-facing documentation set.
 - [Hermes integration](hermes-integration.md)
 - [Hermes install kit](../hermes/README.md)
 - [Benchmark protocol and results](../benchmarks/README.md)
+- [Recorded baselines](../benchmarks/baselines/README.md)
 - [v0.2.17 Debugging & Integration Guide](debugging-v0.2.17.md)
 - [v0.2.17 Debugging Scope & Investigation Log](DEBUGGING-SCOPE-v0.2.17.md)

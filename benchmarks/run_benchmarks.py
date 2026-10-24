@@ -11,12 +11,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import platform
 import subprocess
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
-from benchmarks.gold import load_gold
+from benchmarks.gold import anchor_time, load_gold, rebase_timestamps
 from benchmarks.metrics import mrr, percentiles, recall_at_k
 from benchmarks.synthetic import generate_memories
 
@@ -43,6 +45,25 @@ def _git_revision() -> str | None:
         ).strip()
     except (OSError, subprocess.CalledProcessError):
         return None
+
+
+def _module_version(name: str) -> str | None:
+    try:
+        module = __import__(name)
+    except ImportError:
+        return None
+    return getattr(module, "__version__", None)
+
+
+def _gold_engine(kind: str) -> tuple[object, str, str | None]:
+    """Return the embedding engine for gold evaluation plus its identity."""
+    if kind == "fake":
+        return _FakeEngine(), "fake-deterministic", None
+    from luminary_memory.config import Settings
+    from luminary_memory.embeddings.fastembed import FastembedEngine
+
+    model = Settings().embedding_model
+    return FastembedEngine(model_name=model), "fastembed", model
 
 
 def _scope_kwargs(scope: dict) -> dict:
@@ -82,8 +103,10 @@ def _evaluate_gold(client, memories: list[dict], cases: list[dict]) -> dict:
     abstain_attempts = 0
     false_positive_no_answer = 0
     leakage_count = 0
-    evidence_supported = 0
+    grounded_count = 0
     returned_count = 0
+    answer_cases_with_wrong_hit = 0
+    wrong_hit_rows = 0
 
     for case in cases:
         scope = dict(case.get("scope") or {})
@@ -91,10 +114,16 @@ def _evaluate_gold(client, memories: list[dict], cases: list[dict]) -> dict:
         result = client.recall(case["query"], limit=10, scope=scope, strict=True)
         retrieved = [memory.id for memory in result.memories if memory.id is not None]
         hits = set(retrieved) & expected
+        # A grounded row that does not answer the question is a quality
+        # failure. Evidence grounding alone must not read as relevance.
+        wrong_hits = [memory_id for memory_id in retrieved if memory_id not in expected]
         if expected:
             retrieved_relevant.append(recall_at_k(retrieved, expected, 10))
             mrr_values.append(mrr(retrieved, expected))
             precision_values.append(len(hits) / max(1, len(retrieved)))
+            if wrong_hits:
+                answer_cases_with_wrong_hit += 1
+                wrong_hit_rows += len(wrong_hits)
         if case.get("no_answer"):
             abstain_attempts += 1
             if not retrieved and result.status == "abstain":
@@ -105,7 +134,7 @@ def _evaluate_gold(client, memories: list[dict], cases: list[dict]) -> dict:
         for memory in result.memories:
             returned_count += 1
             if memory.evidence_quote or memory.source or memory.source_id:
-                evidence_supported += 1
+                grounded_count += 1
             memory_scope = {
                 key: getattr(memory, key, None)
                 for key in ("user_id", "session_id", "workspace_id", "agent_id")
@@ -121,7 +150,9 @@ def _evaluate_gold(client, memories: list[dict], cases: list[dict]) -> dict:
                 "query": case["query"],
                 "expected_ids": sorted(expected),
                 "retrieved_ids": retrieved,
+                "wrong_hit_ids": wrong_hits,
                 "status": result.status,
+                "abstained": result.status == "abstain",
                 "reason": result.reason,
                 "confidence": result.confidence,
                 "hit_count": len(hits),
@@ -129,7 +160,7 @@ def _evaluate_gold(client, memories: list[dict], cases: list[dict]) -> dict:
         )
 
     return {
-        "protocol": "independent_gold_v1",
+        "protocol": "independent_gold_v2",
         "cases": len(cases),
         "answer_cases": len(answer_cases),
         "no_answer_cases": len(no_answer_cases),
@@ -141,7 +172,14 @@ def _evaluate_gold(client, memories: list[dict], cases: list[dict]) -> dict:
         "abstention_accuracy": abstain_correct / abstain_attempts if abstain_attempts else 0.0,
         "unsupported_answer_rate": false_positive_no_answer / abstain_attempts
         if abstain_attempts else 0.0,
-        "evidence_support_precision": evidence_supported / returned_count
+        # Answer-bearing cases where at least one returned row is not relevant,
+        # regardless of whether that row carries its own evidence quote.
+        "wrong_hit_rate": answer_cases_with_wrong_hit / len(answer_cases)
+        if answer_cases else 0.0,
+        "wrong_hit_rows": wrong_hit_rows,
+        # Share of returned rows carrying stored-source grounding. This is not
+        # relevance and must never be reported as accuracy.
+        "source_grounded_rate": grounded_count / returned_count
         if returned_count else 1.0,
         "cross_scope_leakage": leakage_count,
         "case_results": case_results,
@@ -152,6 +190,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Run luminary-memory accuracy/latency benchmarks")
     ap.add_argument("--n", type=int, default=500, help="Synthetic memories for latency smoke")
     ap.add_argument("--backend", choices=["sqlite"], default="sqlite")
+    ap.add_argument(
+        "--engine",
+        choices=["fake", "real"],
+        default="fake",
+        help=(
+            "Embedding engine for gold evaluation. Latency smoke always uses "
+            "the deterministic fake engine so its numbers stay comparable."
+        ),
+    )
     ap.add_argument(
         "--gold-set",
         type=Path,
@@ -216,9 +263,15 @@ def main() -> None:
                 evidence_required=True,
                 rule_auto_replace=False,
             )
+            gold_engine, engine_name, model_name = _gold_engine(args.engine)
+            anchor = anchor_time(gold_memories)
+            evaluation_anchor = None
+            if anchor is not None:
+                gold_memories = rebase_timestamps(gold_memories, datetime.now(UTC) - anchor)
+                evaluation_anchor = anchor.isoformat()
             gold_client = MemoryClient(
                 settings=gold_settings,
-                engine=_FakeEngine(),
+                engine=gold_engine,
                 enricher=NoopEnricher(),
             )
             try:
@@ -233,6 +286,20 @@ def main() -> None:
                 "quality": gold_quality,
                 "evaluation": {
                     "dataset": meta,
+                    "engine": {"name": engine_name, "model": model_name},
+                    "evaluation_clock": {
+                        "anchor": evaluation_anchor,
+                        "policy": (
+                            "fixture timestamps rebased so the newest observed_at "
+                            "equals run time; relative ages are preserved"
+                        ),
+                    },
+                    "runtime": {
+                        "python": platform.python_version(),
+                        "numpy": _module_version("numpy"),
+                        "fastembed": _module_version("fastembed"),
+                    },
+                    "latency_engine": "fake-deterministic",
                     "config": {
                         "strict_recall": True,
                         "evidence_required": True,
