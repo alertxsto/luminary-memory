@@ -22,6 +22,14 @@ Removes memories whose `ttl_seconds` has elapsed.
 
 Clusters memories by Jaccard similarity (`LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD`, default 0.9) **or embedding-cosine similarity** (`LUMINARY_CONSOLIDATE_SEMANTIC`, default `true`) and merges each cluster into a single memory, keeping the longest content, summing access counts, and unioning tags. Semantic mode (default) merges paraphrases that token overlap would miss; it falls back to Jaccard when embeddings are missing. Disable with `LUMINARY_CONSOLIDATE_SEMANTIC=false` or `luminary-memory lifecycle --no-semantic`.
 
+Clustering is greedy and single-pass: a memory is compared against the cluster
+master it was assigned to, so a row that is similar to several others can be
+claimed by one cluster and never compared against the rest. **One pass is
+therefore not a fixed point.** The invariant is convergence — repeated passes
+shrink the store and then stop. On a 25-memory store with near-duplicate
+clusters the observed shape is `25 → 14 → 13 → 13`, so schedule more than one
+pass after a bulk import if you need a settled store.
+
 ### importance, auto-estimation
 
 On ingest and before each prune, each memory's importance is estimated from behavior:
@@ -205,3 +213,36 @@ client = MemoryClient(db_path="memory.db")
 print(client.run_lifecycle())
 client.close()
 ```
+
+## Long-run behaviour
+
+A store that runs for weeks has failure modes a single test cannot show:
+latency creeping as the store fills, a durable fact silently becoming
+unreachable, an unanswerable query starting to answer, or the file growing
+without the memory count growing with it.
+
+`scripts/soak-test.py` drives the public API through many cycles on one store
+and fails on any of those:
+
+```bash
+python scripts/soak-test.py --cycles 400 --per-cycle 5 --report /tmp/soak.json
+python scripts/soak-test.py --cycles 100 --engine real   # real model, slower
+```
+
+It asserts a control fact stays retrievable in every cycle, a no-answer query
+never returns rows, and recall p50 in the last fifth of the run stays within
+`--max-latency-ratio` (default `3.0x`) of the first fifth. A bounded version
+runs in the normal suite (`tests/test_soak_behaviour.py`).
+
+Observed on the fake engine over 400 cycles (175 memories): control misses `0`,
+no-answer leaks `0`, recall p50 `3.4 ms → 4.7 ms` (`1.40x`). The file did grow
+to ~5.6 MB, which is the unbounded ledger described in the retention note below,
+not recall degradation.
+
+> **Storage growth.** `episodes`, `memory_events` and `memory_evidence` are
+> append-only and are deliberately not touched by `run_lifecycle()`. A direct
+> `MemoryClient.ingest()` writes a verbatim episode copy of the content already
+> in `memories`, so a long-lived store holds two copies of every fact with no
+> retention bound. Measured write amplification per ingest: 1 memory → 1
+> episode + 1 event + 1 evidence row + up to 8 relation pairs, and a rejected
+> duplicate still records a `duplicate_suppressed` event.

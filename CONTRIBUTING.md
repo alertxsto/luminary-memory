@@ -80,6 +80,20 @@ embedder.
   tests that only execute lines without checking outcomes. PostgreSQL-only
   branches are verified separately by the pgvector integration job.
 
+### Long-run checks
+
+Changes to ingest, recall, lifecycle or retention must also survive a soak run,
+because those defects only appear across cycles:
+
+```bash
+python scripts/soak-test.py --cycles 400 --per-cycle 5 --report /tmp/soak.json
+```
+
+It fails on a lost control fact, a no-answer query that starts returning rows,
+or recall p50 growing more than `3x` between the first and last fifth of the
+run. See [Lifecycle](docs/lifecycle.md#long-run-behaviour) for what it measures
+and the current observed numbers.
+
 ## AI assistance notice
 
 If you use **any kind of AI assistance** to contribute to luminary-memory, please

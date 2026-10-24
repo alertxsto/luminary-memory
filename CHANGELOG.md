@@ -15,6 +15,21 @@
   Reports record engine, model, Python/NumPy/Fastembed versions, the evaluation
   clock and per-case returned/excluded ids.
 - **Recorded baseline** — `benchmarks/baselines/gold-real-v1.json`.
+- **Long-run soak harness** — `scripts/soak-test.py` drives ingest, recall and
+  lifecycle through hundreds of cycles on one store and fails on a lost control
+  fact, a no-answer query that starts answering, or recall p50 growing more than
+  3x across the run. A bounded version runs in the normal suite.
+
+### Documented
+
+- **Consolidation converges, it is not idempotent** — clustering is greedy and
+  single-pass, so a row similar to several others can be claimed by one cluster
+  and never compared against the rest. On a 25-memory store the observed shape
+  is `25 → 14 → 13 → 13`; schedule more than one pass after a bulk import.
+- **Unbounded ledger growth** — `episodes`, `memory_events` and
+  `memory_evidence` are append-only and untouched by `run_lifecycle()`. A direct
+  `ingest()` stores a verbatim episode copy of content already in `memories`, so
+  a long-lived store holds two copies of every fact with no retention bound.
 
 ### Changed
 
