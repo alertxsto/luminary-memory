@@ -4,6 +4,10 @@
 
 ### Added
 
+- **Validity-window regression tests** — `_is_current` already excluded a
+  memory whose `valid_to` had passed or whose `valid_from` was in the future, in
+  both strict and permissive mode, but nothing pinned it. Four tests now do, and
+  they were verified to fail when the comparison is removed.
 - **Release gate on public strict recall** — the publish workflow had no
   real-model job, so a release could ship on a green unit suite while strict
   recall returned a confident wrong answer. `scripts/smoke-real-model.py` now
