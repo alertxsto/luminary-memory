@@ -78,10 +78,10 @@ Do not use that command as evidence that the package currently exists on npm.
 
 The [pi.dev package catalog](https://pi.dev/packages) discovers npm packages
 with the `pi-package` keyword, which this manifest includes. Build preflight
-rejects a release if that discovery keyword is removed. A public npm release
-must exist and be indexed before `pi.dev/packages/luminary-memory-pi` can be
-verified live. The current local package is not a claim that the catalog page
-already exists.
+rejects a release if that discovery keyword is removed. Publication and catalog
+indexing are separate. Use the
+[filtered catalog](https://pi.dev/packages?name=luminary), rather than assuming
+there is a package-detail route. A registry install does not prove indexing.
 
 ## Use and accuracy
 

@@ -24,8 +24,20 @@ and omp. That means ownership by this project, not endorsement or listing
 approval by the harness maintainers. All three compile the canonical adapter
 source under `src/luminary_memory/integrations/assets/`; no second memory engine
 or separate adapter fork is maintained.
+The initial npm packages are published as `0.3.1`. The older Python/PyPI
+`0.3.1` release predates this bridge, so first install its verified public source
+commit into the Python environment the host will use:
 
-Until the coordinated bridge/plugin release is published, install this checkout:
+```bash
+python -m pip install --upgrade "git+https://github.com/alertxsto/luminary-memory.git@9040d9b5154f94c66594ed6096e33aa2fd311bf0"
+export LUMINARY_PYTHON=/absolute/venv/bin/python
+```
+
+Then use the registry install command below. Installing an npm package does not
+install Python or replace the configured Python environment.
+
+
+To build and install from a local checkout instead:
 
 ```bash
 python -m pip install -e .
@@ -45,7 +57,7 @@ compiled ESM, package metadata, usage instructions, and the license, with no
 host framework copy, repository source dependency, or machine-specific Python
 path. No package install hook silently installs Python dependencies.
 
-| Host | Use now, after building | Registry install after actual npm publication |
+| Host | Local build installation | Published npm installation |
 | --- | --- | --- |
 | pi | `pi install /absolute/repo/plugins/pi` | `pi install npm:luminary-memory-pi` |
 | omp | `omp plugin link /absolute/repo/plugins/omp` | `omp plugin install luminary-memory-omp` |
@@ -67,8 +79,10 @@ and memory ownership remain unchanged.
 - **pi:** its [official package catalog](https://pi.dev/packages) indexes npm
   packages eligible via the `pi-package` keyword. The package includes this
   keyword plus `pi.extensions`; build preflight refuses a release missing the
-  discovery keyword. Actual publication and catalog indexing must still happen.
-  A local tarball is not a live catalog listing.
+  discovery keyword. Publication is verified; catalog indexing is separate.
+  Check the [filtered catalog](https://pi.dev/packages?name=luminary), not a
+  guessed package-detail route. It returned no results when checked after the
+  initial publication, so a live pi catalog listing is not yet claimed.
 - **OpenCode:** the [official Ecosystem list](https://opencode.ai/docs/ecosystem/)
   accepts a PR to `anomalyco/opencode`, branch `dev`, file
   `packages/web/src/content/docs/ecosystem.mdx`. The proposed table addition is
@@ -90,13 +104,19 @@ The first publication requires maintainer npm authorization. Use
 the next coordinated release; do not overwrite an already-published Python tag.
 See [contributor release instructions](../CONTRIBUTING.md).
 
-Initial submissions (2026-10-25):
-[plugin source PR #17](https://github.com/alertxsto/luminary-memory/pull/17) and
-[official OpenCode Ecosystem PR #58823](https://github.com/anomalyco/opencode/pull/58823)
-were submitted and open, not merged, when verified. These are real submissions,
-not live website listings. Follow the PR URLs for current review/deployment
-status. The pi npm package still requires npm authorization/publication before
-catalog discovery can be verified.
+Publication verified on 2026-10-25: all three npm `0.3.1` tarballs match the
+validated local artifacts:
+[pi](https://www.npmjs.com/package/luminary-memory-pi),
+[OpenCode](https://www.npmjs.com/package/luminary-memory-opencode), and
+[omp](https://www.npmjs.com/package/luminary-memory-omp).
+Registry installation succeeded through the pi and omp CLIs; the real OpenCode
+1.19.4 server loaded the npm package and exposed all four Luminary tools.
+
+The [plugin source PR #17](https://github.com/alertxsto/luminary-memory/pull/17)
+still requires review approval and merge.
+The [official OpenCode Ecosystem PR #58823](https://github.com/anomalyco/opencode/pull/58823)
+remains draft until that source prerequisite is met. npm publication is not
+upstream review approval, deployment, or proof of a live catalog listing.
 
 
 ## File-copy hook installer
