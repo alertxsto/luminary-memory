@@ -164,7 +164,11 @@ class Settings:
         _unit("rule_auto_replace_threshold", self.rule_auto_replace_threshold)
         weights = self.strategy_weights or {}
         if not isinstance(weights, dict):
-            raise ValueError("strategy_weights must be a mapping of strategy name to weight")
+            # ValueError, not TypeError: invalid ranking configuration is part of the
+            # documented Settings contract (CHANGELOG 0.3.1) and callers catch one type.
+            raise ValueError(  # noqa: TRY004
+                "strategy_weights must be a mapping of strategy name to weight"
+            )
         for name, value in weights.items():
             # A zero or negative weight silently disables a retrieval strategy;
             # a non-finite weight poisons every fused score.

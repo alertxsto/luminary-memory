@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from luminary_memory.scope import SCOPE_FIELDS, memory_matches_scope, normalize_scope
+from luminary_memory.scope import memory_matches_scope, normalize_scope
 
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
@@ -125,7 +125,7 @@ def export_memories(
         "version": EXPORT_VERSION,
         "memories": [
             {
-                **{**_mem_to_dict(m), **({} if include_embeddings else {"embedding": None})},
+                **_mem_to_dict(m), **({} if include_embeddings else {"embedding": None}),
                 # Carry the claim ledger so an inactive parent cannot be
                 # restored with active claims.
                 "claims": _claims_for(backend, m.id),
@@ -471,7 +471,7 @@ def import_memories(
             m.supersedes_id = resolved
             try:
                 backend.update(m)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.warning("could not record lineage for imported memory %s", mid, exc_info=True)
 
     result: dict = {"imported": imported_count}
