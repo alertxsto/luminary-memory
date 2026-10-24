@@ -107,7 +107,7 @@ floor measured for the configured model.
 
 | Model | Floor | Source |
 |-------|-------|--------|
-| `BAAI/bge-small-en-v1.5` (default) | `0.70` | measured on `benchmarks/gold_micro.jsonl` |
+| `BAAI/bge-small-en-v1.5` (default) | `0.74` | measured on the controlled gold fixtures + release gate |
 | any model without a measurement | `0.78` | conservative default |
 
 The conservative default matters: switching `LUMINARY_EMBEDDING_MODEL` to an

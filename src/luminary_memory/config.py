@@ -56,7 +56,7 @@ DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 #
 # Any model without a measured floor keeps the conservative default, so an
 # unmeasured model can only abstain more, never answer more.
-MEASURED_SEMANTIC_SUPPORT_FLOORS = {DEFAULT_EMBEDDING_MODEL: 0.70}
+MEASURED_SEMANTIC_SUPPORT_FLOORS = {DEFAULT_EMBEDDING_MODEL: 0.74}
 CONSERVATIVE_SEMANTIC_SUPPORT_FLOOR = 0.78
 
 

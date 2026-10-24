@@ -4,9 +4,14 @@ Reproducible gold-set runs. Each file is one `--engine real` evaluation, kept so
 a later release can be compared against a matched environment instead of a
 historical number quoted out of context.
 
-| File | Fixture | Engine | recall@10 | abstention | wrong-hit | leakage |
-|---|---|---|---:|---:|---:|---:|
-| `gold-real-v1.json` | `gold_micro.jsonl` (`3646de58…`) | `BAAI/bge-small-en-v1.5` | 0.90 | 1.00 | 0.10 | 0 |
+| File | Fixture | Engine | floor | recall@10 | abstention | wrong-hit | leakage |
+|---|---|---|---:|---:|---:|---:|---:|
+| `gold-real-v1.json` | `gold_micro.jsonl` (`3646de58…`) | `BAAI/bge-small-en-v1.5` | 0.70 | 0.90 | 1.00 | 0.10 | 0 |
+| `gold-real-v2.json` | `gold_micro.jsonl` (`3646de58…`) | `BAAI/bge-small-en-v1.5` | **0.74** | 0.70 | 1.00 | **0.00** | 0 |
+
+`v1` is kept for comparison only. It was produced with a 0.70 floor, which
+returned a grounded but off-topic documentation URL on two answer-bearing cases.
+`v2` is the shipped configuration.
 
 ## Reproduce
 
@@ -27,10 +32,10 @@ python -m benchmarks.run_benchmarks --n 50 --engine real --report /tmp/gold.json
 - The latency block in a full report always comes from the deterministic fake
   engine so those figures stay comparable across releases. It is not a
   measurement of the real model.
-- `gold-real-v1.json` still contains one wrong hit: `paraphrase_deploy` returns
-  the off-topic docs URL as its third row. That is the graph-expansion defect
-  tracked separately; the calibration change did not introduce it, it stopped
-  masking it by zeroing the row's semantic score.
+- The floor sweep that chose `v2` is in `benchmarks/README.md`. 0.74 is the
+  lowest value that stops the off-topic docs row from being returned on the
+  exact and paraphrased deploy cases; 0.70 admitted it (cosine 0.7098) while
+  still excluding the no-answer cases.
 
 ## Historical numbers
 

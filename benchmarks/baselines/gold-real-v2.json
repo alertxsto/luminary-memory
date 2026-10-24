@@ -1,0 +1,189 @@
+{
+  "quality": {
+    "protocol": "independent_gold_v2",
+    "cases": 12,
+    "answer_cases": 10,
+    "no_answer_cases": 2,
+    "recall@10": 0.7,
+    "mrr": 0.7,
+    "precision@10": 0.7,
+    "abstention_accuracy": 1.0,
+    "unsupported_answer_rate": 0.0,
+    "wrong_hit_rate": 0.0,
+    "wrong_hit_rows": 0,
+    "source_grounded_rate": 1.0,
+    "cross_scope_leakage": 0
+  },
+  "evaluation": {
+    "dataset": {
+      "type": "meta",
+      "format": "luminary-memory-gold",
+      "version": 1,
+      "name": "controlled-micro-v1",
+      "language": [
+        "en",
+        "id"
+      ],
+      "sha256": "3646de5812b3d900fc57656d1f9d48c1f3530d441ed914058e99ec1249a35e23"
+    },
+    "engine": {
+      "name": "fastembed",
+      "model": "BAAI/bge-small-en-v1.5"
+    },
+    "evaluation_clock": {
+      "anchor": "2026-08-11T10:00:00+00:00",
+      "policy": "fixture timestamps rebased so the newest observed_at equals run time; relative ages are preserved"
+    },
+    "runtime": {
+      "python": "3.11.15",
+      "numpy": "2.4.3",
+      "fastembed": "0.8.0"
+    },
+    "latency_engine": "fake-deterministic",
+    "config": {
+      "strict_recall": true,
+      "evidence_required": true,
+      "rule_auto_replace": false
+    },
+    "git_revision": "b24cff2973bdb8e50346df0c4821b09909e53987"
+  },
+  "case_results": [
+    {
+      "key": "exact_deploy",
+      "status": "ok",
+      "confidence": 1.0,
+      "expected_ids": [
+        2,
+        12
+      ],
+      "retrieved_ids": [
+        2,
+        12
+      ],
+      "wrong_hit_ids": []
+    },
+    {
+      "key": "paraphrase_deploy",
+      "status": "ok",
+      "confidence": 0.7916715324225123,
+      "expected_ids": [
+        2,
+        12
+      ],
+      "retrieved_ids": [
+        2,
+        12
+      ],
+      "wrong_hit_ids": []
+    },
+    {
+      "key": "latest_only",
+      "status": "abstain",
+      "confidence": 0.2,
+      "expected_ids": [
+        2,
+        12
+      ],
+      "retrieved_ids": [],
+      "wrong_hit_ids": []
+    },
+    {
+      "key": "scope_isolation",
+      "status": "ok",
+      "confidence": 1.0,
+      "expected_ids": [
+        4
+      ],
+      "retrieved_ids": [
+        4
+      ],
+      "wrong_hit_ids": []
+    },
+    {
+      "key": "cpp_identifier",
+      "status": "ok",
+      "confidence": 0.741875,
+      "expected_ids": [
+        5
+      ],
+      "retrieved_ids": [
+        5
+      ],
+      "wrong_hit_ids": []
+    },
+    {
+      "key": "gpt_identifier",
+      "status": "ok",
+      "confidence": 0.7918749999999999,
+      "expected_ids": [
+        6
+      ],
+      "retrieved_ids": [
+        6
+      ],
+      "wrong_hit_ids": []
+    },
+    {
+      "key": "url_identifier",
+      "status": "ok",
+      "confidence": 1.0,
+      "expected_ids": [
+        7
+      ],
+      "retrieved_ids": [
+        7
+      ],
+      "wrong_hit_ids": []
+    },
+    {
+      "key": "preference",
+      "status": "abstain",
+      "confidence": 0.3112244897959183,
+      "expected_ids": [
+        8
+      ],
+      "retrieved_ids": [],
+      "wrong_hit_ids": []
+    },
+    {
+      "key": "rule",
+      "status": "abstain",
+      "confidence": 0.28,
+      "expected_ids": [
+        11
+      ],
+      "retrieved_ids": [],
+      "wrong_hit_ids": []
+    },
+    {
+      "key": "indonesian",
+      "status": "ok",
+      "confidence": 1.0,
+      "expected_ids": [
+        2,
+        12
+      ],
+      "retrieved_ids": [
+        2,
+        12
+      ],
+      "wrong_hit_ids": []
+    },
+    {
+      "key": "no_answer_password",
+      "status": "abstain",
+      "confidence": 0.33333333333333337,
+      "expected_ids": [],
+      "retrieved_ids": [],
+      "wrong_hit_ids": []
+    },
+    {
+      "key": "no_answer_other_user",
+      "status": "abstain",
+      "confidence": 0.3112244897959183,
+      "expected_ids": [],
+      "retrieved_ids": [],
+      "wrong_hit_ids": []
+    }
+  ]
+}

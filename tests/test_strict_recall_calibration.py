@@ -74,10 +74,10 @@ def _seed(client: MemoryClient) -> None:
 
 
 def test_paraphrase_with_no_shared_tokens_is_not_abstained(tmp_path):
-    # cos(query, fact) = 0.73, cos(query, distractor) = 0.45: strong enough to
-    # answer, and no shared surface token to corroborate it.
+    # cos(query, fact) = 0.76, cos(query, distractor) = 0.42: above the measured
+    # 0.74 floor, with no shared surface token to corroborate it.
     client = _client(
-        tmp_path, model="BAAI/bge-small-en-v1.5", query_vector=_unit(0.73, 0.45, 0.51)
+        tmp_path, model="BAAI/bge-small-en-v1.5", query_vector=_unit(0.76, 0.42, 0.50)
     )
     try:
         _seed(client)
@@ -110,7 +110,7 @@ def test_uncalibrated_model_keeps_the_conservative_floor(tmp_path):
     # The same evidence that answers on a calibrated model must not answer on a
     # model whose score distribution was never measured.
     client = _client(
-        tmp_path, model="someone/unknown-embedding", query_vector=_unit(0.73, 0.45, 0.51)
+        tmp_path, model="someone/unknown-embedding", query_vector=_unit(0.76, 0.42, 0.50)
     )
     try:
         _seed(client)
@@ -123,6 +123,10 @@ def test_uncalibrated_model_keeps_the_conservative_floor(tmp_path):
 
 
 def test_floor_resolution_is_model_scoped():
-    assert semantic_support_floor("BAAI/bge-small-en-v1.5") == 0.70
+    # 0.74 is the measured value: on the controlled fixtures it is the lowest
+    # floor that stops a grounded but off-topic row from being returned while
+    # still answering the exact and paraphrased deploy questions. See
+    # benchmarks/README.md for the sweep.
+    assert semantic_support_floor("BAAI/bge-small-en-v1.5") == 0.74
     assert semantic_support_floor("someone/unknown-embedding") == 0.78
     assert semantic_support_floor(None) == 0.78

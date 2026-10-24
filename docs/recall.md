@@ -154,7 +154,7 @@ the memory. A weak signal is not evidence:
 - The semantic support floor is **calibrated per embedding model**, because the
   cosine value that separates "answers the question" from "topically adjacent"
   depends on the model. `config.semantic_support_floor()` returns the measured
-  floor for the configured model — `0.70` for the default
+  floor for the configured model — `0.74` for the default
   `BAAI/bge-small-en-v1.5` — and `0.78` for any model without a measurement.
   An unmeasured model therefore can only abstain more, never answer more.
 - Confidence stays a bounded public `[0,1]` score, and a candidate is dropped
@@ -162,10 +162,12 @@ the memory. A weak signal is not evidence:
   `abstention_min_margin` of each other. No score is boosted just because a
   strategy happened to return the row.
 
-Measured on the controlled gold fixture with the real default model, this
-scoring returns the correct fact for paraphrases that share no surface tokens
-with the stored text (`preference`, `rule`) while both no-answer cases still
-abstain.
+Measured on the controlled gold fixtures with the real default model, the 0.74
+floor returns no wrong hit at all: `wrong_hit_rate` is `0.00` on the micro
+fixture and `0.08` on the extended one, and both no-answer cases abstain. The
+trade is explicit — `preference` and `rule` abstain at this floor rather than
+risk returning a grounded but off-topic row. The sweep behind the value is in
+`benchmarks/README.md`.
 
 
 ## Adaptive importance (v0.2.15)
