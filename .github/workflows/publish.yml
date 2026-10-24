@@ -6,10 +6,79 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
+  native-packages:
+    name: Build release plugin tarballs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Check Python, plugin and tag versions
+        env:
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import tomllib
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          for agent in ("pi", "opencode", "omp"):
+              path = Path("plugins") / agent / "package.json"
+              manifest = json.loads(path.read_text())
+              if manifest["name"] != f"luminary-memory-{agent}" or manifest["version"] != version:
+                  raise SystemExit(f"{path}: package name/version does not match Python {version}")
+          tag = os.environ["RELEASE_TAG"]
+          if tag and tag != f"v{version}":
+              raise SystemExit(f"Tag {tag!r} does not match Python/plugin version v{version}")
+          PY
+      - name: Install the actual Python bridge
+        run: python -m pip install -e ".[dev]"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          check-latest: true
+      - run: npm ci --ignore-scripts
+      - run: npm run build:plugins
+      - run: npm run test:plugins
+      - run: npm run pack:plugins
+      - name: Check complete, version-matched release tarballs
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import tarfile
+          import tomllib
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          expected = {f"luminary-memory-{agent}-{version}.tgz" for agent in ("pi", "opencode", "omp")}
+          directory = Path("artifacts/plugins")
+          actual = {path.name for path in directory.glob("*.tgz")}
+          if actual != expected:
+              raise SystemExit(f"Expected tarballs {sorted(expected)}, got {sorted(actual)}")
+          for filename in sorted(expected):
+              with tarfile.open(directory / filename, "r:gz") as archive:
+                  manifest = json.load(archive.extractfile("package/package.json"))
+                  if filename != f'{manifest["name"]}-{manifest["version"]}.tgz' or manifest["version"] != version:
+                      raise SystemExit(f"{filename}: packed manifest name/version mismatch")
+                  for member in ("package/dist/index.js", "package/README.md", "package/LICENSE"):
+                      entry = archive.getmember(member)
+                      if not entry.isfile() or entry.size == 0:
+                          raise SystemExit(f"{filename}: missing or empty {member}")
+          PY
+      - name: Upload validated plugin tarballs
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-plugin-packages
+          path: artifacts/plugins/*.tgz
+          if-no-files-found: error
+
   real-model:
     # Release gate. Runs public strict recall against the real default
     # embedding model on an isolated SQLite store and asserts which facts come
@@ -39,7 +108,7 @@ jobs:
           if-no-files-found: ignore
 
   pypi:
-    needs: real-model
+    needs: [real-model, native-packages]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -58,6 +127,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install build
           python -m build
+      - name: Download validated plugin tarballs
+        uses: actions/download-artifact@v4
+        with:
+          name: native-plugin-packages
+          path: artifacts/plugins
       - name: Build Hermes skill artifact
         run: |
           mkdir -p skill_asset
@@ -68,8 +142,50 @@ jobs:
         # Trusted Publisher only — no API token. Configured at
         # https://pypi.org/manage/account/publishing/. Never fall back to twine:
         # an API token upload alongside Trusted Publishing triggers a PyPI alert.
-      - name: Attach skill asset to GitHub Release
+      - name: Attach skill and native plugin assets to GitHub Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: skill_asset/luminary-memory-skill.zip
+          files: |
+            skill_asset/luminary-memory-skill.zip
+            artifacts/plugins/*.tgz
+          fail_on_unmatched_files: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  npm:
+    name: Publish configured npm plugins
+    needs: [pypi, native-packages]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && vars.PUBLISH_NPM_PLUGINS == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          check-latest: true
+      - name: Install an npm CLI with trusted publishing support
+        run: npm install --global 'npm@^11.5.1' --ignore-scripts
+      - name: Download the exact validated release tarballs
+        uses: actions/download-artifact@v4
+        with:
+          name: native-plugin-packages
+          path: artifacts/plugins
+      - name: Publish built tarballs using npm trusted publishing
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          for agent in pi opencode omp; do
+            archive="artifacts/plugins/luminary-memory-${agent}-${version}.tgz"
+            test -s "$archive"
+          done
+          for agent in pi opencode omp; do
+            archive="artifacts/plugins/luminary-memory-${agent}-${version}.tgz"
+            npm publish "$archive" --access public --ignore-scripts --registry https://registry.npmjs.org
+          done

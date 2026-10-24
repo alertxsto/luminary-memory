@@ -1,0 +1,16 @@
+{
+  "name": "luminary-memory-plugin-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": ["plugins/*"],
+  "engines": {"node": "^22.22.2 || ^24.15.0 || >=26.0.0"},
+  "scripts": {
+    "build:plugins": "node scripts/build-plugins.mjs",
+    "test:plugins": "node --test tests/plugins/packages.test.mjs",
+    "pack:plugins": "node scripts/pack-plugins.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "typebox": "1.3.27"
+  }
+}

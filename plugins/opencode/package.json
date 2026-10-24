@@ -1,0 +1,23 @@
+{
+  "name": "luminary-memory-opencode",
+  "version": "0.3.1",
+  "description": "Luminary-maintained scoped memory plugin for OpenCode",
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": "./dist/index.js",
+  "files": ["dist/", "README.md", "LICENSE"],
+  "engines": {"node": "^22.22.2 || ^24.15.0 || >=26.0.0"},
+  "license": "Apache-2.0",
+  "author": "Dwiky Candra",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alertxsto/luminary-memory.git",
+    "directory": "plugins/opencode"
+  },
+  "homepage": "https://github.com/alertxsto/luminary-memory#readme",
+  "bugs": {"url": "https://github.com/alertxsto/luminary-memory/issues"},
+  "keywords": ["opencode", "opencode-plugin", "luminary", "memory"],
+  "publishConfig": {"access": "public"},
+  "scripts": {"prepack": "node ../../scripts/build-plugins.mjs"},
+  "dependencies": {"@opencode-ai/plugin": "1.19.4"}
+}

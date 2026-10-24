@@ -1,0 +1,59 @@
+{
+  "name": "luminary-memory-pi",
+  "version": "0.3.1",
+  "description": "Luminary-maintained scoped memory extension for pi, backed by the Luminary Python bridge",
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "scripts": {
+    "prepack": "node ../../scripts/build-plugins.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "luminary-memory",
+    "memory",
+    "ai-agent"
+  ],
+  "author": "Dwiky Candra",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/alertxsto/luminary-memory#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alertxsto/luminary-memory.git",
+    "directory": "plugins/pi"
+  },
+  "bugs": {
+    "url": "https://github.com/alertxsto/luminary-memory/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -11,6 +11,7 @@ from rich.table import Table
 
 from luminary_memory.api import MemoryClient
 from luminary_memory.config import Settings
+from luminary_memory.integrations.cli import app as hook_app
 
 app = typer.Typer(
     name="luminary-memory",
@@ -18,6 +19,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+app.add_typer(hook_app, name="hook")
 
 
 def _client(db_path: str | None, backend: str | None) -> MemoryClient:

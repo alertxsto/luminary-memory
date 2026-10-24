@@ -1,0 +1,8 @@
+diff --git a/packages/web/src/content/docs/ecosystem.mdx b/packages/web/src/content/docs/ecosystem.mdx
+--- a/packages/web/src/content/docs/ecosystem.mdx
++++ b/packages/web/src/content/docs/ecosystem.mdx
+@@ -37,3 +37,4 @@
+ | [opencode-zellij-namer](https://github.com/24601/opencode-zellij-namer)                            | AI-powered automatic Zellij session naming based on OpenCode context                                                             |
+ | [opencode-supermemory](https://github.com/supermemoryai/opencode-supermemory)                      | Persistent memory across sessions using Supermemory                                                                              |
++| [luminary-memory-opencode](https://github.com/alertxsto/luminary-memory/tree/main/plugins/opencode) | Self-hosted, scoped memory with evidence-aware recall, explicit remember/forget tools, and opt-in curation for the OpenCode 1.x plugin API |
+ | [@plannotator/opencode](https://github.com/backnotprop/plannotator/tree/main/apps/opencode-plugin) | Interactive plan review with visual annotation and private/offline sharing                                                       |

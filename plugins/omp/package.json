@@ -1,0 +1,47 @@
+{
+  "name": "luminary-memory-omp",
+  "version": "0.3.1",
+  "description": "Luminary-maintained scoped memory extension for oh-my-pi, backed by the Luminary Python bridge",
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "omp": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "scripts": {
+    "prepack": "node ../../scripts/build-plugins.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "keywords": [
+    "omp-plugin",
+    "oh-my-pi",
+    "luminary-memory",
+    "memory",
+    "ai-agent"
+  ],
+  "author": "Dwiky Candra",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/alertxsto/luminary-memory#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alertxsto/luminary-memory.git",
+    "directory": "plugins/omp"
+  },
+  "bugs": {
+    "url": "https://github.com/alertxsto/luminary-memory/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
