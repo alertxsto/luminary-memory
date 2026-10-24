@@ -98,6 +98,23 @@ Controls how stored memories are matched and ranked against a query.
 | `abstention_min_margin` | `LUMINARY_ABSTENTION_MIN_MARGIN` | `0.04` | Minimum top-vs-second margin for ambiguous strict results. |
 | `evidence_required` | `LUMINARY_EVIDENCE_REQUIRED` | `false` for legacy library clients | Requires evidence/source provenance for strict results and maintenance mutations. Hermes and CLI enable it explicitly. |
 
+### Semantic support floor
+
+Strict recall discards a semantic signal that is not strong enough to answer the
+question. Where that boundary sits depends on the embedding model, so it is not
+a `Settings` field: `config.semantic_support_floor(model_name)` returns the
+floor measured for the configured model.
+
+| Model | Floor | Source |
+|-------|-------|--------|
+| `BAAI/bge-small-en-v1.5` (default) | `0.70` | measured on `benchmarks/gold_micro.jsonl` |
+| any model without a measurement | `0.78` | conservative default |
+
+The conservative default matters: switching `LUMINARY_EMBEDDING_MODEL` to an
+unmeasured model cannot make strict recall answer more, only abstain more.
+Re-measure before lowering a floor for a new model — the gold fixture is the
+reference, and `benchmarks/baselines/README.md` explains how to run it.
+
 Provider and CLI also disable destructive semantic rule replacement. Direct
 library clients retain the historical default for compatibility; use
 `rule_auto_replace=False` when correctness is more important than legacy

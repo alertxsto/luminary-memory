@@ -64,5 +64,6 @@ working material, not part of the source-facing documentation set.
 - [Hermes integration](hermes-integration.md)
 - [Hermes install kit](../hermes/README.md)
 - [Benchmark protocol and results](../benchmarks/README.md)
+- [Recorded baselines](../benchmarks/baselines/README.md)
 - [v0.2.17 Debugging & Integration Guide](debugging-v0.2.17.md)
 - [v0.2.17 Debugging Scope & Investigation Log](DEBUGGING-SCOPE-v0.2.17.md)

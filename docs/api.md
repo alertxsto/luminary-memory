@@ -16,6 +16,10 @@ pdoc --output-dir docs/api --docformat markdown src/luminary_memory
 
 - `MemoryClient`, `ingest`, `ingest_batch`, `recall` (tags + snippets + planner + strict abstention), `search`, `get`/`update`/`delete`, `supersede`, `resolve_conflict`, `retract`, `list`, `export`/`import_memories`, `run_lifecycle`, `run_maintenance` (LLM curation), `health_score` (store health report), `graph` (entities + relations), `stats`, `close`.
 - `Settings`, `LUMINARY_*` env vars, `as_dict()`.
+- `config.semantic_support_floor(model_name)` — the semantic-evidence floor
+  strict recall uses for a given embedding model. Measured per model; unmeasured
+  models get the conservative default. See
+  [Configuration reference](config-reference.md#semantic-support-floor).
 - `Memory`, `RecallResult`, `types.py` — including scope, status, validity,
   confidence, evidence, claim, supersession, and reindex fields.
 - Subpackages `backends/`, `embeddings/`, `ingest/`, `recall/`, `lifecycle/`, `export`.
