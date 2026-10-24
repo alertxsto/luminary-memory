@@ -54,6 +54,14 @@ def _percentile(values: list[float], fraction: float) -> float:
 
 
 def _run(args: argparse.Namespace) -> tuple[bool, dict]:
+    # Run from anywhere: the script imports the in-repo benchmark helpers, so
+    # the repository root must be importable even when the package is installed.
+    import sys
+
+    repo_root = str(Path(__file__).resolve().parent.parent)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
     from benchmarks.run_benchmarks import _FakeEngine, _gold_engine
     from luminary_memory.api import MemoryClient
     from luminary_memory.config import Settings
