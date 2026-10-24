@@ -7,11 +7,25 @@ v18.12.6. Source build tooling uses Node.js 22.22.2+ in the 22.x LTS line
 (or the other versions accepted by the root manifest); omp uses its own
 embedded Bun runtime to load extensions.
 
+## Registry installation
+
+Install the Python bridge from this verified public source commit, then install
+the omp package. The older PyPI `0.3.1` release predates the native bridge, so use
+this pinned source until a coordinated Python release contains it:
+
+```sh
+python -m pip install --upgrade "git+https://github.com/alertxsto/luminary-memory.git@9040d9b5154f94c66594ed6096e33aa2fd311bf0"
+export LUMINARY_PYTHON=/absolute/path/to/venv/bin/python
+omp plugin install luminary-memory-omp
+```
+
+The Python source commit is immutable and publicly available independently of
+whether its source PR has merged. No npm install script installs Python for you.
+
 ## Install from this checkout now
 
-These package names are not published to npm as part of this change. Before the
-coordinated Python/npm release, install the Python bridge from the same source
-checkout, using Python 3.11 or newer:
+The Python bridge and npm extension are separate packages. To build and install
+both from a source checkout, use Python 3.11 or newer:
 
 ```sh
 # Run in the luminary-memory repository, with the intended Python environment active.

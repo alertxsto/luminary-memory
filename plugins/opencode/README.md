@@ -4,6 +4,26 @@ The Luminary-maintained memory plugin for OpenCode's documented 1.19.4 server
 plugin API. This is an official package of the Luminary project, **not** an
 OpenCode endorsement. A different OpenCode v2 plugin API is not supported.
 
+## Registry installation
+
+Install the Python bridge from this verified public source commit. The older
+PyPI `0.3.1` release predates the native bridge:
+
+```sh
+python -m pip install --upgrade "git+https://github.com/alertxsto/luminary-memory.git@9040d9b5154f94c66594ed6096e33aa2fd311bf0"
+export LUMINARY_PYTHON=/absolute/path/to/venv/bin/python
+```
+
+Then enable the npm package in `opencode.json`:
+
+```json
+{"plugin": ["luminary-memory-opencode"]}
+```
+
+The pinned Python source is public even before its source PR merges. Use it
+until a coordinated Python release contains the bridge. No npm install script
+installs Python for you; set the interpreter in the OpenCode server environment.
+
 ## Install from this checkout
 
 The Python bridge and npm plugin are separate packages. Until a coordinated
