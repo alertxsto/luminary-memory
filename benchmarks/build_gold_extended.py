@@ -67,6 +67,21 @@ BACKGROUND = [
 EXTRA_CASES = [
     {
         "type": "case",
+        "key": "rule",
+        "query": "What must happen before release?",
+        "scope": SCOPE,
+        # The micro fixture labels only `shared_rule` because nothing else in
+        # that 12-memory store answers this. In this larger store,
+        # `bg_release-review` ("The release checklist requires two reviewers
+        # before a deploy") is also a correct answer to the same question, so
+        # the label must include it. Leaving it out would make a correct
+        # retrieval look like a failure and would push future work toward
+        # "fixing" behaviour that is right.
+        "relevant": ["shared_rule", "bg_release-review"],
+        "no_answer": False,
+    },
+    {
+        "type": "case",
         "key": "release_paraphrase",
         "query": "Where does a deploy go after review?",
         "scope": SCOPE,
@@ -131,10 +146,11 @@ def main() -> None:
         )
         added += 1
 
-    known_cases = {case["key"] for case in cases}
-    for case in EXTRA_CASES:
-        if case["key"] not in known_cases:
-            cases.append(case)
+    # Extra cases replace same-key micro cases (the label is completed here,
+    # not duplicated), and add new keys.
+    overrides = {case["key"]: case for case in EXTRA_CASES}
+    cases = [overrides.pop(case["key"], case) for case in cases]
+    cases.extend(overrides.values())
 
     lines = [json.dumps(META, ensure_ascii=False)]
     lines += [json.dumps(memory, ensure_ascii=False) for memory in memories]

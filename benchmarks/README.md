@@ -80,17 +80,23 @@ Measured with the real default model. This is deliberately **not** a clean
 number — the fixture exposes defects the 12-case set hides:
 
 ```
-recall@10 0.833   precision@10 0.764   abstention 0.33   wrong_hit 0.33
+recall@10 0.875   precision@10 0.847   abstention 0.33   wrong_hit 0.25
 ```
 
 | case | expected | returned | problem |
 |---|---|---|---|
 | `no_answer_other_user` | abstain | `bg_loadtest-env` | shares only the word "cluster" |
 | `no_answer_fingerprint` | abstain | `bg_loadtest-env`, `shared_rule` | same |
-| `latest_only` | current deploy facts | `bg_rollback` | an expired/adjacent row wins |
-| `rule` | `shared_rule` | `bg_release-review` | background memory outranks the rule |
+| `latest_only` | current deploy facts | `bg_rollback` | correct fact ranks 4th by cosine (0.6775) behind three adjacent rows; not a validity or scope bug |
 | `private_wording` | `docs_url` | `docs_url`, `bg_latency-target` | extra unrelated row |
 | `paraphrase_deploy` | deploy facts | deploy facts, `docs_url` | the open graph-expansion defect |
+
+`rule` is **not** in this table. In the larger store, "The release checklist
+requires two reviewers before a deploy" is also a correct answer to "What must
+happen before release?", so the case lists both ids as relevant. The micro
+fixture labels only `shared_rule` because nothing else in its 12-memory store
+answers that question; completing the label here is a correctness fix, not a
+retrieval failure being relabelled as success.
 
 The two `no_answer_*` failures are caused by query expansion: with expansion
 disabled both abstain, but `paraphrase_deploy` then abstains too. See the
