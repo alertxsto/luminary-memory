@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { tool } from "@opencode-ai/plugin";
+import { z } from "zod";
 
 // These are package consumer tests: a missing Python runtime must never turn
 // an attempted remember into a claimed durable write or a thrown host error.
@@ -14,22 +14,47 @@ for (const agent of ["pi", "omp", "opencode"]) {
     const directory = await mkdtemp(join(tmpdir(), "luminary-package-"));
     const previous = process.env.LUMINARY_PYTHON;
     process.env.LUMINARY_PYTHON = join(directory, "python-does-not-exist");
+    let cleanup;
     try {
-      const { default: factory } = await import(
+      const { default: plugin } = await import(
         new URL(`../../plugins/${agent}/dist/index.js`, import.meta.url)
       );
       const abort = new AbortController();
       let result;
       if (agent === "opencode") {
-        const hooks = await factory({ directory, client: {} });
-        const output = await hooks.tool.luminary_remember.execute({ text: "Do not claim this was stored" }, {
-          sessionID: "package-consumer", directory, abort: abort.signal, metadata() {},
+        const tools = new Map();
+        cleanup = await plugin.setup({
+          options: {},
+          location: { directory, project: { id: "package-project", directory, canonical: directory } },
+          session: {
+            async get({ sessionID }) { return { id: sessionID, location: { directory } }; },
+            async hook() { return { async dispose() {} }; },
+          },
+          event: { async *subscribe() {} },
+          tool: {
+            async transform(edit) {
+              edit({ add(definition) { tools.set(definition.name, definition); } });
+              return { async dispose() {} };
+            },
+          },
         });
-        result = JSON.parse(output.output);
+        const output = await tools.get("luminary_remember").execute(
+          { text: "Do not claim this was stored" },
+          {
+            sessionID: "package-consumer", agent: "build", messageID: "package-message", id: "package-call",
+            signal: abort.signal, async progress() {},
+          },
+        );
+        result = output.output;
+        const visible = JSON.parse(output.content);
+        assert.equal(visible.ok, false);
+        assert.equal(visible.stored, 0);
+        assert.deepEqual(visible.memories, []);
+        assert.equal(result.reason, "unavailable");
       } else {
         const tools = new Map();
-        factory({
-          zod: tool.schema,
+        plugin({
+          zod: z,
           on() {}, registerCommand() {}, sendMessage() {},
           registerTool(definition) { tools.set(definition.name, definition); },
         });
@@ -45,6 +70,7 @@ for (const agent of ["pi", "omp", "opencode"]) {
       assert.equal(result.stored, 0);
       assert.deepEqual(result.memories, []);
     } finally {
+      await cleanup?.();
       if (previous === undefined) delete process.env.LUMINARY_PYTHON;
       else process.env.LUMINARY_PYTHON = previous;
       await rm(directory, { recursive: true, force: true });

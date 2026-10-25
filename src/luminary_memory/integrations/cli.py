@@ -100,7 +100,7 @@ def install(
         typer.echo(f"Python bridge: {sys.executable}")
         typer.echo("Restart/reload the agent. Configure LUMINARY_DB_PATH to select a shared store.")
         if agent == "opencode":
-            typer.echo("Targets the documented OpenCode 1.x plugin API; OpenCode installs its SDK dependency at startup.")
+            typer.echo("Targets OpenCode V2 (@opencode/plugin 2.1.4); use the plural plugins config and restart/reload.")
     except (OSError, ValueError) as exc:
         typer.echo(f"Install failed: {exc}", err=True)
         raise typer.Exit(1) from None

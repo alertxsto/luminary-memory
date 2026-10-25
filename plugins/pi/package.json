@@ -1,6 +1,6 @@
 {
   "name": "luminary-memory-pi",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Luminary-maintained scoped memory extension for pi, backed by the Luminary Python bridge",
   "type": "module",
   "main": "./dist/index.js",

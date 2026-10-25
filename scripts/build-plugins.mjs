@@ -5,9 +5,9 @@ import { build } from "esbuild";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const adapters = {
-  pi: { source: "luminary.ts", exported: "default" },
-  opencode: { source: "luminary-memory.ts", exported: "LuminaryMemory" },
-  omp: { source: "luminary.ts", exported: "default" },
+  pi: { source: "luminary.ts" },
+  opencode: { source: "luminary-memory.ts" },
+  omp: { source: "luminary.ts" },
 };
 
 const project = await readFile(join(root, "pyproject.toml"), "utf8");
@@ -44,19 +44,15 @@ for (const [agent, adapter] of Object.entries(adapters)) {
   const source = join(root, "src", "luminary_memory", "integrations", "assets", agent, adapter.source);
   await access(source);
   await access(join(directory, "README.md"));
-  packages.push({ agent, directory, source, exported: adapter.exported });
+  packages.push({ agent, directory, source });
 }
 
-for (const { agent, directory, source, exported } of packages) {
+for (const { agent, directory, source } of packages) {
   const destination = join(directory, "dist");
   await rm(destination, { recursive: true, force: true });
   await mkdir(destination, { recursive: true });
   await build({
-    stdin: {
-      contents: `export { ${exported} as default } from ${JSON.stringify(source)};`,
-      resolveDir: root,
-      sourcefile: `${agent}-package-entry.mjs`,
-    },
+    entryPoints: [source],
     outfile: join(destination, "index.js"),
     bundle: true,
     packages: "external",

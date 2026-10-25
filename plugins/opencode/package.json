@@ -1,7 +1,7 @@
 {
   "name": "luminary-memory-opencode",
-  "version": "0.3.1",
-  "description": "Luminary-maintained scoped memory plugin for OpenCode",
+  "version": "0.3.2",
+  "description": "Luminary-maintained scoped memory plugin for OpenCode V2",
   "type": "module",
   "main": "./dist/index.js",
   "exports": "./dist/index.js",
@@ -19,5 +19,12 @@
   "keywords": ["opencode", "opencode-plugin", "luminary", "memory"],
   "publishConfig": {"access": "public"},
   "scripts": {"prepack": "node ../../scripts/build-plugins.mjs"},
-  "dependencies": {"@opencode-ai/plugin": "1.19.4"}
+  "peerDependencies": {
+    "@opencode/plugin": "2.1.4",
+    "effect": "4.0.1"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {"optional": true},
+    "effect": {"optional": true}
+  }
 }
