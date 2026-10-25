@@ -131,10 +131,9 @@ required for those external release actions.
 
 ### Release notes style
 
-The maintainer requires the presentation used by
-[v0.3.0](https://github.com/alertxsto/luminary-memory/releases/tag/v0.3.0):
-a descriptive version title, a short summary, and readable `##` feature sections
-with normal prose and focused bullets.
+Write structured, human-readable notes for the actual release: a descriptive
+version title, a short summary, and readable `##` feature sections with normal
+prose and focused bullets. These formatting rules are version-independent.
 
 Never leave a published release empty or asset-only. Do not use small/subscript
 HTML, wrap the whole description in a code block, or substitute a raw commit
