@@ -8,14 +8,15 @@ continues to use its public `MemoryProvider` lifecycle.
 | Adapter | Contract | Interaction surface |
 | --- | --- | --- |
 | Hermes | Public `MemoryProvider`, existing installer | Provider tools/status in supported Hermes clients; read-only scoped Telegram activity hook |
-| OpenCode | Documented `@opencode-ai/plugin` 1.19.4 server API | Native tools/results/metadata in clients connected to that server; automatic recall and curated retention |
+| OpenCode V2 | `@opencode/cli` and `@opencode/plugin` 2.1.4, `Plugin.define` server API | Native tools/progress/results in connected clients; automatic recall and curated retention |
 | pi | Extension API verified against `@earendil-works/pi-coding-agent` 1.4.0 | `/luminary`, model tool, TUI dialogs/status, serializable session messages for RPC consumers |
 | omp | Extension API verified against v18.12.6 | `/luminary`, model tool, TUI dialogs/status, serializable session messages for RPC consumers |
 
-OpenCode's newer development/v2 plugin API is different and is **not** claimed
-compatible. pi/omp do not gain a new standalone desktop application from this
-package. A desktop/web wrapper must support its host's extensions and display
-native custom messages/tool results; terminal-only widgets are not portable.
+OpenCode V2 uses the plural `plugins` config, a default `Plugin.define` export,
+and Promise domain APIs. The older Luminary npm `0.3.1` adapter targets V1;
+`0.3.2` is the V2 migration, not a compatibility shim. pi/omp do not gain a new
+standalone desktop app. Desktop/web wrappers must render native extensions,
+custom messages or tool results; terminal widgets are not portable.
 
 ## Native plugin packages
 
@@ -24,12 +25,13 @@ and omp. That means ownership by this project, not endorsement or listing
 approval by the harness maintainers. All three compile the canonical adapter
 source under `src/luminary_memory/integrations/assets/`; no second memory engine
 or separate adapter fork is maintained.
-The initial npm packages are published as `0.3.1`. The older Python/PyPI
-`0.3.1` release predates this bridge, so first install its verified public source
-commit into the Python environment the host will use:
+The initial npm packages were published as `0.3.1`; that OpenCode package is
+V1-only. The `0.3.2` source migrates OpenCode to V2. The older Python/PyPI
+`0.3.1` release predates this bridge, so install the verified public source into
+the Python environment the host will use:
 
 ```bash
-python -m pip install --upgrade "git+https://github.com/alertxsto/luminary-memory.git@9040d9b5154f94c66594ed6096e33aa2fd311bf0"
+python -m pip install --upgrade "git+https://github.com/alertxsto/luminary-memory.git@9e35c5aa291414261835ac81d6bc9d197d42baf5"
 export LUMINARY_PYTHON=/absolute/venv/bin/python
 ```
 
@@ -61,13 +63,17 @@ path. No package install hook silently installs Python dependencies.
 | --- | --- | --- |
 | pi | `pi install /absolute/repo/plugins/pi` | `pi install npm:luminary-memory-pi` |
 | omp | `omp plugin link /absolute/repo/plugins/omp` | `omp plugin install luminary-memory-omp` |
-| OpenCode 1.x | `plugin: ["file:///absolute/extracted/package/dist/index.js"]`, with declared SDK dependency installed | `plugin: ["luminary-memory-opencode"]` in `opencode.json` |
+| OpenCode V2 | `{"plugins":["/absolute/repo/plugins/opencode/dist"]}`; configured local paths must be directories | `opencode plugin add luminary-memory-opencode@0.3.2`, or `{"plugins":["luminary-memory-opencode@0.3.2"]}` |
 
 Local pi/omp packages load in place, so keep the installed directory. An
 extracted tarball works independently of this repository. See the host READMEs
 for exact local installation/removal details:
 [pi](../plugins/pi/README.md), [OpenCode](../plugins/opencode/README.md),
 [omp](../plugins/omp/README.md).
+
+For extracted OpenCode artifacts use `/absolute/extracted/package/dist`. V2
+skips configured single files; npm package exports resolve the compiled entry
+normally. The SDK and Effect stay external and are supplied by the host.
 
 **Do not load both installation forms.** Before switching to a native package,
 remove only Luminary's old copied adapter and any explicit reference to it.
@@ -83,20 +89,16 @@ and memory ownership remain unchanged.
   Check the [filtered catalog](https://pi.dev/packages?name=luminary), not a
   guessed package-detail route. It returned no results when checked after the
   initial publication, so a live pi catalog listing is not yet claimed.
-- **OpenCode:** the [official Ecosystem list](https://opencode.ai/docs/ecosystem/)
-  accepts a PR to `anomalyco/opencode`, branch `dev`, file
-  `packages/web/src/content/docs/ecosystem.mdx`. The proposed table addition is
-  [plugins/opencode/ecosystem.patch](../plugins/opencode/ecosystem.patch).
-  Publish the package/source documentation first, apply/check the patch against
-  the latest upstream file, then submit `docs(ecosystem): add Luminary memory`.
-  Maintainer acceptance controls whether it appears on the site; an npm package
-  name or `opencode-plugin` keyword does not automatically add it to that table.
-- **Verified latest stable (2026-10-25):** GitHub's
-  [OpenCode 1.19.4 release](https://github.com/anomalyco/opencode/releases/tag/v1.19.4)
-  and npm's `latest` channels for the CLI and plugin SDK all resolve to
-  **1.19.4**. The pinned SDK already matches this release. The `beta`, `dev`,
-  `next`, and snapshot channels are separate, unverified targets; "1.x" does
-  not mean an older stable release. Use the tested singular `plugin` config.
+- **OpenCode V2:** the current plugin contract is the
+  [V2 documentation](https://opencode.ai/v2/docs/plugins/), verified against
+  `@opencode/cli` and `@opencode/plugin` **2.1.4**. V2 is a different namespace
+  from V1's `opencode-ai`/`@opencode-ai/plugin`; querying the old npm names'
+  `latest` tags is not evidence about V2. Use plural `plugins`.
+- **OpenCode website:** existing Ecosystem PR #58823 targets the legacy file
+  `packages/web/src/content/docs/ecosystem.mdx`, not a verified V2 listing.
+  It remains draft. The V1 patch was removed rather than advertising V2 in the
+  wrong directory. A supported V2 submission destination still needs upstream
+  clarification; npm publication alone does not create a website listing.
 
 Building packages does not itself publish to npm or submit/merge an upstream
 PR. The release workflow builds validated tarballs, gates Python publication on
@@ -113,19 +115,25 @@ validated local artifacts:
 [pi](https://www.npmjs.com/package/luminary-memory-pi),
 [OpenCode](https://www.npmjs.com/package/luminary-memory-opencode), and
 [omp](https://www.npmjs.com/package/luminary-memory-omp).
-Registry installation succeeded through the pi and omp CLIs. The real latest
-stable OpenCode 1.19.4 server loaded the npm package and exposed all four
-Luminary tools. Native session/message requests verified remember, duplicate
-suppression, recall, read-only activity, forget, empty recall after deletion,
-and automatic evidence injection into the model's system context. Python and
-SQLite operations were real; model responses came from a deterministic
-localhost fixture. This does not claim model-quality or client-UI coverage.
+Registry installation succeeded through the pi and omp CLIs. The initial
+OpenCode package was exercised against V1 1.19.4; that historical verification
+does not establish V2 compatibility.
 
-The [plugin source PR #17](https://github.com/alertxsto/luminary-memory/pull/17)
-still requires review approval and merge.
-The [official OpenCode Ecosystem PR #58823](https://github.com/anomalyco/opencode/pull/58823)
-remains draft until that source prerequisite is met. npm publication is not
-upstream review approval, deployment, or proof of a live catalog listing.
+The `0.3.2` V2 adapter was separately exercised in the real **2.1.4** server.
+Native requests verified remember, same-session duplicate suppression, scoped
+recall/activity, cross-workspace isolation, forget, empty recall after retraction,
+and evidence injection into the model's system context. Native completion also
+stored a user-grounded curated fact, rejected an assistant-only claim with
+`no_grounded_fact`, and stopped exposing tools after plugin removal. Python and
+SQLite were real; model/curation responses came from deterministic localhost
+fixtures. This does not claim model-quality or client-UI coverage. Publication
+of the new npm version must be verified separately from this local/runtime proof.
+
+The [source PR #17](https://github.com/alertxsto/luminary-memory/pull/17) still
+requires approval and has not been merged as part of this migration. The
+[Ecosystem PR #58823](https://github.com/anomalyco/opencode/pull/58823) remains
+draft: its legacy V1 destination is not a V2 catalog, regardless of source
+review or npm status.
 
 
 ## File-copy hook installer
@@ -155,8 +163,8 @@ The installer embeds its exact Python executable (including Windows paths).
 `LUMINARY_PYTHON` overrides it at runtime. Reinstall after moving/deleting the
 Python environment. Existing hook modifications/dependency conflicts fail
 visibly; inspect them before opting into `--force`. Other config keys and
-unrelated npm dependencies are preserved. OpenCode installs the pinned SDK
-dependency from its native config directory on startup. Restart/reload the host.
+unrelated npm dependencies are preserved. The OpenCode adapter targets SDK
+2.1.4 and the host provides its runtime. Restart/reload the host.
 
 Hermes setup remains documented in [Hermes integration](hermes-integration.md);
 its Telegram hook is [installed separately](../hermes/hooks/luminary-activity/README.md).
@@ -277,8 +285,8 @@ bindings, delivery guarantees and limitations are in the
 
 ## Primary contracts
 
-- [OpenCode plugins](https://opencode.ai/docs/plugins/),
-  [published plugin types](https://unpkg.com/@opencode-ai/plugin@1.19.4/dist/index.d.ts)
+- [OpenCode V2 plugins](https://opencode.ai/v2/docs/plugins/),
+  [published SDK 2.1.4](https://www.npmjs.com/package/@opencode/plugin/v/2.1.4)
 - [pi extensions](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md)
 - [omp v18.12.6 extension types](https://github.com/can1357/oh-my-pi/blob/v18.12.6/packages/coding-agent/src/extensibility/extensions/types.ts)
 - [Hermes gateway hook context](https://github.com/NousResearch/hermes-agent/blob/main/gateway/hooks.py)

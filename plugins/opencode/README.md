@@ -1,93 +1,37 @@
-# Luminary Memory for OpenCode
+# Luminary Memory for OpenCode V2
 
-The Luminary-maintained memory plugin for OpenCode's server plugin API.
-This is an official package of the Luminary project, **not** an OpenCode
-endorsement.
+The Luminary-maintained server plugin for **`@opencode/cli` 2.1.4** and
+**`@opencode/plugin` 2.1.4**. This is an official Luminary package, **not** an
+OpenCode endorsement. Luminary `0.3.2` targets V2; the older npm `0.3.1`
+package targets the separate V1 API and must not be used for this setup.
 
-## Verified latest-stable compatibility
+## Install
 
-Checked on 2026-10-25: GitHub's
-[latest stable OpenCode release](https://github.com/anomalyco/opencode/releases/tag/v1.19.4)
-and npm's `latest` tags for `opencode-ai` and `@opencode-ai/plugin` all resolve
-to **1.19.4**. The plugin's pinned SDK is already that version; describing the
-API as "1.x" does not mean that it targets an older stable OpenCode release.
-
-The published `luminary-memory-opencode@0.3.1` was exercised in a real 1.19.4
-server with native session/message requests, the Python bridge and SQLite.
-Verified: explicit remember, duplicate suppression, scoped recall, read-only
-activity, forget, empty recall after retraction, accurate tool metadata, and
-automatic recall evidence reaching the model's system context.
-
-Model responses were supplied by a deterministic localhost fixture; memory
-operations were real. This is API/storage compatibility evidence, not a model
-quality benchmark or a desktop/web client visual test. The separate npm
-`beta`, `dev`, `next`, and snapshot channels are not covered by this claim.
-
-## Registry installation
-
-Install the Python bridge from this verified public source commit. The older
-PyPI `0.3.1` release predates the native bridge:
+Install the Python bridge from this verified, immutable public source commit.
+The older PyPI `0.3.1` release predates the native bridge:
 
 ```sh
-python -m pip install --upgrade "git+https://github.com/alertxsto/luminary-memory.git@9040d9b5154f94c66594ed6096e33aa2fd311bf0"
+python -m pip install --upgrade "git+https://github.com/alertxsto/luminary-memory.git@9e35c5aa291414261835ac81d6bc9d197d42baf5"
 export LUMINARY_PYTHON=/absolute/path/to/venv/bin/python
 ```
 
-Then enable the npm package in `opencode.json`:
-
-```json
-{"plugin": ["luminary-memory-opencode"]}
-```
-
-The pinned Python source is public even before its source PR merges. Use it
-until a coordinated Python release contains the bridge. No npm install script
-installs Python for you; set the interpreter in the OpenCode server environment.
-
-## Install from this checkout
-
-The Python bridge and npm plugin are separate packages. Until a coordinated
-release containing the bridge is published, install the Python source:
+Install the V2 npm package through OpenCode:
 
 ```sh
-python -m pip install -e .
-npm ci --ignore-scripts
-npm run build:plugins
-npm run pack:plugins
+opencode plugin add luminary-memory-opencode@0.3.2
 ```
 
-Extract `artifacts/plugins/luminary-memory-opencode-<version>.tgz` to a stable
-local directory, preserving its `package/` directory. Add that directory's
-compiled entry as a file plugin in `opencode.json`; keep your other config:
+Alternatively, add it to your existing `opencode.json` or `opencode.jsonc`:
 
 ```json
-{
-  "plugin": ["file:///absolute/extracted/package/dist/index.js"]
-}
+{"plugins": ["luminary-memory-opencode@0.3.2"]}
 ```
 
-The packed plugin requires `@opencode-ai/plugin` 1.19.4. Install its declared npm
-dependency in that extracted package (`npm install --omit=dev --ignore-scripts`),
-or install the tarball into a local npm project and point the file entry at
-`node_modules/luminary-memory-opencode/dist/index.js`. This needs no repo source
-files at runtime.
-
-After **this package is published to npm**, the normal configuration is:
-
-```json
-{
-  "plugin": ["luminary-memory-opencode"]
-}
-```
-
-OpenCode installs the npm package and its SDK dependency at startup. Pin a
-published version with `luminary-memory-opencode@<version>` when desired. A
-source checkout/tarball existing does not mean the npm name is already live.
-
-Set the interpreter used by the **OpenCode server**, then restart it:
-
-```sh
-export LUMINARY_PYTHON=/absolute/venv/bin/python
-```
+V2 uses **`plugins`**, not V1's singular `plugin`. The host provides the SDK and
+Effect runtime; the bundle keeps them external. No npm install hook installs
+Python, downloads memory models, or changes your Python environment. Set
+`LUMINARY_PYTHON` in the **OpenCode server's environment**, including when a
+terminal, desktop, or web client connects to a separate server.
 
 PowerShell:
 
@@ -95,53 +39,80 @@ PowerShell:
 $env:LUMINARY_PYTHON = 'C:\venv\Scripts\python.exe'
 ```
 
-Otherwise the plugin runs `python` from PATH. No install script silently installs
-Python packages or downloads a memory model. A missing bridge produces an
-explicit error rather than a successful storage claim.
+Otherwise the bridge runs `python` from PATH. A missing interpreter or bridge
+produces an explicit error, not a successful storage claim. The public Python
+source can be installed before source PR #17 merges.
 
-## Use
+## Build or install a local artifact
 
-Ask the agent to use `luminary_recall`, `luminary_remember`, `luminary_forget`, or
-`luminary_activity`. Results report actual `stored`/`duplicate`/`skipped`/`error`
-outcomes and native metadata. Hooks automatically recall scoped historical data;
-automatic curation requires explicit `LUMINARY_INGEST_LLM` and `LUMINARY_LLM_*`
-configuration. Without it, no raw transcript is automatically saved.
+```sh
+python -m pip install -e .
+npm ci --ignore-scripts
+npm run pack:plugins
+```
 
-The store defaults to `~/.luminary/memory.db`; `LUMINARY_DB_PATH` overrides it.
-Ownership is user + normalized workspace + harness; current session IDs are write
-lineage, not permission to read other users/workspaces. `forget` retracts only the
-selected ID and retains audit history. Recalled content is untrusted reference
-data, not instructions.
+Keep the built directory or extract
+`artifacts/plugins/luminary-memory-opencode-0.3.2.tgz`. Configure the **`dist`
+directory**, which contains `index.js`, not the package root or a single file:
 
-Plugins execute on the server. Compatible terminal/desktop/web clients consume
-native tools/results; this package does not add a standalone desktop app or a
-universal client toolbar. Remove the old copied `luminary-memory.ts` adapter from
-`.opencode/plugins/` or the global plugin directory before enabling this package:
-two installation forms can otherwise run both hook sets.
+```json
+{"plugins": ["/absolute/repo/plugins/opencode/dist"]}
+```
 
-To remove it, remove its entry from `opencode.json` and restart OpenCode. Upgrade
-by selecting a published version in that config. Existing memory is not deleted.
+For an extracted tarball, use `/absolute/extracted/package/dist`. V2 skips
+configured single-file paths. Published npm packages instead resolve their
+`./dist/index.js` export normally. Neither form needs this repository's source
+files at runtime.
 
-[Full configuration and ownership guide](https://github.com/alertxsto/luminary-memory/blob/main/docs/agent-integrations.md)
-· [OpenCode plugin contract](https://opencode.ai/docs/plugins/)
+## Tools and hooks
 
-## Official Ecosystem listing
+The model can use `luminary_recall`, `luminary_remember`, `luminary_forget`, and
+`luminary_activity`. Native results/progress report the bridge's actual
+`stored`, `duplicate`, `skipped`, `error`, and deletion outcomes.
 
-OpenCode's [official Ecosystem list](https://opencode.ai/docs/ecosystem/) is
-maintained in `anomalyco/opencode`, branch `dev`,
-`packages/web/src/content/docs/ecosystem.mdx`. Upstream explicitly requests a PR
-for additions; npm keywords do not automatically create that listing.
+The V2 context hook recalls historical data for the admitted native user
+message. Successful native execution triggers optional, user-grounded curation;
+failed/interrupted execution does not promote a transcript. Automatic writes
+require explicit `LUMINARY_INGEST_LLM` and `LUMINARY_LLM_*` configuration.
+Without it, no raw transcript is automatically saved.
 
-After publishing the installable package and public documentation, apply
-`plugins/opencode/ecosystem.patch` from this repository to an upstream checkout
-and submit `docs(ecosystem): add Luminary memory`. The patch adds one accurate
-1.x plugin entry and does not claim v2 compatibility. A prepared patch does not
-itself submit or obtain acceptance of an upstream PR. Track the actual PR URL
-and verify the site after maintainers merge/deploy it; a patch or open PR is not
-a live website listing.
+Workspace ownership comes from the current native session, never a shared
+plugin startup directory. The store defaults to `~/.luminary/memory.db`;
+`LUMINARY_DB_PATH` overrides it. Reads/writes enforce user + normalized workspace
++ harness. Session IDs track write lineage, not permission to read another
+workspace. Forget retracts the selected ID and keeps audit history. Recalled
+content is untrusted reference data, not instructions.
 
-Initial submission (2026-10-25):
-[OpenCode Ecosystem PR #58823](https://github.com/anomalyco/opencode/pull/58823)
-is submitted, with [source PR #17](https://github.com/alertxsto/luminary-memory/pull/17)
-as its source-distribution dependency. Both were open, not merged, at submission
-verification; follow those links for current status.
+Compatible clients consume the server's native tools/results. This package does
+not add a universal client toolbar or a standalone desktop app. Before enabling
+it, remove only the old copied Luminary adapter and its explicit config entry;
+do not run both installation forms. To remove the package, use
+`opencode plugin remove luminary-memory-opencode@0.3.2` or remove its config
+entry. Reload/restart the server as needed. Stored memory is not deleted.
+
+## Compatibility evidence
+
+Real OpenCode V2 2.1.4 native sessions, the Python bridge, and SQLite verified:
+remember, same-session duplicate suppression, scoped recall/activity, cross-
+workspace isolation, ID-scoped forget, and empty recall after retraction.
+Automatic recall evidence reached the model's system context. Native completion
+also stored a user-grounded curated fact and rejected an assistant-only claim
+with `no_grounded_fact`. Removing the plugin stopped its tools from appearing.
+
+Model and curation responses came from deterministic localhost fixtures; memory
+operations were real. This proves API/storage compatibility, not model quality,
+visual desktop/web behavior, or compatibility with every future V2 release.
+
+## Website listing is separate
+
+The existing [Ecosystem PR #58823](https://github.com/anomalyco/opencode/pull/58823)
+targets OpenCode's **legacy V1 documentation**, not a verified V2 catalog. It
+remains draft; npm publication does not establish V2 website visibility. The
+obsolete V1 listing patch is no longer shipped. A V2 submission needs the
+maintainers' supported destination, acceptance, and deployment.
+
+[Source PR #17](https://github.com/alertxsto/luminary-memory/pull/17) still requires
+review approval; this migration does not merge or bypass protected `main`.
+
+[Configuration and ownership](https://github.com/alertxsto/luminary-memory/blob/feat/luminary-native-packages-20261025/docs/agent-integrations.md)
+· [OpenCode V2 plugin contract](https://opencode.ai/v2/docs/plugins/)

@@ -1,5 +1,39 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Harness-neutral UTF-8 JSON memory bridge with exact user/workspace/agent
+  ownership, strict recall, synchronous explicit writes, ID-scoped retraction,
+  current activity snapshots, and opt-in user-evidenced automatic curation.
+- Packaged native OpenCode V2 2.1.4, pi and omp adapters, installed with
+  `luminary-memory hook install`. Native tools plus pi/omp `/luminary` commands
+  support terminal interaction and serializable results for compatible clients.
+  Existing config and unrelated dependencies are preserved.
+- Supported-harness capability/setup guide, generic subprocess contract and
+  explicit desktop/web/Telegram interaction limits.
+- Luminary-maintained native npm package sources for pi, OpenCode and omp, built
+  from the canonical adapters with a locked Node/esbuild workspace. Installable
+  tarballs contain compiled ESM and native discovery metadata without bundling
+  host frameworks or embedding a maintainer's Python path.
+- Plugin build/consumer checks, version-synchronized release artifacts and
+  explicitly opt-in npm trusted publishing after the Python release gates.
+- Published initial `0.3.1` npm packages for pi, OpenCode and omp with verified
+  registry checksums and native installation/loading. Python bridge setup uses
+  a pinned public source commit until the next coordinated Python release.
+- Submitted OpenCode Ecosystem PR #58823 and pi's release-gated `pi-package`
+  discovery metadata. Catalog indexing and upstream approval remain separate
+  from successful npm publication.
+- Migrated the OpenCode `0.3.2` adapter to the actual V2 CLI/SDK namespace,
+  `@opencode/cli` and `@opencode/plugin` 2.1.4: default `Plugin.define`,
+  Promise domain APIs, plural `plugins`, native tools/progress/context hooks,
+  and successful-execution retention with per-session workspace ownership.
+  Real V2 sessions and SQLite verified memory operations, cross-workspace
+  isolation, automatic recall, user-grounded curation, rejection of
+  assistant-only claims, and removal cleanup. The old V1-only listing patch
+  was removed; the legacy Ecosystem PR is not a verified V2 listing.
+
 ## [0.3.1] - 2026-10-25
 
 Measurement and recall-calibration release. No public API breaks; the default

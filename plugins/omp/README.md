@@ -14,7 +14,7 @@ the omp package. The older PyPI `0.3.1` release predates the native bridge, so u
 this pinned source until a coordinated Python release contains it:
 
 ```sh
-python -m pip install --upgrade "git+https://github.com/alertxsto/luminary-memory.git@9040d9b5154f94c66594ed6096e33aa2fd311bf0"
+python -m pip install --upgrade "git+https://github.com/alertxsto/luminary-memory.git@9e35c5aa291414261835ac81d6bc9d197d42baf5"
 export LUMINARY_PYTHON=/absolute/path/to/venv/bin/python
 omp plugin install luminary-memory-omp
 ```

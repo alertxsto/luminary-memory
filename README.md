@@ -65,6 +65,56 @@ luminary-memory stats
 
 ---
 
+## Native hooks for supported harnesses
+
+The harness-neutral JSON bridge supports native adapters without coupling the
+memory engine to one runner. Shipped adapters cover OpenCode V2's
+`@opencode/plugin` 2.1.4 API, pi, and omp; Hermes keeps its provider integration.
+
+```bash
+luminary-memory hook install opencode  # or pi / omp; project-local by default
+```
+
+Automatic scoped recall, opt-in user-grounded curation, explicit memory tools,
+and accurate stored/duplicate/skipped/error results. pi/omp also expose
+`/luminary` commands and native UI dialogs. Server tool results/custom messages
+are available to compatible desktop/web clients; no universal frontend plugin
+API or standalone desktop app is assumed.
+
+### Luminary-maintained plugin packages
+
+Native package sources live in [`plugins/pi`](plugins/pi),
+[`plugins/opencode`](plugins/opencode), and [`plugins/omp`](plugins/omp).
+They compile the same canonical adapters used by the Python copy installer:
+
+```bash
+python -m pip install -e .
+npm ci --ignore-scripts
+npm run pack:plugins
+```
+
+The three installable tarballs are written to `artifacts/plugins/`. Set
+`LUMINARY_PYTHON` to the interpreter containing the bridge. pi supports
+`pi install /absolute/path/to/plugins/pi`; omp supports
+`omp plugin link /absolute/path/to/plugins/omp` after building. OpenCode V2 uses
+`{"plugins":["/absolute/repo/plugins/opencode/dist"]}`: a directory, not a file.
+Choose the native package **or** the copied hook, never both.
+
+Registry names are `luminary-memory-pi`, `luminary-memory-opencode`, and
+`luminary-memory-omp`. They are not claimed published by this source change.
+The pi manifest includes `pi-package` for eligibility in the
+[official package catalog](https://pi.dev/packages). OpenCode's existing
+Ecosystem PR targets legacy V1 docs, not a verified V2 listing; no V2 website
+visibility is claimed from npm publication alone.
+See [distribution, discovery and live-publication status](docs/agent-integrations.md#native-plugin-packages).
+
+See [supported contracts, setup, interaction and generic hook protocol](docs/agent-integrations.md).
+The [Telegram hook](hermes/hooks/luminary-activity/README.md) now uses exact
+ownership/destination cursors, expiry filters and evidence-bearing snapshots
+instead of attributing global new IDs to the current turn.
+
+---
+
 ## Hermes Agent, first-class memory provider
 
 Luminary integrates through Hermes' public `MemoryProvider` entry point. The
