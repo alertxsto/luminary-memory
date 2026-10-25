@@ -7,11 +7,10 @@ package targets the separate V1 API and must not be used for this setup.
 
 ## Install
 
-Install the Python bridge from this verified, immutable public source commit.
-The older PyPI `0.3.1` release predates the native bridge:
+Install the published Python bridge from PyPI:
 
 ```sh
-python -m pip install --upgrade "git+https://github.com/alertxsto/luminary-memory.git@9e35c5aa291414261835ac81d6bc9d197d42baf5"
+python -m pip install --upgrade "luminary-memory==0.3.2"
 export LUMINARY_PYTHON=/absolute/path/to/venv/bin/python
 ```
 
@@ -40,8 +39,7 @@ $env:LUMINARY_PYTHON = 'C:\venv\Scripts\python.exe'
 ```
 
 Otherwise the bridge runs `python` from PATH. A missing interpreter or bridge
-produces an explicit error, not a successful storage claim. The public Python
-source can be installed before source PR #17 merges.
+produces an explicit error, not a successful storage claim.
 
 ## Build or install a local artifact
 
@@ -105,14 +103,14 @@ visual desktop/web behavior, or compatibility with every future V2 release.
 
 ## Website listing is separate
 
-The existing [Ecosystem PR #58823](https://github.com/anomalyco/opencode/pull/58823)
-targets OpenCode's **legacy V1 documentation**, not a verified V2 catalog. It
-remains draft; npm publication does not establish V2 website visibility. The
-obsolete V1 listing patch is no longer shipped. A V2 submission needs the
-maintainers' supported destination, acceptance, and deployment.
+The [Ecosystem PR #58823](https://github.com/anomalyco/opencode/pull/58823)
+targets OpenCode's **V1 documentation** and pins npm `0.3.1`, the V1 adapter.
+Its latest bot review reports no further concerns and it is ready for maintainer
+review. This is not a verified V2 catalog or a live website listing.
+The obsolete local listing patch is no longer shipped.
 
-[Source PR #17](https://github.com/alertxsto/luminary-memory/pull/17) still requires
-review approval; this migration does not merge or bypass protected `main`.
+[Source PR #17](https://github.com/alertxsto/luminary-memory/pull/17) has merged.
+Python and all three native npm packages are published at `0.3.2`.
 
-[Configuration and ownership](https://github.com/alertxsto/luminary-memory/blob/feat/luminary-native-packages-20261025/docs/agent-integrations.md)
+[Configuration and ownership](https://github.com/alertxsto/luminary-memory/blob/main/docs/agent-integrations.md)
 · [OpenCode V2 plugin contract](https://opencode.ai/v2/docs/plugins/)

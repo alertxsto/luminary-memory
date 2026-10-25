@@ -9,18 +9,16 @@ versions accepted by the root manifest).
 
 ## Registry installation
 
-Install the Python bridge from this verified public source commit, then install
-the pi package. The older PyPI `0.3.1` release predates the native bridge, so use
-this pinned source until a coordinated Python release contains it:
+Install the published Python bridge from PyPI, then install the pi package:
 
 ```sh
-python -m pip install --upgrade "git+https://github.com/alertxsto/luminary-memory.git@9e35c5aa291414261835ac81d6bc9d197d42baf5"
+python -m pip install --upgrade "luminary-memory==0.3.2"
 export LUMINARY_PYTHON=/absolute/path/to/venv/bin/python
-pi install npm:luminary-memory-pi
+pi install npm:luminary-memory-pi@0.3.2
 ```
 
-The Python source commit is immutable and publicly available independently of
-whether its source PR has merged. No npm install script installs Python for you.
+No npm install script installs Python for you. Set `LUMINARY_PYTHON` to the
+environment containing the bridge.
 
 ## Install from this checkout now
 

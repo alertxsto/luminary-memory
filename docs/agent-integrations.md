@@ -25,13 +25,13 @@ and omp. That means ownership by this project, not endorsement or listing
 approval by the harness maintainers. All three compile the canonical adapter
 source under `src/luminary_memory/integrations/assets/`; no second memory engine
 or separate adapter fork is maintained.
-The initial npm packages were published as `0.3.1`; that OpenCode package is
-V1-only. The `0.3.2` source migrates OpenCode to V2. The older Python/PyPI
-`0.3.1` release predates this bridge, so install the verified public source into
-the Python environment the host will use:
+Python and all three native npm packages are published at `0.3.2`, with npm
+`latest` pointing to that version. The OpenCode adapter targets V2; the older
+npm `0.3.1` adapter is V1-only. Install the Python bridge into the environment
+the host will use:
 
 ```bash
-python -m pip install --upgrade "git+https://github.com/alertxsto/luminary-memory.git@9e35c5aa291414261835ac81d6bc9d197d42baf5"
+python -m pip install --upgrade "luminary-memory==0.3.2"
 export LUMINARY_PYTHON=/absolute/venv/bin/python
 ```
 
@@ -94,11 +94,11 @@ and memory ownership remain unchanged.
   `@opencode/cli` and `@opencode/plugin` **2.1.4**. V2 is a different namespace
   from V1's `opencode-ai`/`@opencode-ai/plugin`; querying the old npm names'
   `latest` tags is not evidence about V2. Use plural `plugins`.
-- **OpenCode website:** existing Ecosystem PR #58823 targets the legacy file
-  `packages/web/src/content/docs/ecosystem.mdx`, not a verified V2 listing.
-  It remains draft. The V1 patch was removed rather than advertising V2 in the
-  wrong directory. A supported V2 submission destination still needs upstream
-  clarification; npm publication alone does not create a website listing.
+- **OpenCode website:** Ecosystem PR #58823 targets the V1 documentation file
+  `packages/web/src/content/docs/ecosystem.mdx` and explicitly pins npm `0.3.1`.
+  The bot confirmed no further concerns and the PR is ready for maintainer
+  review. V2 npm publication does not establish V2 website visibility; no
+  upstream merge or deployment is claimed.
 
 Building packages does not itself publish to npm or submit/merge an upstream
 PR. The release workflow builds validated tarballs, gates Python publication on
@@ -110,14 +110,16 @@ The first publication requires maintainer npm authorization. Use
 the next coordinated release; do not overwrite an already-published Python tag.
 See [contributor release instructions](../CONTRIBUTING.md).
 
-Publication verified on 2026-10-25: all three npm `0.3.1` tarballs match the
-validated local artifacts:
+Publication verified on 2026-10-25: Python and all three npm packages are
+available at `0.3.2`:
 [pi](https://www.npmjs.com/package/luminary-memory-pi),
 [OpenCode](https://www.npmjs.com/package/luminary-memory-opencode), and
 [omp](https://www.npmjs.com/package/luminary-memory-omp).
-Registry installation succeeded through the pi and omp CLIs. The initial
-OpenCode package was exercised against V1 1.19.4; that historical verification
-does not establish V2 compatibility.
+All npm `latest` tags and SHA-512 checksums match the validated release assets.
+Installing all three from npm succeeded. The real V2 CLI also installed the
+OpenCode package and an actual native session stored a fact through the
+published PyPI wheel. That wheel's CLI installer and remember/recall/forget
+operations passed; wheel and sdist SHA-256 checksums match PyPI.
 
 The `0.3.2` V2 adapter was separately exercised in the real **2.1.4** server.
 Native requests verified remember, same-session duplicate suppression, scoped
@@ -126,24 +128,22 @@ and evidence injection into the model's system context. Native completion also
 stored a user-grounded curated fact, rejected an assistant-only claim with
 `no_grounded_fact`, and stopped exposing tools after plugin removal. Python and
 SQLite were real; model/curation responses came from deterministic localhost
-fixtures. This does not claim model-quality or client-UI coverage. Publication
-of the new npm version must be verified separately from this local/runtime proof.
+fixtures. This does not claim model-quality or client-UI coverage.
 
-The [source PR #17](https://github.com/alertxsto/luminary-memory/pull/17) still
-requires approval and has not been merged as part of this migration. The
-[Ecosystem PR #58823](https://github.com/anomalyco/opencode/pull/58823) remains
-draft: its legacy V1 destination is not a V2 catalog, regardless of source
-review or npm status.
+The [source PR #17](https://github.com/alertxsto/luminary-memory/pull/17) has
+merged into `main`. The
+[Ecosystem PR #58823](https://github.com/anomalyco/opencode/pull/58823) is ready
+for maintainer review with its V1 adapter pinned; it is not a V2 catalog or
+proof of a live website listing.
 
 
 ## File-copy hook installer
 
-This remains an alternative to native package installation. Until a bridge
-release is published, install the Python source with `python -m pip install -e .`
-from this checkout, then copy only the adapter for the host you use:
+This remains an alternative to native package installation. Install the
+published Python bridge, then copy only the adapter for the host you use:
 
 ```bash
-python -m pip install -e .
+python -m pip install --upgrade "luminary-memory==0.3.2"
 luminary-memory hook install opencode
 luminary-memory hook install pi
 luminary-memory hook install omp
