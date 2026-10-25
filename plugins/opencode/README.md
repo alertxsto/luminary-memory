@@ -1,8 +1,27 @@
 # Luminary Memory for OpenCode
 
-The Luminary-maintained memory plugin for OpenCode's documented 1.19.4 server
-plugin API. This is an official package of the Luminary project, **not** an
-OpenCode endorsement. A different OpenCode v2 plugin API is not supported.
+The Luminary-maintained memory plugin for OpenCode's server plugin API.
+This is an official package of the Luminary project, **not** an OpenCode
+endorsement.
+
+## Verified latest-stable compatibility
+
+Checked on 2026-10-25: GitHub's
+[latest stable OpenCode release](https://github.com/anomalyco/opencode/releases/tag/v1.19.4)
+and npm's `latest` tags for `opencode-ai` and `@opencode-ai/plugin` all resolve
+to **1.19.4**. The plugin's pinned SDK is already that version; describing the
+API as "1.x" does not mean that it targets an older stable OpenCode release.
+
+The published `luminary-memory-opencode@0.3.1` was exercised in a real 1.19.4
+server with native session/message requests, the Python bridge and SQLite.
+Verified: explicit remember, duplicate suppression, scoped recall, read-only
+activity, forget, empty recall after retraction, accurate tool metadata, and
+automatic recall evidence reaching the model's system context.
+
+Model responses were supplied by a deterministic localhost fixture; memory
+operations were real. This is API/storage compatibility evidence, not a model
+quality benchmark or a desktop/web client visual test. The separate npm
+`beta`, `dev`, `next`, and snapshot channels are not covered by this claim.
 
 ## Registry installation
 

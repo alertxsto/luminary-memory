@@ -91,8 +91,12 @@ and memory ownership remain unchanged.
   the latest upstream file, then submit `docs(ecosystem): add Luminary memory`.
   Maintainer acceptance controls whether it appears on the site; an npm package
   name or `opencode-plugin` keyword does not automatically add it to that table.
-- The OpenCode package targets the documented **1.x** plugin API. Do not
-  advertise it as a v2 package or use v2's different `plugins` schema.
+- **Verified latest stable (2026-10-25):** GitHub's
+  [OpenCode 1.19.4 release](https://github.com/anomalyco/opencode/releases/tag/v1.19.4)
+  and npm's `latest` channels for the CLI and plugin SDK all resolve to
+  **1.19.4**. The pinned SDK already matches this release. The `beta`, `dev`,
+  `next`, and snapshot channels are separate, unverified targets; "1.x" does
+  not mean an older stable release. Use the tested singular `plugin` config.
 
 Building packages does not itself publish to npm or submit/merge an upstream
 PR. The release workflow builds validated tarballs, gates Python publication on
@@ -109,8 +113,13 @@ validated local artifacts:
 [pi](https://www.npmjs.com/package/luminary-memory-pi),
 [OpenCode](https://www.npmjs.com/package/luminary-memory-opencode), and
 [omp](https://www.npmjs.com/package/luminary-memory-omp).
-Registry installation succeeded through the pi and omp CLIs; the real OpenCode
-1.19.4 server loaded the npm package and exposed all four Luminary tools.
+Registry installation succeeded through the pi and omp CLIs. The real latest
+stable OpenCode 1.19.4 server loaded the npm package and exposed all four
+Luminary tools. Native session/message requests verified remember, duplicate
+suppression, recall, read-only activity, forget, empty recall after deletion,
+and automatic evidence injection into the model's system context. Python and
+SQLite operations were real; model responses came from a deterministic
+localhost fixture. This does not claim model-quality or client-UI coverage.
 
 The [plugin source PR #17](https://github.com/alertxsto/luminary-memory/pull/17)
 still requires review approval and merge.
