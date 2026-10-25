@@ -129,6 +129,21 @@ same gates and builds, but does not create GitHub release assets or publish to
 npm, even if dispatched from a tag. A tag push, not a manual dispatch, is
 required for those external release actions.
 
+### Release notes style
+
+The maintainer requires the presentation used by
+[v0.3.0](https://github.com/alertxsto/luminary-memory/releases/tag/v0.3.0):
+a descriptive version title, a short summary, and readable `##` feature sections
+with normal prose and focused bullets.
+
+Never leave a published release empty or asset-only. Do not use small/subscript
+HTML, wrap the whole description in a code block, or substitute a raw commit
+dump for release notes. Reserve code blocks for short installation commands.
+State only shipped behavior and verified registry availability.
+
+The workflow attaching assets does not finish the release. Fill in the release
+notes and inspect the actual GitHub rendering before reporting completion.
+
 ### Optional npm trusted publishing
 
 npm publication is **disabled unless** the repository Actions variable
