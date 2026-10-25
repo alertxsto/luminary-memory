@@ -1,6 +1,6 @@
 {
   "name": "luminary-memory-omp",
-  "version": "0.4.0",
+  "version": "0.3.2",
   "description": "Luminary-maintained scoped memory extension for oh-my-pi, backed by the Luminary Python bridge",
   "type": "module",
   "main": "./dist/index.js",

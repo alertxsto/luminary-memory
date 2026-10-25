@@ -1,6 +1,6 @@
 {
   "name": "luminary-memory-opencode",
-  "version": "0.4.0",
+  "version": "0.3.2",
   "description": "Luminary-maintained scoped memory plugin for OpenCode V2",
   "type": "module",
   "main": "./dist/index.js",
