@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Optional operator config file (`~/.luminary/luminary.env`) shared by native
+  integrations and the CLI. Env-style `LUMINARY_*` settings load before
+  `Settings` is constructed; process environment wins, `LUMINARY_CONFIG_FILE`
+  overrides the path or disables loading with `none`/`off`, and edits apply on
+  the next bridge call without restarting the host.
+
 ### Fixed
 
 - Telegram activity no longer treats global new memory IDs as this turn's

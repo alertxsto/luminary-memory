@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from luminary_memory.api import MemoryClient
-from luminary_memory.config import Settings
+from luminary_memory.config import Settings, load_config_file
 from luminary_memory.types import Memory
 
 AGENTS = ("opencode", "pi", "omp")
@@ -107,6 +107,9 @@ def dispatch(request: dict, *, client: MemoryClient | None = None) -> dict:
     """
     if not isinstance(request, dict):
         raise TypeError("request must be a JSON object")
+    # Native adapters spawn a fresh interpreter per operation, so editing the
+    # config file takes effect on the next call without restarting the host.
+    load_config_file()
     agent = request.get("agent")
     if not isinstance(agent, str) or not re.fullmatch(r"[a-z][a-z0-9._-]{0,63}", agent):
         raise ValueError("agent must be a stable lowercase harness ID (1-64 characters)")

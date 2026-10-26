@@ -188,6 +188,25 @@ or harnesses are not implicitly shared. A shared desktop/web server must bind
 not a remotely authenticated multi-user API. Do not accept caller-selected
 ownership fields directly from an untrusted web request.
 
+## Config file
+
+Native adapters and the CLI load `~/.luminary/luminary.env` before each
+operation. Use it for durable settings such as the LLM curation endpoint:
+
+```ini
+LUMINARY_INGEST_LLM=true
+LUMINARY_LLM_BASE_URL=https://api.openai.com/v1
+LUMINARY_LLM_API_KEY=sk-...
+LUMINARY_LLM_MODEL=gpt-4o-mini
+```
+
+Process environment wins over the file. Set `LUMINARY_CONFIG_FILE` to another
+path, or to `none` to disable file loading. Bridge processes are spawned per
+operation, so edits apply on the next call without restarting the host. The file
+may contain an API key; restrict its permissions to the account that runs the
+agent. See the
+[configuration reference](config-reference.md#config-file-for-native-integrations-and-cli).
+
 ## Use
 
 pi and omp provide:

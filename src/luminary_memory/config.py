@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+CONFIG_FILE_ENV = "LUMINARY_CONFIG_FILE"
+MAX_CONFIG_FILE_BYTES = 256 * 1024
+_CONFIG_KEY = re.compile(r"LUMINARY_[A-Z0-9_]+")
+_DISABLED_CONFIG_VALUES = {"0", "false", "none", "off", "-"}
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -44,6 +51,86 @@ def _env_list(name: str, default: list[str] | None = None) -> list[str]:
     return [p.strip() for p in v.split(",") if p.strip()]
 
 
+def default_config_path() -> Path:
+    """Return the default file used by native integrations and the CLI."""
+    return Path.home() / ".luminary" / "luminary.env"
+
+
+def _resolve_config_path(path: str | os.PathLike[str] | None) -> Path | None:
+    if path is not None:
+        return Path(path).expanduser()
+    raw = os.environ.get(CONFIG_FILE_ENV, "").strip()
+    if raw and raw.lower() in _DISABLED_CONFIG_VALUES:
+        return None
+    return Path(raw).expanduser() if raw else default_config_path()
+
+
+def load_config_file(
+    path: str | os.PathLike[str] | None = None,
+    *,
+    override: bool = False,
+) -> Path | None:
+    """Load ``LUMINARY_*`` settings from an env-style file into ``os.environ``.
+
+    Native agent integrations and the CLI call this before constructing
+    :class:`Settings`, so operators can keep durable settings (including an LLM
+    curation endpoint) in one editable file instead of host-specific shell
+    configuration. Precedence is process environment > config file > built-in
+    default, unless ``override`` is true.
+
+    The default file is ``~/.luminary/luminary.env``. Set
+    ``LUMINARY_CONFIG_FILE`` to another path, or to ``none``/``off`` to disable
+    file loading. Only keys matching ``LUMINARY_*`` are applied; values are
+    never logged.
+    """
+    target = _resolve_config_path(path)
+    if target is None:
+        return None
+    configured = os.environ.get(CONFIG_FILE_ENV, "").strip()
+    explicit = path is not None or bool(configured)
+    try:
+        if target.stat().st_size > MAX_CONFIG_FILE_BYTES:
+            logger.warning(
+                "Luminary config file exceeds %d bytes: %s",
+                MAX_CONFIG_FILE_BYTES,
+                target,
+            )
+            return None
+        text = target.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        if explicit:
+            logger.warning("Luminary config file not found: %s", target)
+        return None
+    except OSError as exc:
+        logger.warning("Unable to read Luminary config file %s: %s", target, exc)
+        return None
+
+    applied = 0
+    for number, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        if "=" not in line:
+            logger.warning(
+                "Ignoring malformed Luminary config line %d in %s", number, target
+            )
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not _CONFIG_KEY.fullmatch(key) or key == CONFIG_FILE_ENV:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if override or key not in os.environ:
+            os.environ[key] = value
+            applied += 1
+    logger.debug("Loaded %d Luminary setting(s) from %s", applied, target)
+    return target
+
+
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 
 # The cosine score that separates "this memory answers the question" from "this
@@ -80,6 +167,11 @@ class Settings:
     Every field can be overridden via a ``LUMINARY_*`` environment variable
     (e.g. ``LUMINARY_BACKEND``, ``LUMINARY_DB_PATH``, ``LUMINARY_PG_DSN``),
     which makes the library deployment-friendly without code changes.
+
+    Native agent integrations and the CLI additionally load
+    ``~/.luminary/luminary.env`` through :func:`load_config_file` before
+    constructing this object. Direct library callers keep the plain
+    environment-only behaviour unless they call the loader themselves.
     """
 
     backend: str = field(default_factory=lambda: os.environ.get("LUMINARY_BACKEND", "sqlite"))  # "sqlite" | "pgvector"

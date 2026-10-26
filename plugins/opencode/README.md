@@ -62,6 +62,15 @@ configured single-file paths. Published npm packages instead resolve their
 `./dist/index.js` export normally. Neither form needs this repository's source
 files at runtime.
 
+## Configuration
+
+The Python bridge loads `~/.luminary/luminary.env` (env-style `LUMINARY_*`
+settings) before each operation. Process environment wins; set
+`LUMINARY_CONFIG_FILE` to another path or to `none` to disable file loading.
+Edits apply to the next tool call because every operation starts a fresh bridge
+process. See the
+[configuration reference](https://github.com/alertxsto/luminary-memory/blob/main/docs/config-reference.md#config-file-for-native-integrations-and-cli).
+
 ## Tools and hooks
 
 The model can use `luminary_recall`, `luminary_remember`, `luminary_forget`, and
