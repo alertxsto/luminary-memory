@@ -10,15 +10,45 @@ OLD="$(sed -n 's/^version = "\([0-9]\+\.[0-9]\+\.[0-9]\+\)"/\1/p' pyproject.toml
 NEW="${1:?usage: ./bump-version.sh X.Y.Z}"
 
 if [[ "$NEW" == "$OLD" ]]; then
-  echo "already at $NEW — nothing to do"; exit 0
+  echo "already at $NEW — synchronizing versioned files"
 fi
 
 echo "bumping $OLD → $NEW"
 
 PYBIN="${PYTHON:-python3}"
 "$PYBIN" - "$OLD" "$NEW" <<'PY'
-import re, sys
+import json
+from pathlib import Path
+import re
+import sys
+
 old, new = sys.argv[1], sys.argv[2]
+if not re.fullmatch(r"\d+\.\d+\.\d+", new):
+    raise SystemExit("version must have the form X.Y.Z")
+
+# Parse JSON structurally: dependency versions and other package metadata must
+# not be touched by the display-version replacements below.
+plugin_updates = []
+agents = ("pi", "opencode", "omp")
+for agent in agents:
+    path = Path("plugins") / agent / "package.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if manifest.get("name") != f"luminary-memory-{agent}":
+        raise SystemExit(f"{path}: unexpected plugin package name")
+    manifest["version"] = new
+    plugin_updates.append((path, manifest))
+
+# npm ci checks workspace versions against this lockfile. The private root
+# package deliberately has no version and must remain unversioned.
+lock_path = Path("package-lock.json")
+lock = json.loads(lock_path.read_text(encoding="utf-8"))
+for agent in agents:
+    key = f"plugins/{agent}"
+    if key not in lock.get("packages", {}):
+        raise SystemExit(f"{lock_path}: missing workspace {key}")
+    lock["packages"][key]["version"] = new
+plugin_updates.append((lock_path, lock))
+
 # (path, regex, replacement) — regex matches ANY 0.2.X so a file missed by a
 # previous bump still gets caught up.
 edits = [
@@ -65,6 +95,10 @@ for path in ("hermes/install.sh", "hermes/SKILL.md", "hermes/README.md", "src/lu
     if n:
         open(path, "w").write(re.sub(r'luminary-memory(\[hermes\])?>=\d+\.\d+\.\d+', lambda m: f"luminary-memory{m.group(1) or ''}>={new}", s))
         print(f"  {path}: {n} pip-floor replacement(s)")
+
+for path, document in plugin_updates:
+    path.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"  {path}: plugin versions synchronized")
 PY
 
 # CHANGELOG — prepend new entry if not present
