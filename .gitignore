@@ -23,6 +23,11 @@ sdist/
 var/
 wheels/
 
+# ---- Native plugin packages ----
+node_modules/
+artifacts/plugins/
+plugins/*/LICENSE
+
 # ---- Virtual environments ----
 .venv/
 venv/
@@ -97,6 +102,7 @@ REPORT-*.md
 
 # ---- Local documentation and planning (keep out of source) ----
 docs/*
+!docs/agent-integrations.md
 
 # ---- Generated API docs (regenerate via pdoc) ----
 docs/api/
