@@ -236,6 +236,18 @@ suppressed by the engine. `forget` retracts that ID inside its owning scope;
 it does not delete unrelated IDs or erase audit history. Activity is a current
 scoped snapshot, not a claimed count of writes in the current turn.
 
+## Agent skill
+
+The repository ships a portable OpenCode skill at
+[`opencode/SKILL.md`](../opencode/SKILL.md). It documents tool selection, safe
+durable-fact boundaries, result semantics, the config file, and bridge
+troubleshooting.
+
+Copy it to `~/.config/opencode/skills/luminary-memory/SKILL.md` for global use,
+or to a project's `.opencode/skills/luminary-memory/SKILL.md`. OpenCode
+discovers both locations automatically; no `opencode.json` entry is required.
+The skill is documentation only and does not change plugin behavior.
+
 ## Automatic recall and retention
 
 Before a normal user run, adapters recall strictly relevant, evidence-bearing

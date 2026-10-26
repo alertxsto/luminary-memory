@@ -79,7 +79,9 @@ Automatic scoped recall, opt-in user-grounded curation, explicit memory tools,
 and accurate stored/duplicate/skipped/error results. pi/omp also expose
 `/luminary` commands and native UI dialogs. Server tool results/custom messages
 are available to compatible desktop/web clients; no universal frontend plugin
-API or standalone desktop app is assumed.
+API or standalone desktop app is assumed. A portable OpenCode agent skill lives
+at [`opencode/SKILL.md`](opencode/SKILL.md); install it under
+`~/.config/opencode/skills/luminary-memory/` or a project's `.opencode/skills/`.
 
 ### Luminary-maintained plugin packages
 

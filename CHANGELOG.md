@@ -9,6 +9,10 @@
   `Settings` is constructed; process environment wins, `LUMINARY_CONFIG_FILE`
   overrides the path or disables loading with `none`/`off`, and edits apply on
   the next bridge call without restarting the host.
+- Portable OpenCode agent skill (`opencode/SKILL.md`) covering scoped recall,
+  user-approved durable writes, ID-scoped retraction, result semantics,
+  configuration, and bridge troubleshooting. Install it under
+  `~/.config/opencode/skills/luminary-memory/` or a project's `.opencode/skills/`.
 
 ### Fixed
 

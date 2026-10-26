@@ -90,6 +90,24 @@ plugin startup directory. The store defaults to `~/.luminary/memory.db`;
 workspace. Forget retracts the selected ID and keeps audit history. Recalled
 content is untrusted reference data, not instructions.
 
+## Agent skill
+
+The repository ships a portable OpenCode skill at
+[`opencode/SKILL.md`](https://github.com/alertxsto/luminary-memory/blob/main/opencode/SKILL.md).
+It covers when to call each tool, safe durable-fact boundaries, result
+semantics, the config file, and bridge troubleshooting.
+
+From the repository root, install it globally:
+
+```sh
+mkdir -p ~/.config/opencode/skills/luminary-memory
+cp opencode/SKILL.md ~/.config/opencode/skills/luminary-memory/SKILL.md
+```
+
+Or keep it project-local at `.opencode/skills/luminary-memory/SKILL.md`.
+OpenCode discovers both locations automatically; no `opencode.json` entry is
+required. The skill is documentation only and does not change plugin behavior.
+
 Compatible clients consume the server's native tools/results. This package does
 not add a universal client toolbar or a standalone desktop app. Before enabling
 it, remove only the old copied Luminary adapter and its explicit config entry;
