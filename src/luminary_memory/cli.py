@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from luminary_memory.api import MemoryClient
-from luminary_memory.config import Settings
+from luminary_memory.config import Settings, load_config_file
 from luminary_memory.integrations.cli import app as hook_app
 
 app = typer.Typer(
@@ -49,6 +49,8 @@ def _main(
     ctx: typer.Context,
 ) -> None:
     """Global entry point with clean error handling."""
+    # Load the optional operator config file before any command builds Settings.
+    load_config_file()
     # Typer calls the callback before the command; exceptions raised by
     # commands bubble up to the console as tracebacks. We catch them here
     # by wrapping execution — typer doesn't offer a hook, so commands rely

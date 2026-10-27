@@ -25,16 +25,62 @@ There are two layers by design:
 
 | Layer | Where set | Link |
 |-------|-----------|------|
+| Optional config file | `~/.luminary/luminary.env` (native integrations + CLI) | [section below](#config-file-for-native-integrations-and-cli) |
 | Library settings (`Settings`) | `LUMINARY_*` env vars | [section below](#library-settings-settings) |
 | Provider config (`_DEFAULTS`) | `$HERMES_HOME/luminary/config.json` + dashboard | [section below](#provider-config-defaults) |
 | Dashboard-only secrets | `LUMINARY_LLM_API_KEY` | [section below](#secrets) |
 
 ---
 
+# Config file for native integrations and CLI
+
+Native agent adapters (OpenCode, pi, omp) and the `luminary-memory` CLI load an
+optional env-style file before constructing `Settings`. This keeps durable
+operator settings in one place instead of host-specific shell configuration.
+
+| Input | Value |
+|-------|-------|
+| Default path | `~/.luminary/luminary.env` |
+| Override path | `LUMINARY_CONFIG_FILE=/absolute/path/to/file` |
+| Disable loading | `LUMINARY_CONFIG_FILE=none` (also `off`, `false`, `0`, `-`) |
+
+The format is one `KEY=VALUE` pair per line. Blank lines and lines beginning
+with `#` are ignored; an optional `export ` prefix and matching single or double
+quotes are supported. Only keys matching `LUMINARY_*` are applied, there is no
+variable interpolation, and values are never logged.
+
+Precedence is:
+
+1. process environment,
+2. config file,
+3. built-in default.
+
+`LUMINARY_CONFIG_FILE` itself is never read from the file. Because native
+adapters spawn a fresh Python process for each operation, edits apply on the
+next tool call without restarting the host. Direct library users keep
+environment-only behaviour unless they call `load_config_file()` themselves.
+
+```ini
+# ~/.luminary/luminary.env
+LUMINARY_INGEST_LLM=true
+LUMINARY_LLM_BASE_URL=https://api.openai.com/v1
+LUMINARY_LLM_API_KEY=sk-...
+LUMINARY_LLM_MODEL=gpt-4o-mini
+LUMINARY_TOKEN_BUDGET=4096
+```
+
+The file may contain an API key. Restrict its permissions to the account that
+runs the agent. The `config.json` layer below remains Hermes-specific; this file
+is the library layer shared by native integrations and the CLI.
+
+---
+
 # Library settings (`Settings`)
 
-Read once at startup from environment variables. No file, no dashboard, just
-env. Every field is documented with:
+Read once at startup from environment variables. Native integrations and the
+CLI first apply the optional config file described above; direct library callers
+have no file layer unless they call `load_config_file()`. No dashboard is
+involved. Every field is documented with:
 
 - field name, env var, default, allowed values, and what it controls.
 

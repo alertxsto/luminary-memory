@@ -188,6 +188,25 @@ or harnesses are not implicitly shared. A shared desktop/web server must bind
 not a remotely authenticated multi-user API. Do not accept caller-selected
 ownership fields directly from an untrusted web request.
 
+## Config file
+
+Native adapters and the CLI load `~/.luminary/luminary.env` before each
+operation. Use it for durable settings such as the LLM curation endpoint:
+
+```ini
+LUMINARY_INGEST_LLM=true
+LUMINARY_LLM_BASE_URL=https://api.openai.com/v1
+LUMINARY_LLM_API_KEY=sk-...
+LUMINARY_LLM_MODEL=gpt-4o-mini
+```
+
+Process environment wins over the file. Set `LUMINARY_CONFIG_FILE` to another
+path, or to `none` to disable file loading. Bridge processes are spawned per
+operation, so edits apply on the next call without restarting the host. The file
+may contain an API key; restrict its permissions to the account that runs the
+agent. See the
+[configuration reference](config-reference.md#config-file-for-native-integrations-and-cli).
+
 ## Use
 
 pi and omp provide:
@@ -216,6 +235,18 @@ installed. Plugins run on the server, not separately in each browser window.
 suppressed by the engine. `forget` retracts that ID inside its owning scope;
 it does not delete unrelated IDs or erase audit history. Activity is a current
 scoped snapshot, not a claimed count of writes in the current turn.
+
+## Agent skill
+
+The repository ships a portable OpenCode skill at
+[`opencode/SKILL.md`](../opencode/SKILL.md). It documents tool selection, safe
+durable-fact boundaries, result semantics, the config file, and bridge
+troubleshooting.
+
+Copy it to `~/.config/opencode/skills/luminary-memory/SKILL.md` for global use,
+or to a project's `.opencode/skills/luminary-memory/SKILL.md`. OpenCode
+discovers both locations automatically; no `opencode.json` entry is required.
+The skill is documentation only and does not change plugin behavior.
 
 ## Automatic recall and retention
 

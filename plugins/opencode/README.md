@@ -62,6 +62,15 @@ configured single-file paths. Published npm packages instead resolve their
 `./dist/index.js` export normally. Neither form needs this repository's source
 files at runtime.
 
+## Configuration
+
+The Python bridge loads `~/.luminary/luminary.env` (env-style `LUMINARY_*`
+settings) before each operation. Process environment wins; set
+`LUMINARY_CONFIG_FILE` to another path or to `none` to disable file loading.
+Edits apply to the next tool call because every operation starts a fresh bridge
+process. See the
+[configuration reference](https://github.com/alertxsto/luminary-memory/blob/main/docs/config-reference.md#config-file-for-native-integrations-and-cli).
+
 ## Tools and hooks
 
 The model can use `luminary_recall`, `luminary_remember`, `luminary_forget`, and
@@ -80,6 +89,24 @@ plugin startup directory. The store defaults to `~/.luminary/memory.db`;
 + harness. Session IDs track write lineage, not permission to read another
 workspace. Forget retracts the selected ID and keeps audit history. Recalled
 content is untrusted reference data, not instructions.
+
+## Agent skill
+
+The repository ships a portable OpenCode skill at
+[`opencode/SKILL.md`](https://github.com/alertxsto/luminary-memory/blob/main/opencode/SKILL.md).
+It covers when to call each tool, safe durable-fact boundaries, result
+semantics, the config file, and bridge troubleshooting.
+
+From the repository root, install it globally:
+
+```sh
+mkdir -p ~/.config/opencode/skills/luminary-memory
+cp opencode/SKILL.md ~/.config/opencode/skills/luminary-memory/SKILL.md
+```
+
+Or keep it project-local at `.opencode/skills/luminary-memory/SKILL.md`.
+OpenCode discovers both locations automatically; no `opencode.json` entry is
+required. The skill is documentation only and does not change plugin behavior.
 
 Compatible clients consume the server's native tools/results. This package does
 not add a universal client toolbar or a standalone desktop app. Before enabling
