@@ -4,9 +4,11 @@ import hashlib
 import json
 import logging
 import math
+import threading
 from typing import Any
 
 from luminary_memory.backends.base import MemoryBackend
+from luminary_memory.backends.inspector import InspectorSQL, atomic_backend
 from luminary_memory.scope import normalize_scope, scope_sql
 from luminary_memory.types import Memory
 
@@ -44,7 +46,7 @@ def _json_load(value, default):
         return default
 
 
-class PGVectorBackend(MemoryBackend):
+class PGVectorBackend(InspectorSQL, MemoryBackend):
     def __init__(
         self,
         dsn: str = "postgresql://localhost/luminary_memory",
@@ -58,8 +60,11 @@ class PGVectorBackend(MemoryBackend):
         self.dsn = dsn
         self.embedding_dim = int(embedding_dim)
         self._psycopg = psycopg
-        self.conn = psycopg.connect(dsn)
+        self._local = threading.local()
+        self._local.conn = psycopg.connect(dsn, autocommit=True)
+        self._namespace = self.conn.execute("SELECT current_schema()").fetchone()[0]
         self._ensure_schema()
+        self._inspector_schema()
         # Optional HNSW index (feature-flagged, never hard-fails).
         from luminary_memory.config import Settings as _Settings
 
@@ -73,6 +78,14 @@ class PGVectorBackend(MemoryBackend):
                 ),
             )
 
+    @property
+    def conn(self):
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._psycopg.connect(self.dsn, autocommit=True)
+            self._local.conn = conn
+        return conn
+
     def build_index(self, m: int = 16, ef_construction: int = 64) -> None:
         try:
             cur = self.conn.cursor()
@@ -81,11 +94,11 @@ class PGVectorBackend(MemoryBackend):
                 f"ON memories USING hnsw (embedding vector_cosine_ops) "
                 f"WITH (m = {int(m)}, ef_construction = {int(ef_construction)})"
             )
-            self.conn.commit()
+            self._commit()
         except Exception:
             logger.warning("HNSW index creation failed (non-fatal)", exc_info=True)
             try:
-                self.conn.rollback()
+                self._rollback()
             except Exception:  # noqa: BLE001, S110
                 pass
 
@@ -153,6 +166,7 @@ class PGVectorBackend(MemoryBackend):
             ("evidence_quote", "TEXT"),
             ("source_id", "TEXT"),
             ("claim_key", "TEXT"),
+            ("revision", "INTEGER NOT NULL DEFAULT 1"),
             ("supersedes_id", "INTEGER"),
             ("content_hash", "TEXT"),
             ("needs_reindex", "BOOLEAN NOT NULL DEFAULT FALSE"),
@@ -324,7 +338,7 @@ class PGVectorBackend(MemoryBackend):
             "COALESCE(agent_id, ''), COALESCE(session_id, ''), content_hash) "
             "WHERE COALESCE(status, 'active') = 'active' AND content_hash IS NOT NULL"
         )
-        self.conn.commit()
+        self._commit()
 
     def _row_to_memory(self, row: tuple[Any, ...] | dict[str, Any]) -> Memory:
         if isinstance(row, dict):
@@ -337,7 +351,7 @@ class PGVectorBackend(MemoryBackend):
                 "access_count", "embedding", "user_id", "session_id", "workspace_id",
                 "agent_id", "observed_at", "valid_from", "valid_to", "status", "confidence",
                 "evidence_quote", "source_id", "claim_key", "supersedes_id", "content_hash",
-                "needs_reindex",
+                "needs_reindex", "revision",
             ]
             d = dict(zip(cols, row))
             emb = d.get("embedding")
@@ -392,6 +406,7 @@ class PGVectorBackend(MemoryBackend):
             supersedes_id=d.get("supersedes_id"),
             content_hash=d.get("content_hash"),
             needs_reindex=bool(d.get("needs_reindex") or False),
+            revision=_safe_int(d.get("revision"), 1),
         )
 
     @staticmethod
@@ -441,45 +456,31 @@ class PGVectorBackend(MemoryBackend):
         row = cur.fetchone()
         return self._row_to_memory(row) if row else None
 
+    @atomic_backend
     def add_with_status(self, m: Memory) -> tuple[int, bool]:
         cur = self.conn.cursor()
-        try:
-            cur.execute(
-                """
-                INSERT INTO memories (content, metadata, source, tags, importance,
-                                      ttl_seconds, created_at, updated_at,
-                                      last_accessed_at, access_count, embedding,
-                                      user_id, session_id, workspace_id, agent_id,
-                                      observed_at, valid_from, valid_to, status, confidence,
-                                      evidence_quote, source_id, claim_key, supersedes_id,
-                                      content_hash, needs_reindex)
-                VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-                """,
-                self._insert_values(m),
-            )
-            row = cur.fetchone()
-            self.conn.commit()
-            return int(row[0]) if row else 0, True
-        except Exception as exc:
-            # Only a unique-index race is recoverable. Do not turn a malformed
-            # row, dimension mismatch, or connection/database error into a
-            # false duplicate merely because an older row happens to share
-            # its content hash.
-            self.conn.rollback()
-            if not isinstance(exc, self._psycopg.errors.UniqueViolation):
-                raise
-            try:
-                existing = self._find_active_hash_exact(m)
-            finally:
-                # The lookup itself starts a read transaction in psycopg;
-                # close it before returning so a long-lived writer does not
-                # retain a snapshot or hold schema locks.
-                self.conn.rollback()
-            if existing is None or existing.id is None:
-                raise
-            return existing.id, False
+        cur.execute(
+            """
+            INSERT INTO memories (content, metadata, source, tags, importance,
+                                  ttl_seconds, created_at, updated_at,
+                                  last_accessed_at, access_count, embedding,
+                                  user_id, session_id, workspace_id, agent_id,
+                                  observed_at, valid_from, valid_to, status, confidence,
+                                  evidence_quote, source_id, claim_key, supersedes_id,
+                                  content_hash, needs_reindex)
+            VALUES (%s, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT DO NOTHING RETURNING id
+            """,
+            self._insert_values(m),
+        )
+        row = cur.fetchone()
+        if row:
+            return int(row[0]), True
+        existing = self._find_active_hash_exact(m)
+        if existing is None or existing.id is None:
+            raise RuntimeError("insert ignored without an exact active duplicate")
+        return existing.id, False
 
     def add(self, m: Memory) -> int:
         return self.add_with_status(m)[0]
@@ -525,19 +526,7 @@ class PGVectorBackend(MemoryBackend):
         after: dict | None = None,
         actor: str | None = None,
     ) -> None:
-        cur = self.conn.cursor()
-        cur.execute(
-            "INSERT INTO memory_events(memory_id, event_type, before_json, after_json, actor) "
-            "VALUES (%s, %s, %s::jsonb, %s::jsonb, %s)",
-            (
-                memory_id,
-                event_type,
-                json.dumps(before) if before is not None else None,
-                json.dumps(after) if after is not None else None,
-                actor,
-            ),
-        )
-        self.conn.commit()
+        self._record_scoped_event(event_type, memory_id, before, after, actor)
 
     def add_evidence(
         self,
@@ -556,9 +545,9 @@ class PGVectorBackend(MemoryBackend):
             "VALUES (%s, %s, %s, %s, %s, %s)",
             (memory_id, quote, source_id, observed_at, extractor, float(confidence)),
         )
-        self.conn.commit()
+        self._commit()
 
-    def record_episode(self, episode_id: str, content: str, **metadata) -> None:
+    def record_episode(self, episode_id: str, content: str, **metadata) -> bool:
         cur = self.conn.cursor()
         cur.execute(
             "INSERT INTO episodes "
@@ -577,7 +566,8 @@ class PGVectorBackend(MemoryBackend):
                 metadata.get("observed_at"),
             ),
         )
-        self.conn.commit()
+        self._commit()
+        return cur.rowcount == 1
 
     def recent_episodes(
         self,
@@ -644,6 +634,7 @@ class PGVectorBackend(MemoryBackend):
             )
         return result
 
+    @atomic_backend
     def add_claim(self, memory_id: int, claim: dict, **scope) -> None:
         subject = str(claim.get("subject") or "").strip()
         predicate = str(claim.get("predicate") or "").strip()
@@ -687,28 +678,29 @@ class PGVectorBackend(MemoryBackend):
                     "VALUES (%s, %s, %s, %s)",
                     (claim_id, quote, claim.get("source_episode_id"), confidence),
                 )
-            self.conn.commit()
+            self._commit()
         except Exception:
-            self.conn.rollback()
+            self._rollback()
             raise
 
-    def sync_claim_status(
-        self,
-        memory_id: int,
-        status: str,
-        valid_to: str | None = None,
-    ) -> None:
+    @atomic_backend
+    def sync_claim_status(self,
+    memory_id: int,
+    status: str,
+    valid_to: str | None = None,) -> None:
         cur = self.conn.cursor()
         cur.execute(
             "UPDATE claims SET status = %s, valid_to = COALESCE(valid_to, %s) "
             "WHERE memory_id = %s AND status IN ('active', 'conflicted')",
             (str(status), valid_to, memory_id),
         )
-        self.conn.commit()
+        self._commit()
 
+    @atomic_backend
     def update(self, m: Memory) -> None:
         if m.id is None:
             raise ValueError("cannot update a memory without an id")
+        self._check_revision(m)
         cur = self.conn.cursor()
         cur.execute(
             """
@@ -750,15 +742,18 @@ class PGVectorBackend(MemoryBackend):
                 m.id,
             ),
         )
-        self.conn.commit()
+        self._commit()
+        self._refresh_revision(m)
 
+    @atomic_backend
     def delete(self, id: int) -> None:
         cur = self.conn.cursor()
         # Relations reference memories via FK; delete them first (manual cascade).
         cur.execute("DELETE FROM relations WHERE memory_id = %s", (id,))
         cur.execute("DELETE FROM memories WHERE id = %s", (id,))
-        self.conn.commit()
+        self._commit()
 
+    @atomic_backend
     def rehome_memory_references(self, source_id: int, target_id: int) -> None:
         """Preserve evidence/claims/graph edges when a duplicate is removed."""
         cur = self.conn.cursor()
@@ -774,7 +769,7 @@ class PGVectorBackend(MemoryBackend):
             "UPDATE relations SET memory_id = %s WHERE memory_id = %s",
             (target_id, source_id),
         )
-        self.conn.commit()
+        self._commit()
 
     def all(self) -> list[Memory]:
         cur = self.conn.cursor()
@@ -782,6 +777,7 @@ class PGVectorBackend(MemoryBackend):
         rows = cur.fetchall()
         return [self._row_to_memory(r) for r in rows]
 
+    @atomic_backend
     def add_many_with_status(self, memories: list[Memory]) -> list[tuple[int, bool]]:
         if not memories:
             return []
@@ -815,10 +811,10 @@ class PGVectorBackend(MemoryBackend):
                         "batch insert was ignored without a resolvable active duplicate"
                     )
                 results.append((existing.id, False))
-            self.conn.commit()
+            self._commit()
             return results
         except Exception:
-            self.conn.rollback()
+            self._rollback()
             raise
 
     def add_many(self, memories: list[Memory]) -> list[int]:

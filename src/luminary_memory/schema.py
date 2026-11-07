@@ -2,6 +2,18 @@ from __future__ import annotations
 
 import sqlite3
 
+_FTS_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER IF NOT EXISTS memories_au
+AFTER UPDATE OF content, tags ON memories
+WHEN old.content IS NOT new.content OR old.tags IS NOT new.tags
+BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, content, tags)
+    VALUES ('delete', old.id, old.content, old.tags);
+    INSERT INTO memories_fts(rowid, content, tags)
+    VALUES (new.id, new.content, new.tags);
+END;
+"""
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS memories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,7 +42,8 @@ CREATE TABLE IF NOT EXISTS memories (
     claim_key TEXT,
     supersedes_id INTEGER,
     content_hash TEXT,
-    needs_reindex INTEGER NOT NULL DEFAULT 0
+    needs_reindex INTEGER NOT NULL DEFAULT 0,
+    revision INTEGER NOT NULL DEFAULT 1
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     content, tags, content='memories', content_rowid='id'
@@ -43,12 +56,7 @@ CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
     INSERT INTO memories_fts(memories_fts, rowid, content, tags)
     VALUES ('delete', old.id, old.content, old.tags);
 END;
-CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, content, tags)
-    VALUES ('delete', old.id, old.content, old.tags);
-    INSERT INTO memories_fts(rowid, content, tags)
-    VALUES (new.id, new.content, new.tags);
-END;
+""" + _FTS_UPDATE_TRIGGER_SQL + """
 CREATE TABLE IF NOT EXISTS entities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
@@ -153,6 +161,7 @@ _MIGRATION_COLUMNS: dict[str, str] = {
     "supersedes_id": "INTEGER",
     "content_hash": "TEXT",
     "needs_reindex": "INTEGER NOT NULL DEFAULT 0",
+    "revision": "INTEGER NOT NULL DEFAULT 1",
 }
 
 
@@ -189,8 +198,17 @@ def init_schema(conn: sqlite3.Connection) -> None:
     had_fts = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories_fts'"
     ).fetchone() is not None
+    previous_update_trigger = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='memories_au'"
+    ).fetchone()
+    expected_update_trigger = _FTS_UPDATE_TRIGGER_SQL.replace(" IF NOT EXISTS", "").strip().removesuffix(";")
+    update_trigger_changed = had_fts and (
+        previous_update_trigger is None or previous_update_trigger[0] != expected_update_trigger
+    )
+    if update_trigger_changed:
+        conn.execute("DROP TRIGGER IF EXISTS memories_au")
     conn.executescript(SCHEMA_SQL)
-    rebuild_fts = not had_fts
+    rebuild_fts = not had_fts or update_trigger_changed
     if had_fts:
         # A crash or hand-edited legacy database can leave the derived FTS
         # table/triggers only partially present. Existence of the table name

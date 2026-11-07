@@ -83,6 +83,11 @@ API or standalone desktop app is assumed. A portable OpenCode agent skill lives
 at [`opencode/SKILL.md`](opencode/SKILL.md); install it under
 `~/.config/opencode/skills/luminary-memory/` or a project's `.opencode/skills/`.
 
+Interactive inspectors are being implemented separately from the published
+`0.3.2` hooks. See [development setup and explicit companion launch](docs/agent-integrations.md#unreleased-interactive-inspectors)
+and the [native support/acceptance roadmap](docs/ROADMAP.md). Browser verification
+does not imply that Desktop, Web or terminal host acceptance is complete.
+
 ### Luminary-maintained plugin packages
 
 Native package sources live in [`plugins/pi`](plugins/pi),

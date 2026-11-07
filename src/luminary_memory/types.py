@@ -8,6 +8,20 @@ from typing import Any
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
+
+def utc_timestamp(value):
+    """Comparable UTC microseconds; legacy SQLite naive timestamps are UTC."""
+    if value is None:
+        return None
+    try:
+        stamp = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        return stamp.astimezone(UTC).isoformat(timespec="microseconds")
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 @dataclass
 class Memory:
     id: int | None = None
@@ -44,6 +58,8 @@ class Memory:
     supersedes_id: int | None = None
     content_hash: str | None = None
     needs_reindex: bool = False
+    # Content/lifecycle revision; access and ranking bookkeeping are separate.
+    revision: int = 1
 
 @dataclass
 class ScoredMemory:

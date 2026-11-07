@@ -16,10 +16,9 @@ The installer uses `HERMES_PYTHON` when it is set, so package installation,
 capability checks, and config activation all run in the same interpreter as a
 Hermes deployment. Without it, the installer uses `python3`.
 
-Activation updates the root Hermes config and only the profile config files
-that already exist. It does not create profile directories or guess which
-profiles a deployment should use, so existing profile selection stays intact
-without coupling Luminary to a Hermes release layout.
+Activation updates only the explicitly selected Hermes `config.yaml`. It never
+walks sibling profiles, creates profile directories, or activates a provider
+because an inspector UI was installed. Configure each intended profile explicitly.
 
 `hermes memory setup luminary` may still be used to edit provider settings on
 Hermes installations that expose the optional provider setup hook. The
@@ -126,7 +125,8 @@ The provider reads `$HERMES_HOME/luminary/config.json` (created on first save wi
 | `ingest_llm` | `false` | **LLM memory curation and incremental reconciliation**, the enricher decides whether a turn is worth saving, stores a factual summary instead of the raw transcript, and checks the same turn for grounded captures/corrections |
 | `llm_base_url` | `""` | OpenAI-compatible endpoint for the enricher (e.g. `https://api.cline.bot/v1`, `https://api.commandcode.ai/provider/v1`, Groq, Ollama) |
 | `llm_model` | `""` | Enricher model (e.g. `deepseek/deepseek-v4-flash`) |
-| `llm_api_key` | `""` | Enricher API key (settable as a secret field in the dashboard) |
+| `llm_api_key` | unset | Hermes profile secret `LUMINARY_LLM_API_KEY`; never serialized into provider config |
+| `pg_dsn` | unset | Hermes profile secret `LUMINARY_PG_DSN` for PostgreSQL; never serialized into provider config |
 | `llm_timeout` | `60` | Enricher request timeout (seconds) |
 | `recall_indicator` | `true` | Show `🌙 Luminary, recalled N memories` |
 | `retain_indicator` | `true` | Show `🌙 Luminary, memory saved` |
@@ -149,6 +149,107 @@ model, so a paraphrase that shares no surface tokens with the stored fact can
 still be answered, while an unmeasured model falls back to the conservative
 floor and can only abstain more (see
 [Configuration reference](config-reference.md#semantic-support-floor)).
+
+### Native inspector: independent backend and UI
+
+The inspector does not replace the provider, enable retention, or change saving
+on installation/open. The three installation surfaces are independent:
+
+- **Provider:** the `luminary` memory-provider entry point and typed
+  `ProviderConfigSchema` use Hermes's official `ProviderField` /
+  `ProviderFieldOption` contract. CLI setup descriptors derive from the same
+  fields; CLI textual booleans/numbers are normalized before persistence.
+- **Profile backend + dashboard:** install `plugins/hermes` as the ordinary
+  `luminary-inspector` plugin in the intended profile's plugin directory, install
+  the matching Python package in that backend interpreter, and explicitly enable
+  `luminary-inspector` through Hermes's plugin management. The dashboard manifest
+  declares `api: plugin_api.py`, whose module-level `APIRouter` is mounted by
+  Hermes at `/api/plugins/luminary-inspector`. Its `dist/index.js` is a dashboard
+  IIFE built from `ui/hermes/dashboard.mjs`, using only the dashboard's
+  `window.__HERMES_PLUGIN_SDK__.React` singleton and authenticated `fetchJSON`.
+  Restart the backend after installing/updating Python routes; refreshing the UI
+  alone does not reload an already mounted Python module.
+- **Desktop:** the separately built ESM from `ui/hermes/desktop.mjs` contributes a
+  compact pane, full route/navigation entry, and plugin settings page through
+  `@hermes/plugin-sdk`. Enable its app-level Desktop half separately; it starts
+  disabled. Desktop uses `ctx.rest`, not dashboard globals or hand-read tokens.
+  The local Desktop half does not install/enable a remote machine's profile
+  backend. Install that backend on each intended remote/profile independently.
+
+The ordinary plugin also registers a concrete typed CLI settings consumer:
+
+```bash
+hermes luminary-inspector configure --set auto_retain=false --set recall_limit=7
+hermes luminary-inspector configure --secret llm_api_key
+```
+
+`--secret` names a schema field, not its value; Hermes's native masked prompt
+and profile `.env` writer handle the credential. Neither command activates the
+provider. Hermes v0.22.5 gives a provider's `post_setup` ownership of activation
+and skips its generic schema wizard in that case; use this `configure` command,
+the typed native provider settings panel, or the confirmed inspector settings
+view to edit settings independently.
+
+
+Both native UIs share `ui/hermes/console.mjs`, not a bundled second React runtime.
+They expose bounded memory lists/details, activity, evidence/history and lineage,
+authorized adjacency, maintenance previews, independent sharing rights, settings,
+and deterministic Summary. Every write presents its exact before/after/effects
+and requires a separate explicit confirmation. Optional AI explanation first
+previews disclosure and only sends it after confirmation. REST refresh is
+sufficient: sockets are not required, including OAuth remotes. A disabled or
+unavailable backend is reported as unavailable, never as an empty healthy store.
+Desktop gateway/profile/session epochs and dashboard profile-owned component
+unmounting discard old results instead of publishing them into another context.
+
+#### Exact provider ownership and legacy setup
+
+The backend resolves the selected session with Hermes's real, profile-scoped
+`SessionDB`; identity/store paths are never accepted from frontend JSON. Hermes
+v0.22.5 initializes providers with profile `agent_identity`, literal
+`agent_workspace="hermes"`, and `user_id` only when available. The native session
+`cwd` is a **location**, not the existing records' workspace owner.
+
+A session with its recorded profile and nonempty native user can use that exact
+provider scope. For legacy/incomplete mappings, the OS owner must explicitly
+approve `$HERMES_HOME/luminary/inspector.json` using the registered command:
+
+```bash
+hermes luminary-inspector inspector-bind --session EXISTING_SESSION \
+  --owner EXACT_RECORD_USER --user EXACT_RECORD_USER \
+  --workspace hermes --agent EXACT_PROFILE
+```
+
+The command displays the native location and exact scope and requires a real
+interactive owner decision. It writes `owner_user_id` and
+`record_scope: {user_id, workspace_id, agent_id}` only in that profile. It does
+not copy, reattribute, or globalize records. Records with absent user ownership
+cannot be made owner-bound by choosing a display name; they remain denied until
+a separately approved ownership migration exists. Existing project aliases for
+another native location require an explicit location-binding preview/confirmation.
+
+Inspector settings persist profile-local, secret-free provider values with
+revision checks; store identity, database paths and credentials are not editable
+through the view. Existing provider sessions must restart to load changed values.
+Secrets come from Hermes's scoped secret API, including context-preserving
+retain/prefetch workers, not an unrelated process profile.
+
+Data Transfer uses a real file input and authenticated upload, bounded to 4 MiB,
+to create an opaque profile/context/policy-bound file handle in a server-chosen
+private staging directory. Preview and separate owner confirmation precede
+import/export. Export bytes become downloadable only after the confirmed export
+is ready and its digest, context, policy and expiry still match. Dashboard uses
+the host's `authedFetch`; Desktop uses `ctx.rest` upload and a JSON/base64 download
+adapter because its public REST SDK is JSON-only. Both render a local save link;
+neither accepts a frontend filesystem path as authority.
+
+The classic rich Hermes CLI has no verified public custom-panel registrar and is
+**not delivered as an inspector UI**.
+
+Official SDK references:
+[Desktop Plugin SDK](https://hermes-agent.nousresearch.com/docs/developer-guide/desktop-plugin-sdk)
+and [Extending the Dashboard](https://hermes-agent.nousresearch.com/docs/user-guide/features/extending-the-dashboard).
+
 
 ### Core memory (DB-backed, v0.2.13+)
 

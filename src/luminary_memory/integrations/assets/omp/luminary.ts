@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import { registerOmpInspector } from "./inspector.js";
 
 type Action = "recall" | "remember" | "forget" | "activity" | "turn";
 type Arguments = { query?: string; text?: string; tags?: string[]; memory_id?: number; user?: string; assistant?: string };
@@ -83,6 +84,7 @@ function validate(action: Action, args: Arguments): string | undefined {
 }
 
 export default function luminary(pi: ExtensionAPI) {
+  const inspect = registerOmpInspector(pi);
   // omp rebinds factories to child sessions; state must remain factory-local.
   let pending: { session: string; workspace: string; user: string } | undefined;
   const report = (ctx: ExtensionContext, action: Action, reply: Reply, explicit = false) => {
@@ -146,19 +148,10 @@ export default function luminary(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("luminary", {
-    description: "Luminary memory: recall, remember, forget, activity",
+    description: "Open native memory inspector (full, compact, close), or recall/remember/forget/activity",
     handler: async (raw, ctx) => {
-      let input = raw.trim();
-      if (!input && ctx.hasUI) {
-        const selected = await ctx.ui.select("Luminary memory", ["recall", "remember", "forget", "activity"]);
-        if (!selected) return;
-        input = selected;
-        if (selected !== "activity") {
-          const text = await ctx.ui.input(`Luminary ${selected}`, selected === "forget" ? "Memory ID" : selected === "remember" ? "Memory text" : "Search query");
-          if (text === undefined) return;
-          input += ` ${text}`;
-        }
-      }
+      const input = raw.trim();
+      if (!input || /^(full|compact|close)$/.test(input)) { await inspect(ctx, input || "full"); return; }
       const match = /^(recall|remember|forget|activity)(?:\s+([\s\S]*))?$/.exec(input);
       if (!match) { publish(ctx, "activity", failure(HELP), true); return; }
       const action = match[1] as Exclude<Action, "turn">;

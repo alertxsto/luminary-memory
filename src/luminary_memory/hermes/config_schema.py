@@ -1,61 +1,50 @@
-"""Dashboard config schema for the Luminary Memory provider.
+"""Hermes's data-only typed provider contract, loaded by path by its dashboard.
 
-This module is a pure-data contract: it must not import any agent runtime code,
-because the Hermes dashboard loads it by path (``plugins.memory.config_schema``
-is the only import, and it is itself data-only).
+This module deliberately requires the real Hermes schema module. It must never
+import the provider/agent or replace a missing SDK with a permissive fake schema.
 """
-
-try:  # pragma: no cover - depends on hermes runtime
-    from plugins.memory.config_schema import (  # type: ignore[import-not-found]
-        STORAGE_FLAT_JSON,
-        ProviderConfigSchema,
-    )
-except ModuleNotFoundError:
-    # Standalone installs (no hermes-agent runtime): provide minimal
-    # data-only shims so the module stays importable and testable.
-    STORAGE_FLAT_JSON = "flat_json"
-
-    class ProviderConfigSchema:  # type: ignore[no-redef]
-        def __init__(self, name, label, storage, fields):
-            self.name = name
-            self.label = label
-            self.storage = storage
-            self.fields = fields
+from plugins.memory.config_schema import (
+    STORAGE_FLAT_JSON,
+    ProviderConfigSchema,
+    ProviderField,
+    ProviderFieldOption,
+)
 
 CONFIG_SCHEMA = ProviderConfigSchema(
     name="luminary",
     label="Luminary Memory",
     storage=STORAGE_FLAT_JSON,
-    fields=[
-        {"key": "mode", "label": "Mode", "type": "select", "inline": True},
-        {"key": "db_path", "label": "Database path", "type": "text", "inline": True},
-        {"key": "backend", "label": "Backend", "type": "select", "inline": True},
-        {"key": "recall_limit", "label": "Recall limit", "type": "number", "inline": True},
-        {"key": "max_memories", "label": "Max memories (store cap)", "type": "number", "inline": True},
-        {"key": "token_budget", "label": "Token budget", "type": "number", "inline": True},
-        {"key": "auto_recall", "label": "Auto recall", "type": "boolean", "inline": True},
-        {"key": "auto_retain", "label": "Auto retain", "type": "boolean", "inline": True},
-        {"key": "recall_sync", "label": "Synchronous recall", "type": "boolean"},
-        {"key": "retain_every_n_turns", "label": "Retain every N turns", "type": "number"},
-        {"key": "retain_user_prefix", "label": "User prefix", "type": "text"},
-        {"key": "retain_assistant_prefix", "label": "Assistant prefix", "type": "text"},
-        {"key": "ingest_llm", "label": "LLM memory curation", "type": "boolean"},
-        {"key": "auto_maintain", "label": "Auto-maintain store (LLM)", "type": "boolean"},
-        {"key": "consolidate_semantic", "label": "Semantic consolidation", "type": "boolean"},
-        {"key": "importance_auto", "label": "Auto importance estimation", "type": "boolean"},
-        {"key": "llm_base_url", "label": "LLM base URL", "type": "text"},
-        {"key": "llm_model", "label": "LLM model", "type": "text"},
-        {"key": "llm_timeout", "label": "LLM timeout (s)", "type": "number"},
-        {"key": "recall_indicator", "label": "Recall indicator", "type": "boolean"},
-        {"key": "retain_indicator", "label": "Retain indicator", "type": "boolean"},
-        # Core memory
-        {"key": "core_tag", "label": "Core memory tag", "type": "text"},
-        {"key": "core_top_n", "label": "Core memory: max top N", "type": "number"},
-        {"key": "core_budget", "label": "Core memory: max chars", "type": "number"},
-        # Session
-        {"key": "extract_on_session_end", "label": "Extract memories on session end", "type": "boolean"},
-        # Recall tuning
-        {"key": "importance_recall_boost", "label": "Recall boost for important memories", "type": "number"},
-        {"key": "recall_min_score", "label": "Recall min score (floor)", "type": "number"},
-    ],
+    fields=(
+        ProviderField("mode", "Mode", kind="select", default="hybrid", inline=True,
+                      options=tuple(ProviderFieldOption(value, value.title()) for value in ("context", "tools", "hybrid"))),
+        ProviderField("db_path", "Database path", inline=True),
+        ProviderField("backend", "Backend", kind="select", default="sqlite", inline=True,
+                      options=(ProviderFieldOption("sqlite", "SQLite"), ProviderFieldOption("pgvector", "PostgreSQL / pgvector"))),
+        ProviderField("recall_limit", "Recall limit", kind="number", default="10", inline=True),
+        ProviderField("max_memories", "Max memories (store cap)", kind="number", default="1000", inline=True),
+        ProviderField("token_budget", "Token budget", kind="number", default="2048", inline=True),
+        ProviderField("auto_recall", "Auto recall", kind="bool", default="true", inline=True),
+        ProviderField("auto_retain", "Auto retain", kind="bool", default="true", inline=True),
+        ProviderField("recall_sync", "Synchronous recall", kind="bool", default="false"),
+        ProviderField("retain_every_n_turns", "Retain every N turns", kind="number", default="1"),
+        ProviderField("retain_user_prefix", "User prefix", default="User"),
+        ProviderField("retain_assistant_prefix", "Assistant prefix", default="Assistant"),
+        ProviderField("ingest_llm", "LLM memory curation", kind="bool", default="false"),
+        ProviderField("auto_maintain", "Auto-maintain store (LLM)", kind="bool", default="false"),
+        ProviderField("consolidate_semantic", "Semantic consolidation", kind="bool", default="true"),
+        ProviderField("importance_auto", "Auto importance estimation", kind="bool", default="true"),
+        ProviderField("llm_base_url", "LLM base URL"),
+        ProviderField("llm_model", "LLM model"),
+        ProviderField("llm_timeout", "LLM timeout (s)", kind="number", default="60"),
+        ProviderField("llm_api_key", "LLM API key", kind="secret", env_key="LUMINARY_LLM_API_KEY"),
+        ProviderField("pg_dsn", "PostgreSQL DSN", kind="secret", env_key="LUMINARY_PG_DSN"),
+        ProviderField("recall_indicator", "Recall indicator", kind="bool", default="true"),
+        ProviderField("retain_indicator", "Retain indicator", kind="bool", default="true"),
+        ProviderField("core_tag", "Core memory tag", default="core"),
+        ProviderField("core_top_n", "Core memory: max top N", kind="number", default="12"),
+        ProviderField("core_budget", "Core memory: max chars", kind="number", default="8000"),
+        ProviderField("extract_on_session_end", "Extract memories on session end", kind="bool", default="false"),
+        ProviderField("importance_recall_boost", "Recall boost for important memories", kind="number", default="1.0"),
+        ProviderField("recall_min_score", "Recall min score (floor)", kind="number", default="0.0"),
+    ),
 )

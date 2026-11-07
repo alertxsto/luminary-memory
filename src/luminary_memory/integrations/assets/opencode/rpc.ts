@@ -1,0 +1,14 @@
+import { Rpc } from '@opencode/plugin/rpc';
+import { z } from 'zod';
+const request = z.object({ operation: z.string().min(1), session_ref: z.string().optional(), selection_handle: z.string().optional(), arguments: z.record(z.string(), z.unknown()), request_id: z.string().min(1) });
+const result = z.object({ status: z.enum(['ok', 'empty', 'invalid_request', 'denied', 'conflict', 'unavailable', 'unsupported', 'cancelled', 'unknown_outcome']), data: z.record(z.string(), z.unknown()).nullable(), error: z.object({ code: z.string(), message: z.string() }).nullable(), request_id: z.string(), context_epoch: z.string(), policy_revision: z.number(), as_of: z.string() });
+/** Native renderers import this contract; registration never exposes an LLM tool. */
+export const LuminaryConsole = Rpc.define({
+  id: 'luminary.inspector',
+  methods: {
+    inspect: { input: z.object({ session_id: z.string().min(1), request }), output: result },
+    confirm: { input: z.object({ session_id: z.string().min(1), preview_id: z.string().min(1) }), output: result },
+    registerFile: { input: z.object({ session_id: z.string().min(1), path: z.string().min(1), mode: z.enum(['read', 'write']) }), output: z.string().min(1) },
+  },
+  events: { invalidated: { schema: z.object({ session_id: z.string(), reason: z.string() }) } },
+});

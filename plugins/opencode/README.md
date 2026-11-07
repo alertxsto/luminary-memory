@@ -1,9 +1,14 @@
 # Luminary Memory for OpenCode V2
 
-The Luminary-maintained server plugin for **`@opencode/cli` 2.1.4** and
-**`@opencode/plugin` 2.1.4**. This is an official Luminary package, **not** an
-OpenCode endorsement. Luminary `0.3.2` targets V2; the older npm `0.3.1`
-package targets the separate V1 API and must not be used for this setup.
+The Luminary-maintained development package targets **`@opencode/cli` 2.2.0**
+and **`@opencode/plugin` 2.2.0**. This is an official Luminary package,
+**not** an OpenCode endorsement.
+
+**Unreleased checkpoint:** the interactive inspector is not in the published
+`0.3.2` packages. That released V2 bridge was verified on OpenCode 2.1.4;
+`0.3.1` targets the separate V1 API. The published install commands below do
+not install this development inspector. Build the local artifact to try it;
+the complete native/remote/Desktop/Web acceptance matrix is still open.
 
 ## Install
 
@@ -61,6 +66,23 @@ For an extracted tarball, use `/absolute/extracted/package/dist`. V2 skips
 configured single-file paths. Published npm packages instead resolve their
 `./dist/index.js` export normally. Neither form needs this repository's source
 files at runtime.
+
+For copy installation, install the checkpoint's Python package, then run:
+
+```sh
+python -m luminary_memory.integrations install opencode --global
+```
+
+Run `npm install --ignore-scripts` in the config directory printed by that
+command, then restart OpenCode. The installer writes dependency declarations;
+it deliberately does not run npm for you.
+
+In an existing native session, `/luminary`, the command palette or
+`Ctrl+Alt+M` opens the inspector. `f` switches compact/full presentation;
+Tab/Shift+Tab selects inspector tabs, and Enter opens actions. Native review
+dialogs scroll with arrows/PageUp/PageDown/Home/End; Cancel is selected by
+default. This checkpoint has real browse and confirmed tag-write evidence on
+CLI 2.2.0, not a claim that every native workflow is accepted.
 
 ## Configuration
 

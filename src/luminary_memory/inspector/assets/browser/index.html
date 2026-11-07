@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Luminary Memory Inspector</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header><div><p class="eyebrow">OPTIONAL LOCAL COMPANION</p><h1>Luminary Memory Inspector</h1></div><div class="header-actions"><button id="compact">Compact view</button><button id="signout">Sign out</button></div></header>
+  <p id="connection" role="status">Waiting for the one-use owner sign-in link.</p>
+  <nav id="tabs" role="tablist" aria-label="Memory inspector sections"></nav>
+  <section id="toolbar" aria-label="Inspector actions"></section>
+  <main id="view" tabindex="-1" aria-live="polite"></main>
+  <footer>One configured memory engine. Sharing is explicit. Opening this inspector does not change saving or call AI.</footer>
+  <dialog id="dialog"><form method="dialog"><h2 id="dialog-title"></h2><div id="dialog-body"></div><div id="dialog-actions"></div></form></dialog>
+</body>
+</html>

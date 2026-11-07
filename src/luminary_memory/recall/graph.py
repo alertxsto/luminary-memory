@@ -78,7 +78,7 @@ def index_memory_entities(backend, memory) -> None:
     _exec(backend, "DELETE FROM relations WHERE memory_id = ?", (memory.id,))
     ents = extract_entities(memory)
     if not ents:
-        backend.conn.commit()
+        backend._commit() if hasattr(backend, "_commit") else backend.conn.commit()
         return
     ids = [_entity_id(backend, e) for e in ents]
     # Generate pairs in salience order (first entities are most salient),
@@ -104,7 +104,7 @@ def index_memory_entities(backend, memory) -> None:
             "VALUES (?, ?, 'cooccur', 1.0, ?)",
             (target_id, source_id, memory.id),
         )
-    backend.conn.commit()
+    backend._commit() if hasattr(backend, "_commit") else backend.conn.commit()
 
 
 def _query_entities(query: str) -> set[str]:

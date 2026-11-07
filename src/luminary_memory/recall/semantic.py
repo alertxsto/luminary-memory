@@ -181,12 +181,12 @@ def _expand_with_entities(
         scope_where, scope_params = scope_sql(scope, alias="m", include_global=include_global)
         rel_rows = _exec(
             backend,
-            f"SELECT DISTINCT t.name FROM relations r "
+            f"SELECT t.name FROM relations r "
             f"JOIN entities s ON s.id = r.source_id "
             f"JOIN entities t ON t.id = r.target_id "
             f"JOIN memories m ON m.id = r.memory_id "
             f"WHERE s.id IN ({sid_ph}) AND t.name NOT IN ({ph}) AND {scope_where} "
-            f"ORDER BY r.weight DESC LIMIT ?",
+            f"GROUP BY t.name ORDER BY MAX(r.weight) DESC,t.name ASC LIMIT ?",
             (*start_ids, *qents, *scope_params, max_extra),
         ).fetchall()
         extra = [str(r[0]) for r in rel_rows if str(r[0]) not in words]

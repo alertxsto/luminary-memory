@@ -16,6 +16,24 @@ def _parse_dt(s: str) -> datetime:
         return dt.replace(tzinfo=UTC)
     return dt
 
+def expired_candidates(memories, now=None):
+    """Select existing TTL-eligible rows without mutating memory or access."""
+    now = now or datetime.now(UTC)
+    candidates = []
+    for memory in memories:
+        if memory.ttl_seconds is None:
+            continue
+        try:
+            created = _parse_dt(memory.observed_at or memory.created_at)
+            expiry = created.timestamp() + int(memory.ttl_seconds)
+        except (TypeError, ValueError, OverflowError):
+            logger.warning("skipping TTL cleanup for memory %s with invalid timestamp or TTL", memory.id)
+            continue
+        if expiry < now.timestamp():
+            candidates.append(memory)
+    return candidates
+
+
 
 def cleanup_expired(
     backend: MemoryBackend,
@@ -25,41 +43,25 @@ def cleanup_expired(
 ) -> int:
     if now is None:
         now = datetime.now(UTC)
-    count = 0
-    for m in backend.all():
-        from luminary_memory.scope import memory_matches_scope
-
-        if not memory_matches_scope(
-            m,
-            scope,
-            include_global=include_global,
-            active_only=True,
-        ):
-            continue
-        if m.ttl_seconds is None:
-            continue
+    from luminary_memory.scope import memory_matches_scope
+    candidates = expired_candidates([
+        memory for memory in backend.all()
+        if memory_matches_scope(memory, scope, include_global=include_global, active_only=True)
+    ], now=now)
+    for memory in candidates:
         try:
-            created = _parse_dt(m.observed_at or m.created_at)
-        except (TypeError, ValueError):
-            # A corrupt timestamp must not make the entire lifecycle fail or
-            # cause an accidental deletion. Leave it for explicit repair.
-            logger.warning("skipping TTL cleanup for memory %s with invalid timestamp", m.id)
-            continue
+            backend.record_event("expire", memory.id, before={"content": memory.content, "status": memory.status})
+        except Exception:
+            if backend.in_transaction:
+                raise
+            logger.debug("could not record expiry for %s", memory.id, exc_info=True)
         try:
-            expiry = created.timestamp() + int(m.ttl_seconds)
-        except (TypeError, ValueError, OverflowError):
-            logger.warning("skipping TTL cleanup for memory %s with invalid TTL", m.id)
-            continue
-        if expiry < now.timestamp():
-            try:
-                backend.record_event("expire", m.id, before={"content": m.content, "status": m.status})
-            except Exception:
-                logger.debug("could not record expiry for %s", m.id, exc_info=True)
-            try:
-                backend.sync_claim_status(m.id, "expired", now.isoformat())
-            except Exception:
-                logger.debug("could not mark claims expired for %s", m.id, exc_info=True)
-            backend.delete(m.id)  # type: ignore[arg-type]
-            count += 1
+            backend.sync_claim_status(memory.id, "expired", now.isoformat())
+        except Exception:
+            if backend.in_transaction:
+                raise
+            logger.debug("could not mark claims expired for %s", memory.id, exc_info=True)
+        backend.delete(memory.id)
+    count = len(candidates)
     logger.info("cleanup removed=%d", count)
     return count

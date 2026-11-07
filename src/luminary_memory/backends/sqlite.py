@@ -9,9 +9,10 @@ import threading
 import numpy as np
 
 from luminary_memory.backends.base import MemoryBackend
+from luminary_memory.backends.inspector import InspectorSQL, atomic_backend
 from luminary_memory.schema import init_schema
 from luminary_memory.scope import scope_sql
-from luminary_memory.types import Memory
+from luminary_memory.types import Memory, utc_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ def _sanitize_fts_query(query: str) -> str:
     return " OR ".join(safe_terms)
 
 
-class SQLiteBackend(MemoryBackend):
+class SQLiteBackend(InspectorSQL, MemoryBackend):
     def __init__(self, db_path: str = "luminary_memory.db"):
         self.db_path = db_path
         self._local = threading.local()
@@ -93,6 +94,7 @@ class SQLiteBackend(MemoryBackend):
         if conn is None:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
+            conn.create_function("inspector_utc", 1, utc_timestamp, deterministic=True)
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA busy_timeout = 5000")
             # WAL lets the Hermes writer and prefetch reader coexist without
@@ -104,6 +106,7 @@ class SQLiteBackend(MemoryBackend):
                 pass
             init_schema(conn)
             self._local.conn = conn
+            self._inspector_schema()
         return conn
 
     @property
@@ -150,6 +153,7 @@ class SQLiteBackend(MemoryBackend):
             supersedes_id=row["supersedes_id"],
             content_hash=row["content_hash"],
             needs_reindex=bool(row["needs_reindex"]),
+            revision=_safe_int(row["revision"], 1),
         )
         emb = row["embedding"]
         if emb is not None:
@@ -236,14 +240,15 @@ class SQLiteBackend(MemoryBackend):
         ).fetchone()
         return self._row_to_memory(row) if row else None
 
+    @atomic_backend
     def add_with_status(self, m: Memory) -> tuple[int, bool]:
         """Atomically insert or resolve an exact active duplicate."""
         try:
             cur = self._insert_row(m)
-            self.conn.commit()
+            self._commit()
             return int(cur.lastrowid), True
         except sqlite3.IntegrityError as exc:
-            self.conn.rollback()
+            self._rollback()
             # Only the scoped active-hash index is an expected duplicate race.
             # Other integrity failures (for example a malformed NOT NULL row)
             # must remain visible to callers instead of being misreported as a
@@ -305,18 +310,7 @@ class SQLiteBackend(MemoryBackend):
         after: dict | None = None,
         actor: str | None = None,
     ) -> None:
-        self.conn.execute(
-            "INSERT INTO memory_events(memory_id, event_type, before_json, after_json, actor) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (
-                memory_id,
-                event_type,
-                json.dumps(before, ensure_ascii=False) if before is not None else None,
-                json.dumps(after, ensure_ascii=False) if after is not None else None,
-                actor,
-            ),
-        )
-        self.conn.commit()
+        self._record_scoped_event(event_type, memory_id, before, after, actor)
 
     def add_evidence(
         self,
@@ -334,11 +328,11 @@ class SQLiteBackend(MemoryBackend):
             "VALUES (?, ?, ?, ?, ?, ?)",
             (memory_id, quote, source_id, observed_at, extractor, float(confidence)),
         )
-        self.conn.commit()
+        self._commit()
 
-    def record_episode(self, episode_id: str, content: str, **metadata) -> None:
+    def record_episode(self, episode_id: str, content: str, **metadata) -> bool:
         """Append the raw source once; an episode is immutable by contract."""
-        self.conn.execute(
+        cursor = self.conn.execute(
             "INSERT OR IGNORE INTO episodes "
             "(id, content, source, metadata, user_id, session_id, workspace_id, agent_id, observed_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -354,7 +348,8 @@ class SQLiteBackend(MemoryBackend):
                 metadata.get("observed_at"),
             ),
         )
-        self.conn.commit()
+        self._commit()
+        return cursor.rowcount == 1
 
     def recent_episodes(
         self,
@@ -413,6 +408,7 @@ class SQLiteBackend(MemoryBackend):
             )
         return result
 
+    @atomic_backend
     def add_claim(self, memory_id: int, claim: dict, **scope) -> None:
         """Write one validated atomic claim and its supporting quote."""
         subject = str(claim.get("subject") or "").strip()
@@ -453,27 +449,28 @@ class SQLiteBackend(MemoryBackend):
                 "(claim_id, quote, source_episode_id, confidence) VALUES (?, ?, ?, ?)",
                 (claim_id, quote, claim.get("source_episode_id"), confidence),
             )
-            self.conn.commit()
+            self._commit()
         except Exception:
-            self.conn.rollback()
+            self._rollback()
             raise
 
-    def sync_claim_status(
-        self,
-        memory_id: int,
-        status: str,
-        valid_to: str | None = None,
-    ) -> None:
+    @atomic_backend
+    def sync_claim_status(self,
+    memory_id: int,
+    status: str,
+    valid_to: str | None = None,) -> None:
         self.conn.execute(
             "UPDATE claims SET status = ?, valid_to = COALESCE(valid_to, ?) "
             "WHERE memory_id = ? AND status IN ('active', 'conflicted')",
             (str(status), valid_to, memory_id),
         )
-        self.conn.commit()
+        self._commit()
 
+    @atomic_backend
     def update(self, m: Memory) -> None:
         if m.id is None:
             raise ValueError("cannot update a memory without an id")
+        self._check_revision(m)
         self.conn.execute(
             "UPDATE memories SET content=?, metadata=?, source=?, tags=?, importance=?, "
             "ttl_seconds=?, updated_at=?, last_accessed_at=?, access_count=?, embedding=?, "
@@ -510,14 +507,17 @@ class SQLiteBackend(MemoryBackend):
                 m.id,
             ),
         )
-        self.conn.commit()
+        self._commit()
+        self._refresh_revision(m)
 
+    @atomic_backend
     def delete(self, id: int) -> None:
         # Relations reference memories via FK; delete them first (manual cascade).
         self.conn.execute("DELETE FROM relations WHERE memory_id = ?", (id,))
         self.conn.execute("DELETE FROM memories WHERE id = ?", (id,))
-        self.conn.commit()
+        self._commit()
 
+    @atomic_backend
     def rehome_memory_references(self, source_id: int, target_id: int) -> None:
         """Preserve evidence/claims/graph edges when a duplicate is removed."""
         self.conn.execute(
@@ -532,8 +532,9 @@ class SQLiteBackend(MemoryBackend):
             "UPDATE relations SET memory_id = ? WHERE memory_id = ?",
             (target_id, source_id),
         )
-        self.conn.commit()
+        self._commit()
 
+    @atomic_backend
     def delete_many(self, ids: list[int]) -> None:
         """Batch delete (relations + memories) in two statements."""
         if not ids:
@@ -543,17 +544,17 @@ class SQLiteBackend(MemoryBackend):
             ph = ",".join("?" for _ in chunk)
             self.conn.execute(f"DELETE FROM relations WHERE memory_id IN ({ph})", chunk)
             self.conn.execute(f"DELETE FROM memories WHERE id IN ({ph})", chunk)
-        self.conn.commit()
+        self._commit()
 
     def all(self) -> list[Memory]:
         rows = self.conn.execute("SELECT * FROM memories ORDER BY id").fetchall()
         return [self._row_to_memory(r) for r in rows]
 
+    @atomic_backend
     def add_many_with_status(self, memories: list[Memory]) -> list[tuple[int, bool]]:
         if not memories:
             return []
         results: list[tuple[int, bool]] = []
-        self.conn.execute("BEGIN")
         try:
             for m in memories:
                 try:
@@ -567,10 +568,10 @@ class SQLiteBackend(MemoryBackend):
                     results.append((existing.id, False))
                 else:
                     results.append((int(cur.lastrowid), True))
-            self.conn.commit()
+            self._commit()
         except Exception:
             logger.exception("add_many batch failed — rolling back")
-            self.conn.rollback()
+            self._rollback()
             raise
         return results
 
@@ -776,7 +777,7 @@ class SQLiteBackend(MemoryBackend):
                 f"WHERE id IN ({ph})",
                 (now, *chunk),
             )
-        self.conn.commit()
+        self._commit()
 
     def update_importances(self, pairs: list[tuple[float, int]]) -> None:
         """Bulk-update importance for (importance, id) pairs in one pass."""
@@ -788,7 +789,7 @@ class SQLiteBackend(MemoryBackend):
                 "UPDATE memories SET importance = ? WHERE id = ?",
                 normalized[start : start + 450],
             )
-        self.conn.commit()
+        self._commit()
 
     def keyword_search(
         self,

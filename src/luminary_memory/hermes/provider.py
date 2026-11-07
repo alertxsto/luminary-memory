@@ -18,17 +18,19 @@ import re
 import threading
 import time
 import uuid
+from contextvars import copy_context
+from functools import partial
 
 from agent.memory_provider import MemoryProvider  # present only in hermes runtime
 
 from luminary_memory.api import MemoryClient
 from luminary_memory.config import Settings
+from luminary_memory.hermes.activity import operation_snapshot
 from luminary_memory.hermes.config import _DEFAULTS, load_config, save_config
 from luminary_memory.scope import memory_matches_scope
 
 _LUMINARY_GLYPH = "🌙"
 
-_MODE_CHOICES = ["context", "tools", "hybrid"]
 
 _RECALL_HEADER = "# Luminary Memory (persistent cross-session context)"
 _SESSION_EPISODE_SOURCE = "hermes-session"
@@ -124,6 +126,7 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._log = logging.getLogger("luminary_memory.hermes")
         self._config: dict = dict(_DEFAULTS)
         self._client: MemoryClient | None = None
+        self._client_thread_id = threading.get_ident()
         self._session_id: str | None = None
         self._parent_session_id: str | None = None
         self._platform: str = ""
@@ -165,15 +168,6 @@ class LuminaryMemoryProvider(MemoryProvider):
     def name(self) -> str:
         return "luminary"
 
-    def replaces_builtin_memory(self) -> bool:
-        """Declare Luminary as Hermes' single persistent memory authority.
-
-        Hermes keeps native memory files on disk for recovery, but the active
-        agent surface must not combine those files with this provider.  This
-        is part of Hermes' public provider contract; implementing it here
-        avoids any patch to Hermes' own source tree.
-        """
-        return True
 
     def is_available(self) -> bool:
         """Return True when the package imports and (for pgvector) deps exist.
@@ -242,6 +236,15 @@ class LuminaryMemoryProvider(MemoryProvider):
         }
         payload.update(fields)
         self._log.log(level, json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        snapshot = operation_snapshot(event, trace, payload["scope"], fields)
+        if (snapshot is not None and self._client is not None
+                and all(snapshot.get(key) for key in ("user_id", "workspace_id", "agent_id"))):
+            try:
+                client = self._client if threading.get_ident() == self._client_thread_id else self._writer_client()
+                if client is not None:
+                    client.backend.record_event("hermes_operation", None, after=snapshot, actor="hermes")
+            except Exception as exc:  # noqa: BLE001 -- telemetry failure must not retry a committed write
+                self._log.error("Activity persistence unavailable (%s)", type(exc).__name__)
         return trace
 
     # ------------------------------------------------------------------ #
@@ -265,12 +268,28 @@ class LuminaryMemoryProvider(MemoryProvider):
             ):
                 raise RuntimeError("previous Luminary provider workers did not stop")
 
-        hermes_home = kwargs.get("hermes_home") or os.environ.get(
-            "HERMES_HOME", os.path.expanduser("~/.hermes")
-        )
+        hermes_home = kwargs.get("hermes_home")
+        if not hermes_home:
+            from hermes_constants import get_hermes_home
+
+            hermes_home = get_hermes_home()
         self._hermes_home = str(hermes_home)
         self._log = _setup_logger(self._hermes_home)
         self._config = load_config(self._hermes_home)
+        # The host binds profile credentials on this call. Never read another
+        # profile's process environment or persist the resolved credential.
+        try:
+            from agent.secret_scope import get_secret
+        except ModuleNotFoundError as exc:
+            if exc.name != "agent.secret_scope":
+                raise
+            # Single-profile standalone use has no Hermes credential scope.
+            # Never inherit a process credential from another native profile.
+            self._config["llm_api_key"] = ""
+            self._config["pg_dsn"] = ""
+        else:
+            self._config["llm_api_key"] = get_secret("LUMINARY_LLM_API_KEY") or ""
+            self._config["pg_dsn"] = get_secret("LUMINARY_PG_DSN") or ""
         # A pre-initialize shutdown may have no writer to consume its sentinel;
         # start each lifecycle with a fresh queue once all old workers stopped.
         self._retain_queue = queue.Queue()
@@ -315,6 +334,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                 enricher=self._build_enricher(),
                 scope=self._scope,
             )
+            self._client_thread_id = threading.get_ident()
             self._shutting_down.clear()
             with self._retain_gate:
                 self._accepting_retains = True
@@ -361,6 +381,7 @@ class LuminaryMemoryProvider(MemoryProvider):
         settings = Settings(
             backend=self._config.get("backend", "sqlite"),
             db_path=db_path,
+            pg_dsn=self._config.get("pg_dsn", ""),
             token_budget=int(self._config.get("token_budget", 2048)),
             ingest_llm=bool(self._config.get("ingest_llm", False)),
             max_memories=int(self._config.get("max_memories", 1000) or 0) or None,
@@ -422,7 +443,8 @@ class LuminaryMemoryProvider(MemoryProvider):
 
     def _start_writer(self) -> None:
         self._writer_thread = threading.Thread(
-            target=self._writer_loop, name="luminary-retain-writer", daemon=True
+            target=copy_context().run, args=(self._writer_loop,),
+            name="luminary-retain-writer", daemon=True
         )
         self._writer_thread.start()
 
@@ -537,39 +559,27 @@ class LuminaryMemoryProvider(MemoryProvider):
     # ------------------------------------------------------------------ #
 
     def get_config_schema(self) -> list[dict]:
-        """Declare the config fields surfaced by ``hermes memory setup``.
-
-        Derived from ``hermes.config_schema.CONFIG_SCHEMA`` (single source of
-        truth for dashboard + CLI). ``llm_api_key`` is appended as a secret;
-        select fields get their choices from the shared constants.
-        """
+        """Derive setup descriptors from Hermes's typed dashboard schema."""
         from luminary_memory.hermes.config_schema import CONFIG_SCHEMA
 
         fields: list[dict] = []
-        for f in CONFIG_SCHEMA.fields:
-            key = f["key"]
-            entry: dict = {
-                "key": key,
-                "label": f["label"],
-                "type": f["type"],
-                "default": _DEFAULTS.get(key, ""),
+        for field in CONFIG_SCHEMA.fields:
+            default = _DEFAULTS.get(field.key, field.default)
+            kind = ("boolean" if field.kind == "bool" else
+                    "integer" if field.kind == "number" and type(default) is int else
+                    "number" if field.kind == "number" else "text")
+            entry = {
+                "key": field.key,
+                "label": field.label,
+                "description": field.description or field.label,
+                "type": kind,
+                "default": default,
             }
-            if key == "mode":
-                entry["choices"] = _MODE_CHOICES
-            elif key == "backend":
-                entry["choices"] = ["sqlite", "pgvector"]
+            if field.kind == "select":
+                entry["choices"] = [option.value for option in field.options]
+            if field.is_secret:
+                entry.update(secret=True, env_var=field.env_key, default="")
             fields.append(entry)
-
-        fields.append(
-            {
-                "key": "llm_api_key",
-                "label": "LLM API key",
-                "type": "text",
-                "secret": True,
-                "env_var": "LUMINARY_LLM_API_KEY",
-                "default": "",
-            }
-        )
         return fields
 
     def save_config(self, values: dict, hermes_home: str | None = None) -> None:
@@ -583,21 +593,15 @@ class LuminaryMemoryProvider(MemoryProvider):
         if not home:
             raise RuntimeError("provider is not initialized; cannot save config")
         save_config(values, home)
-        self._config.update({k: v for k, v in values.items() if k in _DEFAULTS})
+        persisted = load_config(home)
+        self._config.update({k: persisted[k] for k in values if k in _DEFAULTS and k != "llm_api_key"})
 
     def post_setup(self, hermes_home: str, config: dict) -> None:
         """Activate Luminary without requiring a Hermes source patch.
 
-        Hermes' external-provider contract supports a single authority.  The
-        setup path also uses Hermes' existing config switches so profiles that
-        have their own config cannot accidentally re-enable native memory.
-        This hook is optional; the shell installer performs the same idempotent
-        edit for Hermes versions whose setup wizard does not expose
-        ``post_setup``.
-
-        The runtime provider never imports Hermes' private agent modules.  The
-        activation helper edits the public on-disk config boundary itself, so
-        this remains usable when Hermes reorganizes its Python packages.
+        This explicit setup gesture selects only the requested profile. UI
+        installation/discovery never calls it, and sibling profiles retain
+        their independent provider and native memory settings.
         """
         if not isinstance(config, dict):
             raise TypeError("Hermes setup config must be a mapping")
@@ -612,9 +616,11 @@ class LuminaryMemoryProvider(MemoryProvider):
             }
         )
 
-        from luminary_memory.hermes.activation import activate_home
+        from pathlib import Path
 
-        activate_home(hermes_home)
+        from luminary_memory.hermes.activation import activate_config
+
+        activate_config(Path(hermes_home) / "config.yaml")
         # Ensure the provider's own zero-config file exists under the same
         # profile selected by Hermes.  Do not materialize every default.
         save_config({}, hermes_home)
@@ -626,10 +632,9 @@ class LuminaryMemoryProvider(MemoryProvider):
     def on_memory_write(self, action: str, target: str, content: str, metadata=None) -> None:
         """Ignore native writes when Luminary owns the memory surface.
 
-        Current Hermes skips this bridge after consulting
-        :meth:`replaces_builtin_memory`.  Keeping the guard here makes the
-        provider safe against older/additive callers too: native files must
-        never become a second stream of facts that Luminary has to reconcile.
+        Native files must never become a second stream of facts. Provider setup
+        explicitly disables the documented native memory surfaces in the chosen
+        profile; this guard also prevents destructive native mirroring.
         """
         if not self._client or self._shutting_down.is_set():
             return
@@ -861,7 +866,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                     content_chars=len(text),
                 )
                 return
-            recorder(
+            inserted = recorder(
                 episode_id,
                 text,
                 source=_SESSION_EPISODE_SOURCE,
@@ -872,11 +877,12 @@ class LuminaryMemoryProvider(MemoryProvider):
                 agent_id=self._agent_identity or None,
             )
             self._log_event(
-                "session_episode.recorded",
+                "session_episode.duplicate" if inserted is False else "session_episode.recorded",
                 operation="session_episode",
                 status="ok",
                 session_id=sid,
                 episode_id=episode_id,
+                episodes=1 if inserted is True else 0 if inserted is False else None,
                 content_hash=_stable_content_hash(text)[:16],
                 content_chars=len(text),
             )
@@ -1502,8 +1508,9 @@ class LuminaryMemoryProvider(MemoryProvider):
         turn is worth saving and produces a factual summary; turns the LLM
         deems trivial are dropped instead of polluting the store.
         """
+        log_event = partial(self._log_event, session_id=(metadata or {}).get("session_id") or self._session_id)
         started = time.perf_counter()
-        trace_id = self._log_event(
+        trace_id = log_event(
             "retain.started",
             operation="retain",
             status="started",
@@ -1514,7 +1521,7 @@ class LuminaryMemoryProvider(MemoryProvider):
         )
         client = self._writer_client()
         if client is None:
-            self._log_event(
+            log_event(
                 "retain.failed",
                 trace_id=trace_id,
                 operation="retain",
@@ -1537,7 +1544,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                     # the semantic store merely because curation is
                     # unavailable. Explicit memory/delegation hooks are
                     # already curated by their caller and remain writable.
-                    self._log_event(
+                    log_event(
                         "retain.skipped",
                         trace_id=trace_id,
                         operation="retain",
@@ -1550,7 +1557,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                 enriched = client.enricher.enrich(content)
                 enrichment_error = getattr(enriched, "error", None)
                 if enrichment_error:
-                    self._log_event(
+                    log_event(
                         "retain.skipped",
                         trace_id=trace_id,
                         operation="retain",
@@ -1561,7 +1568,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                     )
                     return
                 if not enriched.worth_saving:
-                    self._log_event(
+                    log_event(
                         "retain.skipped",
                         trace_id=trace_id,
                         operation="retain",
@@ -1575,7 +1582,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                     # (enrichment failure, empty reply, or "nothing durable").
                     # Storing the raw transcript would pollute the store with
                     # conversation noise that recall then surfaces. Drop it.
-                    self._log_event(
+                    log_event(
                         "retain.skipped",
                         trace_id=trace_id,
                         operation="retain",
@@ -1602,6 +1609,7 @@ class LuminaryMemoryProvider(MemoryProvider):
 
             meta = {k: v for k, v in (metadata or {}).items() if v is not None}
             all_tags = list(dict.fromkeys(tags + extra_tags))
+            source_observation = meta.get("source_id") or "hermes-retain:" + uuid.uuid4().hex
             mid = client.ingest(
                 content,
                 tags=all_tags,
@@ -1613,11 +1621,11 @@ class LuminaryMemoryProvider(MemoryProvider):
                 session_id=meta.get("session_id") or self._session_id,
                 workspace_id=self._agent_workspace or None,
                 agent_id=self._agent_identity or None,
-                source_id=meta.get("source_id") or source,
+                source_id=source_observation,
                 source_text=source_text,
             )
             if mid is None:
-                self._log_event(
+                log_event(
                     "retain.skipped",
                     trace_id=trace_id,
                     operation="retain",
@@ -1626,22 +1634,27 @@ class LuminaryMemoryProvider(MemoryProvider):
                     latency_ms=round((time.perf_counter() - started) * 1000, 2),
                 )
                 return
-            # Emit only after the writer has committed a real memory. This
-            # keeps the CLI/Hermes indicator truthful when the whitelist or
-            # LLM curation rejects a queued turn.
-            self._emit_retain_indicator()
-            self._log_event(
+            # A returned ID may be an existing duplicate, not a committed new fact.
+            # An explicit caller source ID is preserved but cannot prove insertion.
+            memory = client.backend.get(mid)
+            stored = None if meta.get("source_id") else int(memory is not None and memory.source_id == source_observation)
+            duplicates = None if stored is None else 1 - stored
+            if stored == 1:
+                self._emit_retain_indicator()
+            log_event(
                 "retain.completed",
                 trace_id=trace_id,
                 operation="retain",
                 status="ok",
                 memory_id=mid,
+                stored=stored,
+                duplicates=duplicates,
                 content_chars=len(content),
                 tag_count=len(all_tags),
                 latency_ms=round((time.perf_counter() - started) * 1000, 2),
             )
         except Exception as exc:  # writer must never die
-            self._log_event(
+            log_event(
                 "retain.failed",
                 trace_id=trace_id,
                 operation="retain",
@@ -2096,7 +2109,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                         "prefetch worker still running; keeping current request queued"
                     )
                     return
-            t = threading.Thread(target=_worker, name="luminary-prefetch", daemon=True)
+            t = threading.Thread(target=copy_context().run, args=(_worker,), name="luminary-prefetch", daemon=True)
             self._prefetch_thread = t
             t.start()
 
@@ -2471,10 +2484,12 @@ class LuminaryMemoryProvider(MemoryProvider):
         )
         try:
             tags = args.get("tags") or []
+            source_observation = "hermes-tool:" + uuid.uuid4().hex
             mid = self._client.ingest(
                 str(content),
                 tags=list(tags),
                 source="hermes-tool",
+                source_id=source_observation,
                 **self._operation_scope(),
             )
             if mid is None:
@@ -2486,16 +2501,21 @@ class LuminaryMemoryProvider(MemoryProvider):
                     reason="whitelist_rejected",
                     latency_ms=round((time.perf_counter() - started) * 1000, 2),
                 )
-                return json.dumps({"result": "Memory rejected by whitelist."})
+                return json.dumps({"result": "Memory rejected by whitelist.", "memory_id": None, "stored": 0, "duplicates": 0})
+            memory = self._client.backend.get(mid)
+            stored = int(memory is not None and memory.source_id == source_observation)
             self._log_event(
                 "retain.completed",
                 trace_id=trace_id,
                 operation="tool_ingest",
                 status="ok",
                 memory_id=mid,
+                stored=stored,
+                duplicates=1 - stored,
                 latency_ms=round((time.perf_counter() - started) * 1000, 2),
             )
-            return json.dumps({"result": f"Memory stored (id={mid})."})
+            outcome = "Memory stored" if stored else "Existing memory retained; duplicate not stored"
+            return json.dumps({"result": f"{outcome} (id={mid}).", "memory_id": mid, "stored": stored, "duplicates": 1 - stored})
         except Exception as exc:  # noqa: BLE001 -- tool errors are returned as JSON
             self._log_event(
                 "retain.failed",

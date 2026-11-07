@@ -4,6 +4,8 @@ import hashlib
 import json
 import logging
 import math
+from collections import deque
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,6 +30,7 @@ def _mem_to_dict(m) -> dict:
         importance = 0.5
     importance = max(0.0, min(1.0, importance))
     return {
+        "id": m.id,
         "content": m.content,
         "tags": list(m.tags or []),
         "metadata": dict(m.metadata or {}),
@@ -90,6 +93,40 @@ def export_memories(
     return {"count": len(memories), "path": str(p)}
 
 
+def _lineage_order(rows: list[dict]) -> list[int]:
+    """Validate source references and return a stable predecessor-first order."""
+    positions = {}
+    for index, row in enumerate(rows):
+        source_id = row.get("id")
+        if source_id is not None:
+            if type(source_id) is not int or source_id <= 0 or source_id in positions:
+                raise ValueError("invalid or duplicate source reference")
+            positions[source_id] = index
+    children = [[] for _ in rows]
+    ready = deque()
+    for index, row in enumerate(rows):
+        predecessor = row.get("supersedes_id")
+        if predecessor is None:
+            ready.append(index)
+        else:
+            if type(predecessor) is not int or predecessor not in positions:
+                raise ValueError("lineage predecessor is absent; source IDs are required to map lineage")
+            parent = rows[positions[predecessor]]
+            for field in ("user_id", "workspace_id", "agent_id"):
+                if (row.get(field) is not None and parent.get(field) is not None
+                        and row[field] != parent[field]):
+                    raise ValueError("lineage cannot cross record ownership")
+            children[positions[predecessor]].append(index)
+    order = []
+    while ready:
+        index = ready.popleft()
+        order.append(index)
+        ready.extend(children[index])
+    if len(order) != len(rows):
+        raise ValueError("cyclic lineage cannot be imported")
+    return order
+
+
 def import_memories(
     backend: MemoryBackend,
     path: str | Path,
@@ -138,7 +175,7 @@ def import_memories(
             return None
         return vector if all(math.isfinite(item) for item in vector) else None
 
-    memories: list[Memory] = []
+    records: list[tuple[dict, Memory]] = []
     normalized_scope = normalize_scope(scope)
     valid_statuses = {"candidate", "active", "conflicted", "superseded", "expired", "deleted"}
     import_timestamp = datetime.now(UTC).isoformat()
@@ -231,15 +268,21 @@ def import_memories(
                 setattr(m, field, value)
             if mismatched:
                 continue
-        memories.append(m)
+        records.append((d, m))
 
-    if not memories:
+    if not records:
         return {"imported": 0}
+
+    order = _lineage_order([row for row, _ in records])
+    records = [records[index] for index in order]
+    memories = [memory for _, memory in records]
+    has_lineage = any(memory.supersedes_id is not None for memory in memories)
+    source_records = {row["id"]: memory for row, memory in records if row.get("id") is not None}
 
     # Dedup guard: skip memories whose content already exists in the store.
     # Prevents bulk imports (e.g. MEMORY.md/USER.md merges) from creating
     # duplicate entries.
-    existing_contents: set[str] = set()
+    existing_contents: set[tuple] = set()
     # An explicit target scope always uses exact ownership for deduplication;
     # ``include_global`` only applies to an unbound/compatibility lookup.
     dedup_include_global = bool(include_global) and not bool(normalized_scope)
@@ -261,96 +304,115 @@ def import_memories(
                 continue
             c = getattr(existing, "content", None)
             if c:
-                existing_contents.add(_hash(c))
+                existing_contents.add((existing.user_id, existing.workspace_id, existing.agent_id,
+                                       existing.session_id, _hash(c)))
     except Exception:  # noqa: BLE001 -- dedup is best-effort
         existing_contents = set()
 
     deduped: list[Memory] = []
     skipped_dups = 0
     for m in memories:
-        key = _hash(m.content)
-        if key and key in existing_contents:
-            skipped_dups += 1
-            continue
-        existing_contents.add(key)
+        key = (m.user_id, m.workspace_id, m.agent_id, m.session_id, m.content_hash)
+        if not has_lineage and m.status == "active":
+            if key in existing_contents:
+                skipped_dups += 1
+                continue
+            existing_contents.add(key)
         deduped.append(m)
 
     if not deduped:
         return {"imported": 0, "skipped_duplicates": skipped_dups}
 
-    # Prefer the status-aware batch path when available. The pre-check above
-    # is only an optimization; concurrent importers can still race between
-    # reading existing rows and inserting. A loser must not append a second
-    # episode/evidence/graph lineage for the canonical row.
-    add_many_with_status = getattr(backend, "add_many_with_status", None)
-    if callable(add_many_with_status):
-        added = add_many_with_status(deduped)
-    else:
-        add_many = getattr(backend, "add_many", None)
-        if callable(add_many):
-            added = [(mid, True) for mid in add_many(deduped)]
-        else:
-            added = [(backend.add(m), True) for m in deduped]
     from luminary_memory.recall.graph import index_memory_entities
 
     secondary_failures = 0
     imported_count = 0
-    for m, (mid, inserted) in zip(deduped, added):
-        m.id = mid
-        if not inserted:
-            skipped_dups += 1
-            continue
-        imported_count += 1
-        try:
-            backend.record_episode(
-                f"memory:{mid}",
-                str(m.metadata.get("raw_text") or m.content),
-                source=m.source,
-                metadata=m.metadata,
-                user_id=m.user_id,
-                session_id=m.session_id,
-                workspace_id=m.workspace_id,
-                agent_id=m.agent_id,
-                observed_at=m.observed_at,
-            )
-            for claim in list(m.metadata.get("claims") or []):
-                if not isinstance(claim, dict):
-                    continue
-                claim_row = dict(claim)
-                claim_quote = str(claim_row.get("evidence_quote") or "").strip()
-                if not claim_quote or (
-                    claim_quote not in m.content
-                    and claim_quote not in str(m.evidence_quote or "")
-                ):
-                    continue
-                claim_row["source_episode_id"] = f"memory:{mid}"
-                backend.add_claim(
-                    mid,
-                    claim_row,
+    # Lineage needs target IDs before inserting descendants. Keep the entire
+    # chain and its audit/evidence atomic; unrelated rows retain the batch path.
+    with backend.transaction() if has_lineage else nullcontext():
+        if has_lineage:
+            added = []
+            for m in deduped:
+                predecessor = m.supersedes_id
+                if predecessor is not None:
+                    m.supersedes_id = source_records[predecessor].id
+                existing_id = backend.find_import_duplicate_id(m)
+                mid, inserted = backend.add_with_status(m) if existing_id is None else (existing_id, False)
+                if (not inserted and predecessor is not None
+                        and backend.get(mid).supersedes_id != m.supersedes_id):
+                    raise ValueError("duplicate record has incompatible lineage")
+                m.id = mid
+                added.append((mid, inserted))
+        else:
+            # A concurrent duplicate winner must not get a second import audit,
+            # episode or evidence chain.
+            add_many_with_status = getattr(backend, "add_many_with_status", None)
+            if callable(add_many_with_status):
+                added = add_many_with_status(deduped)
+            else:
+                add_many = getattr(backend, "add_many", None)
+                if callable(add_many):
+                    added = [(mid, True) for mid in add_many(deduped)]
+                else:
+                    added = [(backend.add(m), True) for m in deduped]
+        for m, (mid, inserted) in zip(deduped, added):
+            m.id = mid
+            if not inserted:
+                skipped_dups += 1
+                continue
+            imported_count += 1
+            try:
+                backend.record_episode(
+                    f"memory:{mid}",
+                    str(m.metadata.get("raw_text") or m.content),
+                    source=m.source,
+                    metadata=m.metadata,
                     user_id=m.user_id,
                     session_id=m.session_id,
                     workspace_id=m.workspace_id,
                     agent_id=m.agent_id,
-                )
-            index_memory_entities(backend, m)
-            backend.record_event("import", mid, after=_mem_to_dict(m), actor="import")
-            if m.evidence_quote:
-                backend.add_evidence(
-                    mid,
-                    m.evidence_quote,
-                    source_id=m.source_id,
                     observed_at=m.observed_at,
-                    extractor="import",
-                    confidence=m.confidence,
                 )
-        except Exception:
-            secondary_failures += 1
-            m.needs_reindex = True
-            try:
-                backend.update(m)
+                for claim in list(m.metadata.get("claims") or []):
+                    if not isinstance(claim, dict):
+                        continue
+                    claim_row = dict(claim)
+                    claim_quote = str(claim_row.get("evidence_quote") or "").strip()
+                    if not claim_quote or (
+                        claim_quote not in m.content
+                        and claim_quote not in str(m.evidence_quote or "")
+                    ):
+                        continue
+                    claim_row["source_episode_id"] = f"memory:{mid}"
+                    backend.add_claim(
+                        mid,
+                        claim_row,
+                        user_id=m.user_id,
+                        session_id=m.session_id,
+                        workspace_id=m.workspace_id,
+                        agent_id=m.agent_id,
+                    )
+                index_memory_entities(backend, m)
+                backend.record_event("import", mid, after=_mem_to_dict(m), actor="import")
+                if m.evidence_quote:
+                    backend.add_evidence(
+                        mid,
+                        m.evidence_quote,
+                        source_id=m.source_id,
+                        observed_at=m.observed_at,
+                        extractor="import",
+                        confidence=m.confidence,
+                    )
             except Exception:
-                logger.debug("could not mark imported memory %s for reindex", mid, exc_info=True)
-            logger.warning("import index/evidence rebuild incomplete for memory %s", mid, exc_info=True)
+                if has_lineage:
+                    raise
+                secondary_failures += 1
+                m.needs_reindex = True
+                try:
+                    backend.update(m)
+                except Exception:
+                    logger.debug("could not mark imported memory %s for reindex", mid, exc_info=True)
+                logger.warning("import index/evidence rebuild incomplete for memory %s", mid, exc_info=True)
     result: dict = {"imported": imported_count}
     if skipped_dups:
         result["skipped_duplicates"] = skipped_dups

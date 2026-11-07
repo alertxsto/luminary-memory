@@ -20,10 +20,10 @@ LLM tokens; optional write-time curation/maintenance can use an LLM.
 
 The installer selects Luminary and turns off Hermes' native `MEMORY.md` and
 `USER.md` surfaces through the existing `memory_enabled` and
-`user_profile_enabled` settings. It applies that boundary to the root config
-and existing profile configs without creating new profiles. This keeps one
-persistent authority without editing Hermes source or depending on a
-particular Hermes version.
+`user_profile_enabled` settings. It applies that boundary only to the explicitly
+selected config; sibling profiles and their provider selections are unchanged.
+Configure each intended profile separately. This keeps one persistent authority
+per selected profile without editing Hermes source.
 
 **What your agent remembers is what it becomes.**
 

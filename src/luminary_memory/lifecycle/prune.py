@@ -8,6 +8,22 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
 
+def prune_candidates(memories, min_importance=0.2, max_count=None, pin_threshold=0.9):
+    """Select exactly the existing prune policy without writing any rows."""
+    if max_count is not None:
+        max_count = max(0, int(max_count))
+    low = [memory for memory in memories
+           if float(memory.importance) < float(min_importance)
+           and float(memory.importance) < float(pin_threshold)]
+    removed = {memory.id for memory in low}
+    remaining = [memory for memory in memories if memory.id not in removed]
+    if max_count is not None and len(remaining) > max_count:
+        unpinned = [memory for memory in remaining if float(memory.importance) < float(pin_threshold)]
+        unpinned.sort(key=lambda memory: (float(memory.importance), int(memory.access_count), memory.created_at))
+        low.extend(unpinned[:len(remaining) - max_count])
+    return low
+
+
 
 def prune(
     backend: MemoryBackend,
@@ -26,8 +42,6 @@ def prune(
     """
     removed = 0
 
-    def _pinned(m) -> bool:
-        return float(getattr(m, "importance", 0.0) or 0.0) >= pin_threshold
 
     def _delete_rows(rows) -> None:
         if not rows:
@@ -65,21 +79,8 @@ def prune(
             active_only=True,
         )
     ]
-    if max_count is not None:
-        max_count = max(0, int(max_count))
-    low_imp = [m for m in all_mems if float(m.importance) < float(min_importance) and not _pinned(m)]
-    if low_imp:
-        _delete_rows(low_imp)
-        removed += len(low_imp)
-        removed_ids = {m.id for m in low_imp}
-        all_mems = [m for m in all_mems if m.id not in removed_ids]
-    if max_count is not None:
-        unpinned = [m for m in all_mems if not _pinned(m)]
-        if len(all_mems) > max_count and unpinned:
-            unpinned.sort(key=lambda m: (float(m.importance), int(m.access_count), m.created_at))
-            to_drop = unpinned[: len(all_mems) - max_count]
-            if to_drop:
-                _delete_rows(to_drop)
-                removed += len(to_drop)
+    candidates = prune_candidates(all_mems, min_importance=min_importance, max_count=max_count, pin_threshold=pin_threshold)
+    _delete_rows(candidates)
+    removed = len(candidates)
     logger.info("prune removed=%d min_importance=%s pin_threshold=%s", removed, min_importance, pin_threshold)
     return removed

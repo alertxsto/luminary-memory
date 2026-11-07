@@ -13,9 +13,92 @@
   user-approved durable writes, ID-scoped retraction, result semantics,
   configuration, and bridge troubleshooting. Install it under
   `~/.config/opencode/skills/luminary-memory/` or a project's `.opencode/skills/`.
+- Authorized memory inspector service with bounded browse/detail/history,
+  explicit project bindings and independent sharing capabilities. Confirmed
+  corrections preserve ownership and create successor versions; stale revisions
+  and revoked proposals fail closed instead of overwriting newer content.
+- Explicit optional loopback inspector with nine views, deterministic Summary,
+  separate owner confirmations, one-use sign-in, session cookies and same-origin
+  CSRF protection. Installing or opening a UI does not enable saving or call AI.
+- Complete compiled native-package installation instead of copying an orphaned
+  TypeScript entry. Unapproved local changes are preserved, and owned legacy
+  hooks require an explicit cutover to prevent duplicate loading.
+- Keyboard-accessible entity neighborhoods and supporting-memory inspection.
+  Recall Activity records actual retrieval rank/score separately from returned
+  context order; core-only context is not presented as a successful query match.
+- Summary includes authorized lifecycle counts and stored created/updated
+  timestamp bounds in UTC, including offset-aware ordering and microseconds.
+  Missing or invalid timestamp coverage is explicit; refresh remains offline.
 
 ### Fixed
 
+- Precompiled OpenCode TUI binds Solid/OpenTUI imports to the host's shared
+  runtime instead of creating an independent reactive owner and a blank panel.
+  Native review dialogs keep the decision visible while complete proposals
+  scroll; cancellation is the default.
+- OpenCode copy installation now explicitly tells the operator to install its
+  declared Node dependencies before restart. It does not silently run npm or
+  download memory models.
+
+- Denied inspector responses now refresh their reference time and context
+  metadata while clearing inaccessible content, rather than retaining the
+  preceding successful read's timestamp.
+- Direct npm packaging keeps compiler diagnostics on stderr, preserving valid
+  machine-readable `npm pack --json` output without hiding build warnings.
+- Native Hermes settings include backend/model configuration and separate
+  readiness information without exposing profile credentials. Profile-local
+  changes survive restart; unrelated settings do not implicitly enable saving
+  or modify sibling profiles.
+- Optional explanation requires a nonblank model selection before disclosure;
+  a configured URL alone is not reported as a configured explanation.
+
+- Inspector graph reads stay in the selected PostgreSQL schema. A missing graph
+  table now reports unavailable instead of silently reading a fallback table.
+- Hermes pagination preserves the original operation, project and filters.
+  Context/project changes discard the cursor rather than replaying an old page.
+
+- Hermes provider Activity now separates durable saves, duplicate suppression,
+  skipped curation, session episodes and recall. Duplicate writes no longer
+  claim a new save; replaying an episode does not claim another insertion.
+  Queued retention keeps its original session. Prepared context is not reported
+  as confirmed model delivery, and operational events do not inflate Summary
+  changes or copy raw prompts into Activity.
+
+- PostgreSQL entity expansion now groups unique authorized neighbor names and
+  ranks their strongest edges. The previous `DISTINCT`/`ORDER BY` combination
+  was rejected by PostgreSQL and silently left the query unexpanded; duplicate
+  edges no longer make ranking ambiguous.
+- Native bridge recalls now append scoped start/result/error/cancellation events
+  without storing raw queries or exception text. Activity replay preserves the
+  same source/session/reference metadata; recall never claims a saved memory or
+  confirmed injection, and Summary excludes recall events before pagination.
+- Activity checkpoints bind replay to the native session, project and current
+  access policy. Missing witnessed history raises a visible gap instead of a
+  healthy empty result. “Check new activity” loads only unseen events; Refresh
+  resets to a recent snapshot without replaying writes.
+- Memory-record exports retain source IDs, and imports remap predecessor links
+  instead of treating source IDs as destination IDs. Invalid/cyclic lineage is
+  rejected; lineage imports roll back on incompatible duplicates or audit
+  failure. Independent owners and sessions are no longer collapsed by import
+  deduplication, and inspector receipts separate actual saves from duplicates.
+  Re-importing an unchanged version chain reuses its original ancestors;
+  historical source IDs and creation timestamps prevent merging distinct
+  observations.
+- Export/native-settings failures after external persistence starts now report
+  an unknown outcome, including lost commit acknowledgements. SQL rollback is
+  not presented as proof that a selected file or profile stayed unchanged.
+- SQLite keyword indexes now update only when content or tags change. This
+  prevents nested content-revision updates from deleting FTS entries twice;
+  existing update triggers and derived indexes migrate on the next store open.
+- Confirmed inspector creation preserves the verified native session in both
+  the record and durable audit, and distinguishes saved records from duplicates.
+  Corrections attribute the new observation to the verified current session
+  and a distinct inspector source ID without changing the original ownership.
+  Explicit cross-session versioning updates the predecessor and keeps stale
+  editor protection; session-bound clients still cannot cross that boundary.
+- Optional AI explanations consume disclosure consent before sending, reject
+  redirects, and release database locks during provider calls. Revocation or
+  changed facts discard stale responses; model text has no tool/write authority.
 - Telegram activity no longer treats global new memory IDs as this turn's
   writes. Routing, profile-local secrets, exact ownership/session cursors,
   expiry/validity filtering, evidence/ID visibility, and acknowledgement of

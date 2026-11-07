@@ -161,19 +161,20 @@ class _NoRecentBackend:
         raise RuntimeError("no keyword search")
 
 
-def test_list_fallback_no_recent(tmp_path):
-    from luminary_memory.api import MemoryClient
+def test_list_fallback_no_recent():
+    from luminary_memory.types import Memory
 
-    class _E:
-        def embed(self, t):
-            return [0.1] * 384
-
-    c = MemoryClient(db_path=str(tmp_path / "x.db"), engine=_E())
-    c.backend = _NoRecentBackend()
-    c.ingest("first")
-    c.ingest("second")
-    ms = c.list(limit=10)
-    assert len(ms) == 2
+    backend = _NoRecentBackend()
+    backend.items = [
+        Memory(id=1, content="Older external record", created_at="2026-01-01T00:00:00+00:00"),
+        Memory(id=2, content="Newer external record", created_at="2026-01-02T00:00:00+00:00"),
+    ]
+    client = MemoryClient(backend=backend, engine=_E())
+    try:
+        assert [memory.id for memory in client.list(limit=1)] == [2]
+        assert [memory.id for memory in client.list(limit=1, offset=1)] == [1]
+    finally:
+        client.close()
 
 
 def test_search_error_returns_empty(tmp_path):

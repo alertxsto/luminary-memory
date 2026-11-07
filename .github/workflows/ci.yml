@@ -82,7 +82,7 @@ jobs:
         run: ruff check src tests hermes/hooks
       - name: Run pgvector integration tests
         env:
-          LUMINARY_PG_DSN: postgresql://luminary:luminary@localhost:5432/luminary
+          PG_DSN: postgresql://luminary:luminary@localhost:5432/luminary
         run: >-
           python -m coverage run --source=src/luminary_memory/backends
           -m pytest -q tests/test_backend_pgvector.py

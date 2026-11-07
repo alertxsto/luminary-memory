@@ -45,7 +45,9 @@ jobs:
           node-version: "22"
           check-latest: true
       - run: npm ci --ignore-scripts
-      - run: npm run build:plugins
+      - run: npm run build
+      - run: npm run check:opencode
+      - run: npm run test:ui-contracts
       - run: npm run test:plugins
       - run: npm run pack:plugins
       - name: Check complete, version-matched release tarballs
@@ -78,6 +80,52 @@ jobs:
           name: native-plugin-packages
           path: artifacts/plugins/*.tgz
           if-no-files-found: error
+      - name: Upload complete wheel resources
+        uses: actions/upload-artifact@v4
+        with:
+          name: inspector-resources
+          path: |
+            src/luminary_memory/integrations/assets/compiled/
+            src/luminary_memory/inspector/assets/browser/
+          if-no-files-found: error
+
+  python-native-contracts:
+    name: Test Python against the official Hermes SDK
+    needs: [native-packages]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: v0.22.5
+          path: .native-sdk/hermes-agent
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install test and native HTTP dependencies
+        run: python -m pip install -e ".[dev]" fastapi httpx python-multipart
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          check-latest: true
+      - name: Install the consumer-test build toolchain
+        run: npm ci --ignore-scripts
+      - name: Download validated native and UI resources
+        uses: actions/download-artifact@v4
+        with:
+          name: inspector-resources
+          path: src/luminary_memory
+      - name: Build and install a separate inspector consumer wheel
+        run: |
+          python -m build --wheel --outdir "$RUNNER_TEMP/inspector-wheel"
+          python -m venv "$RUNNER_TEMP/inspector-wheel-env"
+          "$RUNNER_TEMP/inspector-wheel-env/bin/python" -m pip install "$RUNNER_TEMP/inspector-wheel/"*.whl
+      - name: Require the real SDK and run the Python suite
+        env:
+          INSPECTOR_INSTALLED_PYTHON: ${{ runner.temp }}/inspector-wheel-env/bin/python
+        run: python scripts/test-hermes-sdk.py .native-sdk/hermes-agent -q
 
   real-model:
     # Release gate. Runs public strict recall against the real default
@@ -108,7 +156,7 @@ jobs:
           if-no-files-found: ignore
 
   pypi:
-    needs: [real-model, native-packages]
+    needs: [real-model, native-packages, python-native-contracts]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -122,6 +170,11 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      - name: Download validated native and UI resources
+        uses: actions/download-artifact@v4
+        with:
+          name: inspector-resources
+          path: src/luminary_memory
       - name: Build sdist and wheel
         run: |
           python -m pip install --upgrade pip

@@ -65,7 +65,6 @@ required = (
     "is_available",
     "initialize",
     "get_tool_schemas",
-    "replaces_builtin_memory",
 )
 missing = [name for name in required if not hasattr(MemoryProvider, name)]
 if missing:
@@ -91,7 +90,7 @@ PY
 
   CONFIG="$HERMES_HOME/config.yaml"
   log "activating Luminary through Hermes config.yaml ..."
-  "$LUMINARY_PYTHON" -m luminary_memory.hermes.activation --all-profiles "$CONFIG" || fail "could not update Hermes memory configs"
+  "$LUMINARY_PYTHON" -m luminary_memory.hermes.activation "$CONFIG" || fail "could not update selected Hermes memory config"
 fi
 
 # ------------------------------------------------------------------ #
@@ -102,9 +101,9 @@ if [ "$DO_LLM" -eq 1 ]; then
   LUM_CONFIG="$HERMES_HOME/luminary/config.json"
   mkdir -p "$HERMES_HOME/luminary"
   if [ ! -f "$LUM_CONFIG" ]; then
-    printf '{\n  "ingest_llm": true,\n  "llm_base_url": "",\n  "llm_model": "",\n  "llm_api_key": ""\n}\n' > "$LUM_CONFIG"
+    printf '{\n  "ingest_llm": true,\n  "llm_base_url": "",\n  "llm_model": ""\n}\n' > "$LUM_CONFIG"
     chmod 600 "$LUM_CONFIG"
-    log "config created at $LUM_CONFIG — set llm_base_url / llm_model / llm_api_key"
+    log "config created at $LUM_CONFIG — set llm_base_url / llm_model; configure LUMINARY_LLM_API_KEY in Hermes secrets"
   else
     log "config exists — edit $LUM_CONFIG to set ingest_llm + llm_*"
   fi

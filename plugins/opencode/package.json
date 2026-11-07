@@ -4,7 +4,12 @@
   "description": "Luminary-maintained scoped memory plugin for OpenCode V2",
   "type": "module",
   "main": "./dist/index.js",
-  "exports": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./rpc": "./dist/rpc.js",
+    "./tui": "./dist/tui.js",
+    "./gui-experimental": "./dist/gui-experimental.cjs"
+  },
   "files": ["dist/", "README.md", "LICENSE"],
   "engines": {"node": "^22.22.2 || ^24.15.0 || >=26.0.0"},
   "license": "Apache-2.0",
@@ -19,12 +24,21 @@
   "keywords": ["opencode", "opencode-plugin", "luminary", "memory"],
   "publishConfig": {"access": "public"},
   "scripts": {"prepack": "node ../../scripts/build-plugins.mjs"},
+  "dependencies": {
+    "zod": "4.6.7"
+  },
   "peerDependencies": {
-    "@opencode/plugin": "2.1.4",
-    "effect": "4.0.1"
+    "@opencode/plugin": "2.2.0",
+    "effect": "4.0.1",
+    "@opentui/core": "0.7.0",
+    "@opentui/solid": "0.7.0",
+    "solid-js": ">=1.9.12"
   },
   "peerDependenciesMeta": {
     "@opencode/plugin": {"optional": true},
-    "effect": {"optional": true}
+    "effect": {"optional": true},
+    "@opentui/core": {"optional": true},
+    "@opentui/solid": {"optional": true},
+    "solid-js": {"optional": true}
   }
 }

@@ -32,7 +32,7 @@ def test_load_config_defaults_when_missing(tmp_path):
     assert cfg["token_budget"] == 2048
 
 
-def test_get_config_schema_shape():
+def test_get_config_schema_shape(hermes_config_sdk):
     p = LuminaryMemoryProvider()
     schema = p.get_config_schema()
 
@@ -49,7 +49,7 @@ def test_get_config_schema_shape():
     assert llm_key.get("env_var") == "LUMINARY_LLM_API_KEY"
 
 
-def test_config_schema_module_is_pure_data():
+def test_config_schema_module_is_pure_data(hermes_config_sdk):
     """config_schema.py must import without the agent runtime (dashboard path)."""
     from luminary_memory.hermes import config_schema
 
@@ -60,38 +60,20 @@ def test_config_schema_module_is_pure_data():
     assert schema.fields
 
 
-def test_config_schema_standalone_shim(monkeypatch):
-    """Fallback shim (no hermes runtime) exposes the same schema shape."""
-    import sys
+def test_schema_uses_native_typed_inline_fields(hermes_config_sdk):
+    from luminary_memory.hermes.config_schema import CONFIG_SCHEMA
 
-    # Block 'plugins' to simulate standalone install
-    monkeypatch.setitem(sys.modules, "plugins", None)
-    monkeypatch.setitem(sys.modules, "plugins.memory", None)
-    monkeypatch.setitem(sys.modules, "plugins.memory.config_schema", None)
-
-    import importlib
-
-    from luminary_memory.hermes import config_schema
-    importlib.reload(config_schema)
-
-    schema = config_schema.CONFIG_SCHEMA
-    assert schema.name == "luminary"
-    assert schema.label == "Luminary Memory"
-    assert schema.storage == "flat_json"
-    assert schema.fields
-
-    keys = [f["key"] for f in schema.fields]
-    assert "auto_maintain" in keys
-    assert "ingest_llm" in keys
-    assert len(schema.fields) >= 18
+    inline = {field.key for field in CONFIG_SCHEMA.inline_fields()}
+    assert {"mode", "backend", "auto_retain"} <= inline
+    assert "llm_api_key" not in inline
 
 
-def test_persistent_context_keys_removed():
+def test_persistent_context_keys_removed(hermes_config_sdk):
     """v0.2.18 removed the persistent-context family (context_top_n & co)."""
     from luminary_memory.hermes import config_schema
     from luminary_memory.hermes.config import _DEFAULTS
 
-    keys = {f["key"] for f in config_schema.CONFIG_SCHEMA.fields}
+    keys = {f.key for f in config_schema.CONFIG_SCHEMA.fields}
     assert "context_top_n" not in keys
     assert "context_budget" not in keys
     assert "context_min_importance" not in keys

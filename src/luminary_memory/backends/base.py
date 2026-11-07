@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import nullcontext
 
-from luminary_memory.types import Memory
+from luminary_memory.types import Memory, utc_timestamp
 
 
 class MemoryBackend(ABC):
+    @property
+    def in_transaction(self) -> bool:
+        return False
+
+    def transaction(self):
+        """Custom backends may override to support atomic engine writes."""
+        return nullcontext(self)
+
     @abstractmethod
     def add(self, m: Memory) -> int: ...
 
@@ -50,6 +59,20 @@ class MemoryBackend(ABC):
                 out[_id] = m
         return out
 
+    def find_import_duplicate_id(self, memory: Memory) -> int | None:
+        """Match the same scoped observation, lifecycle and mapped predecessor."""
+        created = utc_timestamp(memory.created_at)
+        if not memory.content_hash or created is None:
+            return None
+        fields = ("user_id", "workspace_id", "agent_id", "session_id", "source_id")
+        for existing in self.all():
+            if (existing.content_hash == memory.content_hash and existing.status == memory.status
+                    and existing.supersedes_id == memory.supersedes_id
+                    and all((getattr(existing, key) or "") == (getattr(memory, key) or "") for key in fields)
+                    and utc_timestamp(existing.created_at) == created):
+                return existing.id
+        return None
+
     def find_by_hash(self, content_hash: str, scope: dict | None = None) -> Memory | None:
         """Return an exact-content match in the requested scope, if any."""
         from luminary_memory.scope import memory_matches_scope
@@ -93,8 +116,8 @@ class MemoryBackend(ABC):
         """Persist a provenance row when the backend supports it."""
         return
 
-    def record_episode(self, episode_id: str, content: str, **metadata) -> None:
-        """Persist immutable source text when the backend has an episode ledger."""
+    def record_episode(self, episode_id: str, content: str, **metadata) -> bool | None:
+        """Return insertion/duplicate acknowledgement, or None without a ledger."""
         return
 
     def recent_episodes(

@@ -137,6 +137,64 @@ for maintainer review with its V1 adapter pinned; it is not a V2 catalog or
 proof of a live website listing.
 
 
+## Unreleased interactive inspectors
+
+The following is development-source functionality, **not** an npm/PyPI
+`0.3.2` release or a claim of completed native-host acceptance.
+
+Build the complete resources before installing this checkout or building its
+wheel:
+
+```bash
+npm ci
+npm run build
+python -m pip install -e .
+```
+
+The development file installer writes complete directories:
+`.opencode/plugins/luminary-memory/`, `.pi/extensions/luminary-memory/` or
+`.omp/extensions/luminary-memory/`. It preserves unrelated config/dependencies
+and user-added package files, refuses unapproved modifications to owned files,
+and performs a staged module-tree cutover. An identifiable old single-file
+Luminary hook requires explicit `--force` cutover; do not load it alongside the
+new package. OpenCode's config-root dependencies must be available to its
+loader, just as for the released copy installer.
+
+OpenCode development sources target SDK `2.2.0`: server, typed RPC, TUI and the
+separate `./gui-experimental` Desktop entry. The GUI uses the official preset,
+not the terminal JSX transform. Desktop native runtime acceptance is still
+pending; no arbitrary third-party Web loader or fullscreen-route support is
+implied.
+
+Install the matching unified Hermes UI/backend resources without changing the
+selected provider or retention configuration:
+
+```bash
+luminary-memory hook install-hermes-ui --home /absolute/hermes-profile
+```
+
+Backend and local Desktop/dashboard enablement remain separate; see
+[Hermes integration](hermes-integration.md). Rich classic Hermes CLI panels
+remain gated on a supported host renderer API.
+
+The optional companion starts **only** through an explicit command:
+
+```bash
+luminary-memory hook companion --agent pi --workspace /absolute/project \
+  --session-id NATIVE_SESSION_ID --profile default
+```
+
+Use the exact native agent, workspace, session and profile that own the
+configured store. This never selects a database from browser JSON. The command
+prints a private one-use owner sign-in link valid for 60 seconds; `--open`
+explicitly opens it. Binding is loopback-only, sessions expire, and writes need
+separate previews/confirmations. Ctrl+C stops the companion. Do not share its
+link or mistake it for Hermes dashboard/OpenCode Web. Transfer covers memory
+records and included lineage, not a full store backup.
+
+See the [roadmap evidence and remaining native gates](ROADMAP.md).
+
+
 ## File-copy hook installer
 
 This remains an alternative to native package installation. Install the

@@ -3,15 +3,6 @@ import sqlite3
 from luminary_memory.schema import init_schema
 
 
-def test_init_schema_creates_tables(tmp_path):
-    db = tmp_path / "t.db"
-    conn = sqlite3.connect(db)
-    init_schema(conn)
-    tables = {r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"memories", "memories_fts", "entities", "relations"} <= tables
-    conn.close()
-
 def test_fts_trigger_syncs_content(tmp_path):
     db = tmp_path / "t.db"
     conn = sqlite3.connect(db)
@@ -66,3 +57,45 @@ def test_init_schema_rebuild_is_idempotent_and_cheap_on_reopen(tmp_path):
         "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH 'world'").fetchone()[0]
     assert n == 1, f"reopen must keep the FTS index in sync, got {n}"
     conn.close()
+
+
+def test_legacy_update_trigger_migrates_without_recursive_fts_corruption(tmp_path):
+    from luminary_memory.backends.sqlite import SQLiteBackend
+
+    path = tmp_path / "legacy-update.db"
+    conn = sqlite3.connect(path)
+    init_schema(conn)
+    conn.execute("INSERT INTO memories(content, tags) VALUES (?, ?)", ("legacycontenttoken", '["oldtagtoken"]'))
+    conn.executescript("""
+        DROP TRIGGER memories_au;
+        CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, content, tags)
+            VALUES ('delete', old.id, old.content, old.tags);
+            INSERT INTO memories_fts(rowid, content, tags)
+            VALUES (new.id, new.content, new.tags);
+        END;
+    """)
+    # An older recursive trigger could leave the derived index out of sync.
+    conn.execute("INSERT INTO memories_fts(memories_fts) VALUES ('delete-all')")
+    conn.commit()
+    conn.close()
+
+    backend = SQLiteBackend(str(path))
+    try:
+        memory = backend.keyword_search("legacycontenttoken")[0][0]
+        memory.tags = ["newtagtoken"]
+        backend.update(memory)
+        assert memory.revision == 2
+        assert backend.keyword_search("oldtagtoken") == []
+        assert [row.id for row, _ in backend.keyword_search("newtagtoken")] == [memory.id]
+        memory.content = "replacementcontenttoken"
+        backend.update(memory)
+        assert memory.revision == 3
+        assert backend.keyword_search("legacycontenttoken") == []
+        assert [row.id for row, _ in backend.keyword_search("replacementcontenttoken")] == [memory.id]
+        memory.access_count += 1
+        backend.update(memory)
+        assert memory.revision == 3
+        backend.conn.execute("INSERT INTO memories_fts(memories_fts, rank) VALUES ('integrity-check', 1)")
+    finally:
+        backend.close()

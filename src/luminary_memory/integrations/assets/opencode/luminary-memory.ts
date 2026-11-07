@@ -1,12 +1,15 @@
 // OpenCode V2 server plugin. Auto-discover this file in .opencode/plugins/,
 // or configure the compiled package directory in the plural `plugins` array.
 // https://opencode.ai/v2/docs/build/plugins/migrate-v1/
-// SDK: @opencode/plugin 2.1.4. Host runtime modules must remain external.
+// SDK: @opencode/plugin 2.2.0. Host runtime modules must remain external.
 // Tool results and metadata are shared by terminal, desktop and web clients.
 import { spawn } from "node:child_process"
 import { isAbsolute, resolve } from "node:path"
 import { Plugin } from "@opencode/plugin"
 import type { ToolContext } from "@opencode/plugin/promise/tool"
+import { LuminaryConsole } from "./rpc.js"
+import { createInspectorTransport } from "../common/inspector-transport.js"
+import type { ConsoleResult } from "../common/console-contract.js"
 
 type Reply = {
   ok: boolean
@@ -143,6 +146,71 @@ export default Plugin.define({
       }
       return resolve(session.location.directory)
     }
+    // UI RPC is location-scoped and never reuses the five-action saving bridge.
+    const previews = new Map<string, { id: string; workspace: string; expires: number }>()
+    const inspectorFailure = (request_id: string, status: "denied" | "unavailable" | "unknown_outcome", message: string): ConsoleResult => ({
+      status, data: {}, error: { code: status, message }, request_id,
+      context_epoch: "", policy_revision: 0, as_of: new Date().toISOString(),
+    })
+    const verifiedWorkspace = async (sessionID: string, signal: AbortSignal) => {
+      const session = await ctx.session.get({ sessionID: sessionID as ToolContext["sessionID"] }, { signal })
+      // V2.2 exposes only directory on the session's public location reference.
+      // Session lookup is already scoped by the host's authenticated location.
+      if (session.id !== sessionID || !isAbsolute(session.location.directory) ||
+          resolve(session.location.directory) !== resolve(ctx.location.directory)) {
+        throw new Error("Native session belongs to another server location")
+      }
+      return resolve(session.location.directory)
+    }
+    const inspectorRpc = await ctx.rpc.register(LuminaryConsole, {
+      inspect: async (input, rpc) => {
+        const signal = AbortSignal.any([controller.signal, rpc.signal])
+        let dispatched = false
+        try {
+          const workspace = await verifiedWorkspace(input.session_id, signal)
+          const transport = createInspectorTransport({ agent: "opencode", session_id: input.session_id, workspace })
+          dispatched = true
+          const response = await transport.request(input.request, signal)
+          if (response.status === "denied") previews.delete(input.session_id)
+          if (response.status === "ok" && typeof response.data?.preview_id === "string") {
+            if (previews.size >= MAX_SESSIONS) previews.delete(previews.keys().next().value!)
+            previews.set(input.session_id, { id: response.data.preview_id, workspace, expires: Date.now() + 300000 })
+          }
+          return response
+        } catch {
+          previews.delete(input.session_id)
+          if (!dispatched) return inspectorFailure(input.request.request_id, "denied", "Native session/location could not be verified.")
+          const writing = ["mutate", "maintenance_commit", "transfer_commit", "set_settings", "grant", "revoke"].includes(input.request.operation) ||
+            (input.request.operation === "explain" && input.request.arguments.phase === "commit")
+          return inspectorFailure(input.request.request_id, writing ? "unknown_outcome" : "unavailable",
+            writing ? "Commit outcome unknown. Refresh Activity before retrying; no write was replayed." : "Native inspector transport unavailable.")
+        }
+      },
+      registerFile: async (input, rpc) => {
+        const signal = AbortSignal.any([controller.signal, rpc.signal])
+        const workspace = await verifiedWorkspace(input.session_id, signal)
+        const transport = createInspectorTransport({ agent: "opencode", session_id: input.session_id, workspace })
+        if (!transport.registerFile) throw new Error("Native server file registration unavailable")
+        return transport.registerFile(input.path, input.mode, signal)
+      },
+      // Only native owner UI calls this dedicated method after showing the exact preview.
+      // It is deliberately not registered as a tool, command hook or ConsoleRequest operation.
+      confirm: async (input, rpc) => {
+        const signal = AbortSignal.any([controller.signal, rpc.signal])
+        try {
+          const workspace = await verifiedWorkspace(input.session_id, signal)
+          const preview = previews.get(input.session_id)
+          previews.delete(input.session_id)
+          if (!preview || preview.id !== input.preview_id || preview.workspace !== workspace || preview.expires < Date.now()) {
+            return inspectorFailure("confirm", "denied", "No current native-session preview can be confirmed.")
+          }
+          const transport = createInspectorTransport({ agent: "opencode", session_id: input.session_id, workspace })
+          return transport.confirm ? await transport.confirm(input.preview_id, signal) : inspectorFailure("confirm", "unavailable", "Owner confirmation unavailable.")
+        } catch {
+          return inspectorFailure("confirm", "denied", "Native owner confirmation context is unavailable.")
+        }
+      },
+    })
     const call = (action: string, sessionID: string, workspace: string, fields: Record<string, unknown>, signal: AbortSignal) => {
       if (!sessionID || !isAbsolute(workspace)) {
         return Promise.resolve(failure("missing_scope", "A native session ID and absolute workspace are required."))
@@ -301,7 +369,11 @@ export default Plugin.define({
     const events = (async () => {
       try {
         for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
-          if (event.type === "session.deleted") forgetTurn(event.data.sessionID)
+          if (event.type === "session.deleted") {
+            forgetTurn(event.data.sessionID)
+            previews.delete(event.data.sessionID)
+            await inspectorRpc.events.emit("invalidated", { session_id: event.data.sessionID, reason: "session_deleted" })
+          }
           if (event.type === "session.execution.succeeded") retain(event.data.sessionID)
           if (event.type === "session.execution.failed" || event.type === "session.execution.interrupted") {
             const turn = turns.get(event.data.sessionID)
@@ -315,6 +387,8 @@ export default Plugin.define({
     })()
     return async () => {
       controller.abort()
+      await inspectorRpc.dispose()
+      previews.clear()
       for (const turn of turns.values()) turn.controller.abort()
       await Promise.allSettled([events, ...Array.from(turns.values(), (turn) => turn.retention)])
       turns.clear()

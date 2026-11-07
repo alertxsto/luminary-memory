@@ -76,8 +76,9 @@ separate from the package tests.
 
 ## Release gate
 
-Tagging `v*` publishes to PyPI through `.github/workflows/publish.yml`, and
-`pypi` has a hard prerequisite: the `real-model` job. It runs
+Tagging `v*` publishes to PyPI through `.github/workflows/publish.yml`.
+`pypi` requires the `real-model`, `native-packages`, and
+`python-native-contracts` jobs. The real-model gate runs:
 
 ```bash
 python scripts/smoke-real-model.py --report real-model-gate.json
@@ -119,8 +120,8 @@ before committing the release changes and creating the matching `vX.Y.Z` tag.
 The publish workflow builds, tests and packs native plugins, checks that every
 manifest matches `pyproject.toml`, and verifies the exact three nonempty
 tarballs contain a built entry point, README and license. Tag releases must
-also match `v<version>`. Both this package job and the existing real-model gate
-must pass before PyPI publication. After PyPI succeeds, tag pushes attach the
+also match `v<version>`. The package, real-model, and official Hermes SDK
+contract gates must pass before PyPI publication. After PyPI succeeds, tag pushes attach the
 Hermes skill zip and those exact `.tgz` files to the GitHub release, even when
 npm publication is disabled. Missing or mismatched packages fail closed.
 
@@ -262,7 +263,7 @@ contributor communication; keep it concise and in your own voice.
 Run the full suite (SQLite + unit tests) locally:
 
 ```bash
-python -m pytest          # 541 passed, 3 skipped at the current baseline
+python -m pytest
 python -m ruff check src tests hermes/hooks
 ```
 
@@ -279,11 +280,51 @@ failure branches continue to receive integration coverage; the quality gate
 is the invariant-focused test suite plus the CI/verification coverage gate
 `--fail-under=82`.
 
+### Official Hermes SDK contracts
+
+Standalone tests skip native schema cases when Hermes is not installed; they
+never install a production SDK substitute. To exercise those cases, use an
+official source checkout matching the supported host:
+
+```bash
+git clone --depth 1 --branch v0.22.5 https://github.com/NousResearch/hermes-agent.git ../hermes-agent-sdk
+python -m pip install -e ".[dev]" fastapi httpx python-multipart
+python scripts/test-hermes-sdk.py ../hermes-agent-sdk -q
+```
+
+The runner imports the real provider/config SDK before pytest, verifies that
+both modules came from that checkout, and uses a temporary Hermes home. Missing
+or incompatible SDK modules fail the run before native cases can be skipped.
+The release workflow runs this mode as a mandatory publication prerequisite.
+
+### Installed inspector consumer
+
+After `npm ci --ignore-scripts && npm run build`, build a wheel and install it
+into a separate Python virtual environment. Run its real subprocess/controller
+contract from the checkout:
+
+```bash
+INSPECTOR_INSTALLED_PYTHON=/absolute/path/to/wheel-env/bin/python \
+  python -m pytest tests/inspector/test_transport.py -q
+```
+
+On Windows, point the environment variable at `wheel-env/Scripts/python.exe`.
+The runner bundles the controller/transport sources shipped in that installed
+wheel, then runs outside the checkout with repository import paths removed.
+It checks real scoped SQLite reads, permissions, confirmed edits, stale-editor
+conflicts and denied-result metadata. No retrieval/model-quality claim is made.
+A missing optional interpreter skips only this case locally; a configured but
+broken installation fails. The release SDK job always supplies a clean installed
+wheel, making this contract a publication prerequisite.
+
+
 ### Postgres / pgvector integration tests
 
 `tests/test_backend_pgvector.py` contains real-Postgres round-trips that are
-**skipped unless `LUMINARY_PG_DSN` is set**. CI provides a Postgres service for
-these (see `.github/workflows/ci.yml`). To run them locally:
+**skipped unless an isolated `PG_DSN` is set**. `LUMINARY_*` operator settings
+are cleared by test isolation; do not point tests at a production store. CI
+provides a disposable Postgres service (see `.github/workflows/ci.yml`).
+To run these checks locally:
 
 ```bash
 # spin up a throwaway Postgres with the pgvector extension
@@ -292,6 +333,6 @@ docker run -d --name luminary-pg -p 5432:5432 \
   pgvector/pgvector:pg16
 
 # point the tests at it
-export LUMINARY_PG_DSN=postgresql://luminary:***@localhost:5432/luminary
+export PG_DSN=postgresql://luminary:***@localhost:5432/luminary
 python -m pytest tests/test_backend_pgvector.py -v
 ```

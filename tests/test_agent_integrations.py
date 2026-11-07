@@ -137,7 +137,7 @@ def test_install_preserves_config_and_refuses_unapproved_replacement(tmp_path):
     config = json.loads(package.read_text())
     assert config["name"] == "existing"
     assert config["dependencies"]["unrelated"] == "1.0.0"
-    plugin = next(path for path in installed if path.suffix == ".ts")
+    plugin = next(path for path in installed if path.name == "index.js")
     plugin.write_text("user modified plugin")
     with pytest.raises(ValueError):
         install_adapter("opencode", tmp_path)
@@ -158,3 +158,122 @@ def test_bridge_accepts_other_supported_harness_identity(native):
         assert dispatch({**request, "action": "activity"}, client=client)["memories"] == []
     finally:
         other.close()
+
+
+def _inspect_native(native, operation="events", **arguments):
+    from luminary_memory.inspector.contracts import ConsoleRequest
+    from luminary_memory.inspector.identity import resolve_context
+    from luminary_memory.inspector.service import InspectorService
+
+    client, request = native
+    context = resolve_context(client, {
+        "user_id": client.scope["user_id"], "workspace": request["workspace"],
+        "workspace_id": client.scope["workspace_id"],
+        "agent_id": "pi", "session_id": request["session_id"],
+        "host_id": "native-activity-test", "profile_id": "default",
+    }, initialize=True)
+    return InspectorService(client).execute(context, ConsoleRequest(
+        operation=operation, arguments=arguments, request_id="activity-test"))
+
+
+def test_actual_recall_activity_never_claims_a_save_or_observed_injection(native):
+    import json
+
+    client, request = native
+    mid = dispatch({**request, "action": "remember", "text": "Deploy target is staging"},
+                   client=client)["memories"][0]["id"]
+    response = dispatch({**request, "session_id": "session-b", "action": "recall",
+                         "query": "Deploy target staging QUERY_SECRET"}, client=client)
+    assert [row["id"] for row in response["memories"]] == [mid]
+    result = _inspect_native(native)
+    assert result.status == "ok", result.to_dict()
+    operations = [row for row in result.data["items"] if row["kind"] == "native_recall"]
+    assert [row["operation"]["state"] for row in operations] == ["returned", "running"]
+    finished, started = operations
+    assert finished["operation"]["id"] == started["operation"]["id"]
+    assert list(finished["operation"]["memory_ids"]) == [mid]
+    assert finished["operation"]["recalled"] == 1
+    assert finished["operation"]["stored"] == 0
+    assert finished["operation"]["injected"] is None
+    assert finished["source"] == "pi"
+    assert finished["operation"]["session_id"] == "session-b"
+    assert "QUERY_SECRET" not in json.dumps(result.to_dict())
+    assert client.backend.count() == 1
+
+
+@pytest.mark.parametrize("failure,state", [(OSError("PRIVATE_ERROR_SECRET"), "error"),
+                                           (KeyboardInterrupt(), "cancelled")])
+def test_recall_failure_and_cancellation_keep_truthful_scoped_activity(native, monkeypatch, failure, state):
+    import json
+
+    client, request = native
+    monkeypatch.setenv("LUMINARY_CORE_TOP_N", "2")
+
+    def unavailable(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(client.backend, "by_tag_top", unavailable)
+    with pytest.raises(type(failure)):
+        dispatch({**request, "action": "recall", "query": "deployment"}, client=client)
+    result = _inspect_native(native)
+    assert result.status == "ok", result.to_dict()
+    events = [row for row in result.data["items"] if row["kind"] == "native_recall"]
+    assert [row["operation"]["state"] for row in events] == [state, "running"]
+    assert events[0]["operation"]["stored"] == 0
+    assert events[0]["operation"]["injected"] is None
+    assert client.backend.count() == 0
+    assert "PRIVATE_ERROR_SECRET" not in json.dumps(result.to_dict())
+
+
+def test_reconnect_replays_same_recall_metadata_once_per_event(native):
+    client, request = native
+    dispatch({**request, "action": "recall", "query": "deployment"}, client=client)
+    snapshot = _inspect_native(native)
+    assert snapshot.status == "ok", snapshot.to_dict()
+    boundary = 0
+    replay_context = None
+    replayed = []
+    for _ in range(10):
+        page = _inspect_native(native, since_event_id=boundary, limit=1, replay_context=replay_context)
+        assert page.status == "ok", page.to_dict()
+        replayed.extend(page.data["items"])
+        boundary = page.data["next_event_id"]
+        replay_context = page.data.get("replay_context")
+        if not page.data["has_more"]:
+            break
+    assert len({row["event_id"] for row in replayed}) == len(replayed)
+    assert replayed == list(reversed(snapshot.data["items"]))
+    assert list(_inspect_native(native, since_event_id=boundary, replay_context=replay_context).data["items"]) == []
+    assert [row["operation"]["state"] for row in replayed] == ["running", "returned"]
+
+
+def test_summary_changes_do_not_treat_recalls_as_memory_mutations(native):
+    client, request = native
+    mid = dispatch({**request, "action": "remember", "text": "Deploy target is staging"},
+                   client=client)["memories"][0]["id"]
+    dispatch({**request, "action": "recall", "query": "Deploy target staging"}, client=client)
+    summary = _inspect_native(native, operation="summary", limit=1)
+    assert summary.status == "ok", summary.to_dict()
+    assert summary.data["totals"]["memories"] == 1
+    assert [(row["kind"], row["memory_id"]) for row in summary.data["changes"]] == [("ingest", mid)]
+
+
+def test_core_context_does_not_invent_a_query_score_when_recall_abstains(native):
+    client, request = native
+    core = client.ingest("Production deployment requires a reviewed migration.",
+                         tags=["core"], enrich=False)
+    response = dispatch({**request, "action": "recall", "query": "zucchini telescope calibration"},
+                        client=client)
+    assert [row["id"] for row in response["memories"]] == [core]
+    result = _inspect_native(native)
+    operation = next(row["operation"] for row in result.data["items"]
+                     if row["kind"] == "native_recall" and row["operation"]["state"] == "returned")
+    signal = operation["ranking"][0]
+    assert signal["memory_id"] == core
+    assert signal["basis"] == "core"
+    assert signal["recall_rank"] is None
+    assert signal["score"] is None
+    assert signal["returned_position"] == 1
+    assert operation["returned"] == 1
+    assert operation["core_only"] == 1
+    assert operation["recalled"] == 0

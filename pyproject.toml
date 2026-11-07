@@ -47,6 +47,12 @@ luminary-memory = "luminary_memory.cli:app"
 [project.entry-points."hermes_agent.memory_providers"]
 luminary = "luminary_memory.hermes"
 
+[tool.hatch.build]
+exclude = ["/.superpowers/"]
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/luminary_memory"]
 

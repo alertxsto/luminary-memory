@@ -21,7 +21,16 @@
     "prepack": "node ../../scripts/build-plugins.mjs"
   },
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=22.19.0",
+    "bun": ">=1.3.14"
+  },
+  "peerDependencies": {
+    "@oh-my-pi/pi-coding-agent": "*",
+    "@oh-my-pi/pi-tui": "*"
+  },
+  "peerDependenciesMeta": {
+    "@oh-my-pi/pi-coding-agent": {"optional": true},
+    "@oh-my-pi/pi-tui": {"optional": true}
   },
   "keywords": [
     "omp-plugin",

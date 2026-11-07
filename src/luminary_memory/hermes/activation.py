@@ -102,30 +102,6 @@ def activate_config(config_path: str | Path) -> Path:
     return path
 
 
-def activation_configs(hermes_home: str | Path) -> list[Path]:
-    """Return the root config and existing profile configs in stable order.
-
-    Hermes profiles inherit the root configuration when they do not have a
-    local config. We therefore only edit profile files that already exist;
-    activation never creates a new profile or invents a second Luminary
-    configuration file.
-    """
-    home = Path(hermes_home).expanduser()
-    root = home / "config.yaml"
-    paths = [root]
-    profiles = home / "profiles"
-    if profiles.is_dir():
-        paths.extend(sorted(profiles.glob("*/config.yaml")))
-    return paths
-
-
-def activate_home(hermes_home: str | Path) -> list[Path]:
-    """Select Luminary in the root and every existing Hermes profile config."""
-    activated: list[Path] = []
-    for path in activation_configs(hermes_home):
-        activate_config(path)
-        activated.append(path)
-    return activated
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -133,26 +109,16 @@ def main(argv: list[str] | None = None) -> int:
 
     args = list(argv if argv is not None else sys.argv[1:])
     if args in (["--help"], ["-h"]):
-        print(
-            "usage: python -m luminary_memory.hermes.activation "
-            "[--all-profiles] CONFIG.yaml"
-        )
+        print("usage: python -m luminary_memory.hermes.activation CONFIG.yaml")
         return 0
-    all_profiles = False
-    if args and args[0] == "--all-profiles":
-        all_profiles = True
-        args.pop(0)
-    if len(args) != 1:
+    if len(args) != 1 or args[0].startswith("-"):
         print(
-            "usage: python -m luminary_memory.hermes.activation [--all-profiles] CONFIG.yaml",
+            "usage: python -m luminary_memory.hermes.activation CONFIG.yaml",
             file=sys.stderr,
         )
         return 2
     try:
-        if all_profiles:
-            activated = activate_home(Path(args[0]).expanduser().parent)
-        else:
-            activated = [activate_config(args[0])]
+        activated = [activate_config(args[0])]
     except (OSError, ValueError) as exc:
         print(f"luminary activation failed: {exc}", file=sys.stderr)
         return 1

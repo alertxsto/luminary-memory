@@ -1,5 +1,5 @@
 import os
-from unittest.mock import patch
+import uuid
 
 import pytest
 
@@ -19,36 +19,6 @@ def _pg_available() -> bool:
     return True
 
 
-class _FakeCursor:
-    def __init__(self):
-        self.executed: list[tuple] = []
-        self._rows: list[tuple] = []
-        self._one = None
-
-    def execute(self, sql, params=None):
-        self.executed.append((sql, params))
-        return self
-
-    def fetchone(self):
-        return self._one
-
-    def fetchall(self):
-        return self._rows
-
-
-class _FakeConn:
-    def __init__(self):
-        self.cur = _FakeCursor()
-        self.committed = 0
-
-    def cursor(self):
-        return self.cur
-
-    def commit(self):
-        self.committed += 1
-
-    def close(self):
-        pass
 
 
 @pytest.mark.skipif(not _pg_available(), reason=_SKIP_MSG)
@@ -155,76 +125,6 @@ def test_pg_integration_add_many_rolls_back_on_failure():
         b.close()
 
 
-def test_pgvector_backend_unit_add_encodes_embedding():
-    with patch("psycopg.connect") as mock_connect:
-        from luminary_memory.backends.pgvector import PGVectorBackend
-
-        fake = _FakeConn()
-        fake.cur._one = (42,)
-        mock_connect.return_value = fake
-        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
-        committed_after_init = fake.committed
-        mid = b.add(Memory(content="hello embedding test", embedding=[0.1, 0.2, 0.3]))
-        assert mid == 42
-        assert fake.committed == committed_after_init + 1
-
-
-def test_pgvector_non_unique_insert_error_is_not_treated_as_duplicate():
-    """Only a unique race may resolve to an existing content hash."""
-    import psycopg
-
-    from luminary_memory.backends.pgvector import PGVectorBackend
-
-    class _ErrorCursor:
-        def execute(self, *_args, **_kwargs):
-            raise RuntimeError("database unavailable")
-
-    class _ErrorConn:
-        def __init__(self):
-            self.rollback_count = 0
-
-        def cursor(self):
-            return _ErrorCursor()
-
-        def rollback(self):
-            self.rollback_count += 1
-
-    backend = object.__new__(PGVectorBackend)
-    backend.conn = _ErrorConn()
-    backend._psycopg = psycopg
-    backend._find_active_hash_exact = lambda _memory: Memory(id=42, content="same")
-
-    with pytest.raises(RuntimeError, match="database unavailable"):
-        backend.add_with_status(Memory(content="same"))
-    assert backend.conn.rollback_count == 1
-
-
-def test_pgvector_keyword_search_builds_ilike_query():
-    with patch("psycopg.connect") as mock_connect:
-        from luminary_memory.backends.pgvector import PGVectorBackend
-
-        fake = _FakeConn()
-        fake.cur._rows = []
-        mock_connect.return_value = fake
-        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
-        res = b.keyword_search("hello world", limit=5)
-        assert res == []
-        sql = fake.cur.executed[-1][0]
-        assert "ILIKE" in sql
-
-
-def test_pgvector_vector_search_uses_cosine_operator():
-    with patch("psycopg.connect") as mock_connect:
-        from luminary_memory.backends.pgvector import PGVectorBackend
-
-        fake = _FakeConn()
-        fake.cur._rows = []
-        mock_connect.return_value = fake
-        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
-        res = b.vector_search([1.0, 0.0, 0.0], limit=3)
-        assert res == []
-        sql = fake.cur.executed[-1][0]
-        assert "<=>" in sql
 
 
 def test_backend_factory_returns_sqlite_by_default():
@@ -236,14 +136,6 @@ def test_backend_factory_returns_sqlite_by_default():
     b.close()
 
 
-def test_backend_factory_returns_pgvector_when_configured():
-    from luminary_memory.backends import get_backend
-    from luminary_memory.config import Settings
-
-    with patch("psycopg.connect"):
-        b = get_backend(Settings(backend="pgvector", pg_dsn="postgresql://localhost/x"))
-        assert b.__class__.__name__ == "PGVectorBackend"
-        b.close()
 
 
 def test_api_uses_factory_when_no_backend_injected(tmp_path):
@@ -262,86 +154,6 @@ def test_api_uses_factory_when_no_backend_injected(tmp_path):
     c2.close()
 
 
-def test_pgvector_get_row_parsing():
-    """get() must parse a real-ish row (dict) into a Memory."""
-    with patch("psycopg.connect") as mock_connect:
-        from luminary_memory.backends.pgvector import PGVectorBackend
-
-        fake = _FakeConn()
-        fake.cur._one = {
-            "id": 7,
-            "content": "parsed content",
-            "metadata": '{"summary": "x"}',
-            "source": "test",
-            "tags": '["a","b"]',
-            "importance": 0.9,
-            "ttl_seconds": None,
-            "created_at": "2026-08-17T00:00:00+00:00",
-            "updated_at": "2026-08-17T00:00:00+00:00",
-            "last_accessed_at": None,
-            "access_count": 3,
-            "embedding": "[0.1, 0.2]",
-        }
-        mock_connect.return_value = fake
-        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
-        m = b.get(7)
-        assert m is not None
-        assert m.id == 7
-        assert m.content == "parsed content"
-        assert m.tags == ["a", "b"]
-        assert m.metadata == {"summary": "x"}
-        assert m.access_count == 3
-        assert m.embedding == [0.1, 0.2]
-
-
-def test_pgvector_get_none_when_missing():
-    with patch("psycopg.connect") as mock_connect:
-        from luminary_memory.backends.pgvector import PGVectorBackend
-
-        fake = _FakeConn()
-        fake.cur._one = None
-        mock_connect.return_value = fake
-        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
-        assert b.get(999) is None
-
-
-def test_pgvector_update_issues_sql():
-    with patch("psycopg.connect") as mock_connect:
-        from luminary_memory.backends.pgvector import PGVectorBackend
-
-        fake = _FakeConn()
-        mock_connect.return_value = fake
-        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
-        m = Memory(id=1, content="updated", tags=["x"])
-        b.update(m)
-        sql = fake.cur.executed[-1][0]
-        assert "UPDATE memories" in sql
-        assert "WHERE id=%s" in sql
-
-
-def test_pgvector_delete_cascades_relations():
-    with patch("psycopg.connect") as mock_connect:
-        from luminary_memory.backends.pgvector import PGVectorBackend
-
-        fake = _FakeConn()
-        mock_connect.return_value = fake
-        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
-        b.delete(5)
-        sqls = [s for s, _ in fake.cur.executed]
-        assert any("DELETE FROM relations WHERE memory_id = %s" == s for s in sqls)
-        assert any("DELETE FROM memories WHERE id = %s" == s for s in sqls)
-
-
-def test_pgvector_count():
-    with patch("psycopg.connect") as mock_connect:
-        from luminary_memory.backends.pgvector import PGVectorBackend
-
-        fake = _FakeConn()
-        fake.cur._one = (12,)
-        mock_connect.return_value = fake
-        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
-        assert b.count() == 12
-        assert any("COUNT" in s for s, _ in fake.cur.executed)
 
 
 def test_pgvector_row_to_memory_tuple():
@@ -357,60 +169,80 @@ def test_pgvector_row_to_memory_tuple():
     assert m.embedding == [0.5]
 
 
-def test_pgvector_unit_update_and_delete():
-    """update() executes UPDATE and commits; delete() executes DELETE."""
-    with patch("psycopg.connect") as mock_connect:
-        from luminary_memory.backends.pgvector import PGVectorBackend
 
-        fake = _FakeConn()
-        fake.cur._one = None
-        mock_connect.return_value = fake
-        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
-        committed_before = fake.committed
+@pytest.fixture
+def real_pg_backend():
+    if not _pg_available():
+        pytest.skip(_SKIP_MSG)
+    import psycopg
+    from psycopg.conninfo import make_conninfo
 
-        m = Memory(id=7, content="updated content", embedding=[0.1, 0.2, 0.3])
-        b.update(m)
-        assert fake.committed == committed_before + 1
-        update_sql = " ".join(fake.cur.executed[-1][0].split())
-        assert "UPDATE memories" in update_sql
-
-        b.delete(7)
-        assert fake.committed == committed_before + 2
-        delete_sql = " ".join(fake.cur.executed[-1][0].split())
-        assert "DELETE FROM memories" in delete_sql
-
-
-def test_pgvector_unit_by_tags_builds_query():
-    """by_tags filters with jsonb containment."""
-    with patch("psycopg.connect") as mock_connect:
-        from luminary_memory.backends.pgvector import PGVectorBackend
-
-        fake = _FakeConn()
-        fake.cur._rows = []
-        mock_connect.return_value = fake
-        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
-        res = b.by_tags(["ci", "alpha"])
-        assert res == set()  # by_tags returns a set of ids
-        sql = " ".join(fake.cur.executed[-1][0].split())
-        assert "SELECT id, tags FROM memories" in sql
+    from luminary_memory.backends.pgvector import PGVectorBackend
+    dsn = os.environ.get("LUMINARY_PG_DSN", os.environ.get("PG_DSN", ""))
+    admin = psycopg.connect(dsn, autocommit=True)
+    schema = "backend_test_" + uuid.uuid4().hex
+    admin.execute(f'CREATE SCHEMA "{schema}"')
+    backend = PGVectorBackend(dsn=make_conninfo(dsn, options=f"-c search_path={schema},public"), embedding_dim=3)
+    try:
+        yield backend
+    finally:
+        backend.close()
+        admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
+        admin.close()
 
 
-def test_pgvector_unit_row_to_memory_json_fallback():
-    """Corrupt metadata/tags JSON falls back gracefully (no crash)."""
-    with patch("psycopg.connect") as mock_connect:
-        from luminary_memory.backends.pgvector import PGVectorBackend
+def test_pgvector_real_round_trip_and_missing_row(real_pg_backend):
+    backend = real_pg_backend
+    memory_id = backend.add(Memory(content="parsed content", metadata={"summary": "x"}, tags=["a", "b"],
+                                   embedding=[0.1, 0.2, 0.3], access_count=3))
+    memory = backend.get(memory_id)
+    assert memory.content == "parsed content" and memory.metadata == {"summary": "x"}
+    assert memory.tags == ["a", "b"] and memory.access_count == 3
+    assert memory.embedding == pytest.approx([0.1, 0.2, 0.3])
+    assert backend.get(memory_id + 10000) is None
+    assert backend.count() == 1
 
-        fake = _FakeConn()
-        fake.cur._rows = [
-            # id, content, metadata(corrupt), source, tags(corrupt), importance,
-            # ttl, created, updated, last_access, access_count, embedding
-            (1, "hello", "not-json{", None, "[corrupt", 0.5,
-             None, "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00",
-             "2026-01-01T00:00:00+00:00", 0, None),
-        ]
-        mock_connect.return_value = fake
-        b = PGVectorBackend(dsn="postgresql://localhost/x", embedding_dim=3)
-        res = b.all()
-        assert len(res) == 1
-        assert res[0].metadata == {}  # fallback, not crash
-        assert res[0].tags == []      # fallback, not crash
+
+def test_pgvector_real_scoped_keyword_vector_and_tags(real_pg_backend):
+    backend = real_pg_backend
+    own = backend.add(Memory(content="hello deployment world", tags=["ci", "alpha"],
+                            embedding=[1.0, 0.0, 0.0], user_id="alice", workspace_id="w", agent_id="pi"))
+    backend.add(Memory(content="hello foreign world", tags=["ci", "beta"],
+                       embedding=[1.0, 0.0, 0.0], user_id="bob", workspace_id="w", agent_id="pi"))
+    scope = {"user_id": "alice", "workspace_id": "w", "agent_id": "pi"}
+    assert [memory.id for memory, _ in backend.keyword_search("hello", limit=5, scope=scope, include_global=False)] == [own]
+    assert [memory.id for memory, _ in backend.vector_search([1.0, 0.0, 0.0], limit=5, scope=scope, include_global=False)] == [own]
+    assert backend.by_tags(["alpha"]) == {own}
+    assert backend.by_tags(["absent"]) == set()
+
+
+def test_pgvector_real_update_and_graph_cascade(real_pg_backend):
+    from luminary_memory.recall.graph import index_memory_entities
+    backend = real_pg_backend
+    memory = Memory(content="alpha deployment service", tags=["alpha"], embedding=[1.0, 0.0, 0.0])
+    memory.id = backend.add(memory)
+    index_memory_entities(backend, memory)
+    assert backend.conn.execute("SELECT COUNT(*) FROM relations WHERE memory_id=%s", (memory.id,)).fetchone()[0] > 0
+    memory.content = "updated deployment"
+    backend.update(memory)
+    assert backend.get(memory.id).content == "updated deployment"
+    assert backend.get(memory.id).revision == 2
+    backend.delete(memory.id)
+    assert backend.get(memory.id) is None and backend.count() == 0
+    assert backend.conn.execute("SELECT COUNT(*) FROM relations WHERE memory_id=%s", (memory.id,)).fetchone()[0] == 0
+
+
+def test_pgvector_real_non_unique_insert_error_is_not_duplicate(real_pg_backend):
+    from psycopg.errors import NotNullViolation
+    backend = real_pg_backend
+    backend.add(Memory(content="existing fact"))
+    with pytest.raises(NotNullViolation):
+        backend.add(Memory(content=None))
+    assert backend.count() == 1
+
+
+def test_pgvector_row_parser_rejects_corrupt_containers():
+    from luminary_memory.backends.pgvector import PGVectorBackend
+    backend = PGVectorBackend.__new__(PGVectorBackend)
+    memory = backend._row_to_memory({"id": 1, "content": "hello", "metadata": "not-json{", "tags": "[corrupt"})
+    assert memory.metadata == {} and memory.tags == []

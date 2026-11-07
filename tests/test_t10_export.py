@@ -319,3 +319,134 @@ def test_import_rejects_future_or_malformed_exports(tmp_path):
     with pytest.raises(ValueError, match="unsupported export format"):
         dst.import_memories(malformed)
     dst.close()
+
+
+def test_round_trip_remaps_inactive_lineage_into_nonempty_store(tmp_path):
+    from luminary_memory.types import Memory
+
+    owner = {"user_id": "alice", "workspace_id": "project-a", "agent_id": "pi"}
+    src = MemoryClient(db_path=str(tmp_path / "lineage-src.db"), scope=owner, engine=_FakeEngine(), enricher=NoopEnricher())
+    dst = MemoryClient(db_path=str(tmp_path / "lineage-dst.db"), scope=owner, engine=_FakeEngine(), enricher=NoopEnricher())
+    try:
+        predecessor = src.backend.add(Memory(content="Original deployment policy", status="superseded", **owner))
+        src.backend.add(Memory(content="Reviewed deployment policy", supersedes_id=predecessor, **owner))
+        dst.ingest("Unrelated destination record one")
+        dst.ingest("Unrelated destination record two")
+        path = tmp_path / "lineage-backup.json"
+        src.export(path, include_embeddings=False)
+        payload = json.loads(path.read_text())
+        payload["memories"].sort(key=lambda row: row.get("id", 0), reverse=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        assert dst.import_memories(path)["imported"] == 2
+        restored = {memory.content: memory for memory in dst.backend.all()}
+        older = restored["Original deployment policy"]
+        newer = restored["Reviewed deployment policy"]
+        assert newer.supersedes_id == older.id != predecessor
+        assert older.status == "superseded"
+        assert (older.user_id, older.workspace_id, older.agent_id) == ("alice", "project-a", "pi")
+        assert (newer.user_id, newer.workspace_id, newer.agent_id) == ("alice", "project-a", "pi")
+        assert dst.backend.get(predecessor).content == "Unrelated destination record one"
+        tables = ("memories", "memory_events", "memory_evidence", "claims", "claim_evidence", "episodes", "relations", "entities")
+        before_reimport = {table: [tuple(row) for row in dst.backend.conn.execute(f"SELECT * FROM {table} ORDER BY id")]
+                           for table in tables}
+        repeated = dst.import_memories(path)
+        assert (repeated["imported"], repeated["skipped_duplicates"]) == (0, 2)
+        assert {table: [tuple(row) for row in dst.backend.conn.execute(f"SELECT * FROM {table} ORDER BY id")]
+                for table in tables} == before_reimport
+    finally:
+        src.close()
+        dst.close()
+
+
+def test_unbound_import_does_not_deduplicate_different_owners(tmp_path):
+    dst = MemoryClient(db_path=str(tmp_path / "owners.db"), engine=_FakeEngine(), enricher=NoopEnricher())
+    try:
+        path = tmp_path / "owners.json"
+        path.write_text(json.dumps({"memories": [
+            {"content": "Identical independently owned fact", "user_id": "alice", "workspace_id": "same-project"},
+            {"content": "Identical independently owned fact", "user_id": "bob", "workspace_id": "same-project"},
+        ]}), encoding="utf-8")
+        assert dst.import_memories(path)["imported"] == 2
+        assert {memory.user_id for memory in dst.backend.all()} == {"alice", "bob"}
+    finally:
+        dst.close()
+
+
+def test_invalid_source_lineage_rejected_before_any_insert(tmp_path):
+    import pytest
+
+    dst = MemoryClient(db_path=str(tmp_path / "invalid-lineage.db"), engine=_FakeEngine(), enricher=NoopEnricher())
+    try:
+        dst.ingest("Do not reinterpret this destination ID as a source predecessor")
+        before = [tuple(row) for row in dst.backend.conn.execute("SELECT * FROM memories")]
+        path = tmp_path / "invalid-lineage.json"
+        for records in (
+            [{"content": "Legacy successor without source IDs", "supersedes_id": 1}],
+            [{"id": 1, "content": "Cycle one", "supersedes_id": 2},
+             {"id": 2, "content": "Cycle two", "supersedes_id": 1}],
+            [{"id": 1, "content": "Valid predecessor"},
+             {"id": 2, "content": "Boolean is not a source ID", "supersedes_id": True}],
+        ):
+            path.write_text(json.dumps({"memories": records}), encoding="utf-8")
+            with pytest.raises(ValueError, match="lineage|source reference"):
+                dst.import_memories(path)
+            assert [tuple(row) for row in dst.backend.conn.execute("SELECT * FROM memories")] == before
+    finally:
+        dst.close()
+
+
+def test_incompatible_destination_lineage_rolls_back_entire_chain(tmp_path):
+    import pytest
+
+    dst = MemoryClient(db_path=str(tmp_path / "incompatible.db"), engine=_FakeEngine(), enricher=NoopEnricher())
+    try:
+        original_id = dst.ingest("Already existing successor")
+        before = [tuple(row) for row in dst.backend.conn.execute("SELECT * FROM memories")]
+        path = tmp_path / "incompatible.json"
+        path.write_text(json.dumps({"memories": [
+            {"id": 10, "content": "New historical predecessor", "status": "superseded"},
+            {"id": 11, "content": "Already existing successor", "supersedes_id": 10},
+        ]}), encoding="utf-8")
+        with pytest.raises(ValueError, match="incompatible lineage"):
+            dst.import_memories(path)
+        assert [tuple(row) for row in dst.backend.conn.execute("SELECT * FROM memories")] == before
+        assert dst.backend.get(original_id).supersedes_id is None
+    finally:
+        dst.close()
+
+
+def test_lineage_audit_failure_rolls_back_records_and_episodes(tmp_path, monkeypatch):
+    import pytest
+
+    dst = MemoryClient(db_path=str(tmp_path / "audit-lineage.db"), engine=_FakeEngine(), enricher=NoopEnricher())
+    try:
+        path = tmp_path / "audit-lineage.json"
+        path.write_text(json.dumps({"memories": [
+            {"id": 10, "content": "Historical predecessor", "status": "superseded"},
+            {"id": 11, "content": "Reviewed successor", "supersedes_id": 10},
+        ]}), encoding="utf-8")
+
+        def fail(*args, **kwargs):
+            raise OSError("audit storage unavailable")
+
+        monkeypatch.setattr(dst.backend, "record_event", fail)
+        with pytest.raises(OSError, match="audit storage unavailable"):
+            dst.import_memories(path)
+        for table in ("memories", "episodes", "memory_events", "memory_evidence"):
+            assert dst.backend.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+    finally:
+        dst.close()
+
+
+def test_import_preserves_identical_observations_from_distinct_sessions(tmp_path):
+    dst = MemoryClient(db_path=str(tmp_path / "sessions.db"), engine=_FakeEngine(), enricher=NoopEnricher())
+    try:
+        path = tmp_path / "sessions.json"
+        path.write_text(json.dumps({"memories": [
+            {"content": "Repeated observation", "user_id": "alice", "session_id": "session-a"},
+            {"content": "Repeated observation", "user_id": "alice", "session_id": "session-b"},
+        ]}), encoding="utf-8")
+        assert dst.import_memories(path)["imported"] == 2
+        assert {memory.session_id for memory in dst.backend.all()} == {"session-a", "session-b"}
+    finally:
+        dst.close()

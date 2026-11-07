@@ -117,3 +117,6 @@ website/*.png
 
 # ---- Internal plan files ----
 website/plan.md
+
+# Private implementation plans, runtime probes and acceptance captures
+.superpowers/

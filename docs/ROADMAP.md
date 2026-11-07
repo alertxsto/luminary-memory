@@ -6,7 +6,9 @@ Make Luminary a visible, interactive memory-management system inside supported a
 
 The complete product includes compact and full native inspectors, substantial controls organized into tabs, explicit project sharing, and a final Summary tab. One existing memory engine serves every UI. A browser companion and AI explanation are opt-in options, not hidden requirements or substitutes for native functionality.
 
-**Status: planned product work.** This document does not claim the new UI is implemented. Existing tools, provider integration and basic terminal interaction are the starting point, not completion of this goal.
+**Status: implementation in progress; not released.** The inspector service, scoped sharing/confirmed changes, shared controllers, native renderer sources and explicit browser companion are being integrated. SQLite inspector/transport/installer checks and browser workflows have run; native host acceptance and the remaining gates below are still open. Published `0.3.2` packages do not contain this inspector.
+
+**Development checkpoint:** shared backend/controller and installed-wheel packaging gates pass. Actual OpenCode CLI 2.2.0 now renders the native inspector and has completed an owner-confirmed tag edit against real SQLite; native omp has also exercised real create/correction flows. These focused observations do not complete the native matrix: remote-server isolation, remaining host/mode/action coverage and whole-product acceptance are still open. Do not treat this checkpoint as a release.
 
 ## Product decisions
 
@@ -59,8 +61,8 @@ Documented capability is not proof that Luminary's new implementation works on a
 | Target | Native end state | Contract and completion gate |
 | --- | --- | --- |
 | **OpenCode CLI** | Compact session panel, full panel/page, shortcuts and all tabs/actions. | Documented TUI and typed server RPC. Verify actual package exports, host version, remote context and rendering. |
-| **OpenCode Desktop** | In-application compact/full inspector. | Arbitrary frontend contribution API remains unverified. Needs supported loader/contributions/context/lifecycle and actual Desktop acceptance. Browser/tool cards do not close this target. |
-| **OpenCode Web** | Host-native inspector using authorized connected-server data. | Separately gated on supported frontend API and real acceptance; CLI/Desktop support is not proof. |
+| **OpenCode Desktop** | In-application compact/full inspector. | Released `@opencode/plugin` **2.2.0** now exposes the [experimental GUI SDK](https://opencode.ai/v2/docs/build/plugins/gui/). The separate CommonJS GUI entry builds with its official Vite preset and passes SDK type-checking. Actual Desktop installation, session switching and mutation/teardown acceptance remain open; this is not a fullscreen-route claim. |
+| **OpenCode Web** | Host-native inspector using authorized connected-server data. | The Desktop GUI bundle does not establish a Web loader. Supported third-party Web discovery and real Web acceptance remain separate open gates; the optional companion does not satisfy them. |
 | **Hermes Desktop** | Dockable pane, full page, sidebar/settings and native controls. | Documented Desktop SDK; typed provider schema, explicit discovery, profile routing and real installation must pass. |
 | **Hermes web dashboard** | Host-native tab plus compact slots. | Separate dashboard SDK and manifest/backend mount, not the Desktop SDK or standalone companion. |
 | **Hermes CLI/TUI** | In-host compact/full terminal inspector. | Commands/prompts exist; a general rich rendering contribution seam is not verified. Needs native API/enabler before completion. |
@@ -109,6 +111,7 @@ Revocation blocks subsequent reads, exports, explanations and changes and clears
 - Bound page/expansion/graph work and serialized payloads. Context/filter/policy-bound cursors cannot be reused across selections.
 - Changes use content revisions and explicit preview/confirmation where appropriate. Stale changes produce conflict, not last-write-wins.
 - Successful inspector changes commit memory/claims/index state and durable audit together. Self-committing helpers require genuine transaction-aware integration.
+- Export publication and native profile files are not atomic with SQL. If external persistence starts or a successful mutation loses its commit acknowledgement, report an unknown outcome, discard the pending UI proposal and require inspection before any new attempt; do not claim rollback or automatically replay it.
 - Audit retains scope after a record disappears. Unverifiable legacy history is not exposed globally.
 - Event cursors/replay distinguish durable outcomes from running/cancelled/unknown operations and do not count snapshots as new writes.
 
@@ -119,6 +122,15 @@ Never return raw Settings/config objects, API keys, credential-bearing DSNs or o
 Installing/enabling/opening UI must not select a provider, edit other profiles or change current save enablement, grounding, cadence and session continuity.
 
 Deterministic Summary uses actual authorized data and a visible reference time. AI explanation is read-only, explicitly requested and disclosed: provider/model/destination/outbound fields and known usage/cost availability. Disabled/offline/failed AI does not break normal Summary. It cannot authorize tools, writes or permissions.
+
+### Observed implementation checks
+
+- **Backend:** the core inspector, project grants, content revisions and durable audit were exercised with SQLite and real PostgreSQL/pgvector. Subsequent integrated SQLite/transport/file-installer checks passed 71 tests.
+- **View state:** 25 shared/native-controller checks passed, including stale-context rejection, separate owner confirmation, unknown write outcomes, file-upload cancellation and independently selected rights.
+- **Optional companion:** real Chromium and a real SQLite store exercised all nine tab registrations, cancelled versus confirmed creation, detail, deterministic Summary, compact Activity, keyboard tab navigation and sign-out without JavaScript page errors. This is browser-companion evidence, not native-host acceptance.
+- **Build:** native package bundles, Hermes Desktop/dashboard resources and browser assets build locally. OpenCode Desktop has its own official Solid DOM/CommonJS GUI build, separate from the Solid/OpenTUI terminal transform. Actual pi/omp/OpenCode/Hermes host runs and installed-wheel acceptance remain open.
+- **Release boundary:** none of this establishes a published inspector, approved catalog listing, completed AI-model evaluation or whole-product completion.
+
 
 ## Delivery sequence
 
@@ -144,9 +156,9 @@ flowchart TD
 
 ### M0 — Reconciled baseline and verified host contracts
 
-**State:** planned; prerequisite to implementation.
+**State:** baseline reconciled locally; host-specific acceptance continues.
 
-Main/develop were found diverged and the inspected develop tree lacks the released native npm/integration tooling. Reconcile separately through a reviewed implementation change, preserving both sides. Roadmap publication does not merge branches or application code.
+Released native integrations and subsequent `develop` operator-config/OpenCode-skill fixes are incorporated into the implementation baseline. Existing release artifacts are unchanged. New native surfaces are not considered verified from a build or manifest alone.
 
 Deliver:
 - Reviewed execution baseline and passing existing safety/backend/package gates.

@@ -41,15 +41,6 @@ def test_core_block_authority_boundary(tmp_path):
     p.shutdown()
 
 
-def test_provider_declares_single_memory_authority(tmp_path):
-    p = _init_provider(tmp_path)
-
-    # Hermes' public provider contract asks the external provider whether it
-    # owns the persistent memory surface. Luminary must answer explicitly so
-    # native files are not combined with the DB-backed core.
-    assert p.replaces_builtin_memory() is True
-
-    p.shutdown()
 
 
 def test_post_setup_disables_native_surfaces_idempotently(tmp_path):
@@ -84,7 +75,7 @@ def test_post_setup_disables_native_surfaces_idempotently(tmp_path):
     assert (tmp_path / "luminary" / "config.json").exists()
 
 
-def test_post_setup_activates_existing_profiles_without_creating_new_ones(tmp_path):
+def test_post_setup_leaves_sibling_profiles_unchanged(tmp_path):
     profiles = tmp_path / "profiles"
     (profiles / "telegram").mkdir(parents=True)
     (profiles / "telegram" / "config.yaml").write_text(
@@ -99,9 +90,12 @@ def test_post_setup_activates_existing_profiles_without_creating_new_ones(tmp_pa
     p.post_setup(str(tmp_path), {"memory": {}})
 
     profile = (profiles / "telegram" / "config.yaml").read_text(encoding="utf-8")
-    assert "provider: luminary" in profile
-    assert "memory_enabled: false" in profile
-    assert "user_profile_enabled: false" in profile
+    assert profile == (
+        "memory:\n"
+        "  provider: cline\n"
+        "  memory_enabled: true\n"
+        "  user_profile_enabled: true\n"
+    )
     assert not (profiles / "default" / "config.yaml").exists()
 
 

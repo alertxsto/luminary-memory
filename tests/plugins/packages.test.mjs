@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
+import { build } from "esbuild";
 
 // These are package consumer tests: a missing Python runtime must never turn
 // an attempted remember into a claimed durable write or a thrown host error.
@@ -16,9 +17,27 @@ for (const agent of ["pi", "omp", "opencode"]) {
     process.env.LUMINARY_PYTHON = join(directory, "python-does-not-exist");
     let cleanup;
     try {
-      const { default: plugin } = await import(
-        new URL(`../../plugins/${agent}/dist/index.js`, import.meta.url)
-      );
+      let entry = fileURLToPath(new URL(`../../plugins/${agent}/dist/index.js`, import.meta.url));
+      if (agent !== "opencode") {
+        // This unit exercises real OS bridge failure, not a native host. Drawing
+        // is forbidden here; exact host/peer compatibility has separate acceptance.
+        const guarded = join(directory, "headless-tool.mjs");
+        await build({
+          entryPoints: [entry], outfile: guarded, bundle: true, platform: "node", format: "esm",
+          plugins: [{
+            name: "forbid-native-drawing",
+            setup(builder) {
+              builder.onResolve({ filter: /^@(earendil-works|oh-my-pi)\/pi-tui$/ },
+                () => ({ path: "native-drawing", namespace: "headless-guard" }));
+              builder.onLoad({ filter: /.*/, namespace: "headless-guard" }, () => ({
+                contents: "export function matchesKey(){throw Error('Unexpected native drawing')} export function truncateToWidth(){throw Error('Unexpected native drawing')}",
+              }));
+            },
+          }],
+        });
+        entry = guarded;
+      }
+      const { default: plugin } = await import(pathToFileURL(entry).href);
       const abort = new AbortController();
       let result;
       if (agent === "opencode") {
@@ -31,6 +50,7 @@ for (const agent of ["pi", "omp", "opencode"]) {
             async hook() { return { async dispose() {} }; },
           },
           event: { async *subscribe() {} },
+          rpc: { async register() { return { async dispose() {} }; } },
           tool: {
             async transform(edit) {
               edit({ add(definition) { tools.set(definition.name, definition); } });
@@ -83,7 +103,9 @@ async function packageFixture(run) {
   const directory = await mkdtemp(join(tmpdir(), "luminary-release-"));
   try {
     await mkdir(join(directory, "scripts"), { recursive: true });
-    await copyFile(join(root, "scripts", "build-plugins.mjs"), join(directory, "scripts", "build-plugins.mjs"));
+    for (const script of ["build-plugins.mjs", "opencode-gui.vite.mjs"]) {
+      await copyFile(join(root, "scripts", script), join(directory, "scripts", script));
+    }
     for (const file of ["package.json", "pyproject.toml", "LICENSE"]) {
       await copyFile(join(root, file), join(directory, file));
     }

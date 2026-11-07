@@ -2,18 +2,41 @@
   "name": "luminary-memory-plugin-workspace",
   "private": true,
   "type": "module",
-  "workspaces": ["plugins/*"],
-  "engines": {"node": "^22.22.2 || ^24.15.0 || >=26.0.0"},
+  "workspaces": [
+    "plugins/*"
+  ],
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
   "scripts": {
     "build:plugins": "node scripts/build-plugins.mjs",
+    "build:ui": "node scripts/build-uis.mjs",
+    "build": "npm run build:plugins && npm run build:ui",
     "test:plugins": "node --test tests/plugins/packages.test.mjs",
+    "test:ui-contracts": "node --test tests/ui/controller.test.mjs tests/hermes/ui.test.mjs",
+    "check:opencode": "node scripts/check-opencode-types.mjs",
     "pack:plugins": "node scripts/pack-plugins.mjs"
   },
   "devDependencies": {
-    "@opencode/plugin": "2.1.4",
+    "@babel/core": "7.29.7",
+    "@babel/preset-typescript": "7.27.1",
+    "@opencode/plugin": "2.2.0",
+    "@opentui/core": "0.7.0",
+    "@opentui/solid": "0.7.0",
+    "@types/node": "24.12.2",
+    "babel-preset-solid": "1.9.12",
     "effect": "4.0.1",
     "esbuild": "0.28.2",
+    "solid-js": "1.9.17",
     "typebox": "1.3.27",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vite-plugin-solid": "2.11.10",
     "zod": "4.6.7"
+  },
+  "overrides": {
+    "@opentui/solid": {
+      "solid-js": "$solid-js"
+    }
   }
 }

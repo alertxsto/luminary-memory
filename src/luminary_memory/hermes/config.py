@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from pathlib import Path
 
@@ -65,7 +66,7 @@ def load_config(hermes_home: str) -> dict:
             with open(path, encoding="utf-8") as fh:
                 stored = json.load(fh)
             if isinstance(stored, dict):
-                cfg.update({k: v for k, v in stored.items() if k in _DEFAULTS})
+                cfg.update({k: v for k, v in stored.items() if k in _DEFAULTS and k != "llm_api_key"})
             else:
                 logger.warning(
                     "load_config: ignoring non-object config at %s; using defaults",
@@ -82,6 +83,33 @@ def load_config(hermes_home: str) -> dict:
     return cfg
 
 
+def _typed_value(key: str, value):
+    """Normalize the official CLI's text prompts to the dashboard's native types."""
+    default = _DEFAULTS[key]
+    if isinstance(default, bool):
+        if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+            return value.strip().lower() == "true"
+        if type(value) is bool:
+            return value
+    elif type(default) is int:
+        if type(value) is int:
+            return value
+        if isinstance(value, str):
+            return int(value.strip())
+    elif type(default) is float:
+        if type(value) in (int, float, str):
+            number = float(value)
+            if math.isfinite(number):
+                return number
+    elif isinstance(value, str):
+        if key in {"mode", "backend"} and value not in (
+            {"context", "tools", "hybrid"} if key == "mode" else {"sqlite", "pgvector"}
+        ):
+            raise ValueError(f"Invalid {key} option")
+        return value
+    raise ValueError(f"Invalid type for {key}")
+
+
 def save_config(values: dict, hermes_home: str) -> None:
     """Persist config values to disk with 0600 permissions.
 
@@ -89,7 +117,7 @@ def save_config(values: dict, hermes_home: str) -> None:
     used when nothing has been persisted yet.
     """
     current = load_config(hermes_home)
-    known = {k: v for k, v in values.items() if k in _DEFAULTS}
+    known = {k: _typed_value(k, v) for k, v in values.items() if k in _DEFAULTS and k != "llm_api_key"}
     unknown = {k for k in values if k not in _DEFAULTS}
     if unknown:
         logger.warning(
@@ -97,6 +125,9 @@ def save_config(values: dict, hermes_home: str) -> None:
             sorted(unknown),
         )
     current.update(known)
+    # Hermes owns secret storage. Also remove a legacy plaintext value when
+    # rewriting settings; never copy it back into the native flat-json file.
+    current.pop("llm_api_key", None)
 
     cfg_dir = Path(hermes_home) / _CONFIG_DIR
     cfg_dir.mkdir(parents=True, exist_ok=True)

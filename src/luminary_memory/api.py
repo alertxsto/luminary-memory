@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from luminary_memory.backends import get_backend
+from luminary_memory.backends.inspector import atomic_client
 from luminary_memory.budget import truncate
 from luminary_memory.config import Settings, semantic_support_floor
 from luminary_memory.embeddings.fastembed import FastembedEngine
@@ -52,6 +53,7 @@ def _snapshot(memory: Memory | None) -> dict | None:
         "claim_key": memory.claim_key,
         "supersedes_id": memory.supersedes_id,
         "content_hash": memory.content_hash,
+        "revision": memory.revision,
     }
 
 
@@ -173,7 +175,9 @@ def _try_index_graph(backend, memory: Memory) -> None:
         if getattr(memory, "needs_reindex", False):
             memory.needs_reindex = False
             backend.update(memory)
-    except Exception:  # noqa: BLE001 -- graph indexing is best-effort; never abort ingest
+    except Exception:
+        if backend.in_transaction:
+            raise
         logger.warning("graph indexing failed for memory %s (non-fatal)", memory.id)
         try:
             memory.needs_reindex = True
@@ -296,6 +300,8 @@ class MemoryClient:
                 actor=actor,
             )
         except Exception:
+            if self.backend.in_transaction:
+                raise
             logger.warning("memory event recording failed for %s", memory_id, exc_info=True)
 
     def _record_evidence(self, memory: Memory, extractor: str = "direct") -> None:
@@ -314,6 +320,8 @@ class MemoryClient:
                 ),
             )
         except Exception:
+            if self.backend.in_transaction:
+                raise
             logger.warning("evidence recording failed for %s", memory.id, exc_info=True)
 
     def _sync_claim_status(
@@ -330,6 +338,8 @@ class MemoryClient:
         try:
             sync(memory_id, status, valid_to=valid_to)
         except Exception:
+            if self.backend.in_transaction:
+                raise
             logger.warning("claim status sync failed for %s", memory_id, exc_info=True)
 
     def _record_episode_and_claims(
@@ -356,6 +366,8 @@ class MemoryClient:
                 observed_at=memory.observed_at,
             )
         except Exception:
+            if self.backend.in_transaction:
+                raise
             logger.warning("episode ledger write failed for %s", memory.id, exc_info=True)
             return
 
@@ -377,6 +389,8 @@ class MemoryClient:
                     agent_id=memory.agent_id,
                 )
             except Exception:
+                if self.backend.in_transaction:
+                    raise
                 logger.warning(
                     "claim ledger write failed for %s; continuing with later claims",
                     memory.id,
@@ -393,6 +407,8 @@ class MemoryClient:
                 ):
                     return found
             except Exception:
+                if self.backend.in_transaction:
+                    raise
                 logger.debug("backend hash lookup failed", exc_info=True)
         for existing in self.backend.all():
             existing_hash = existing.content_hash or _content_hash(existing.content)
@@ -402,29 +418,29 @@ class MemoryClient:
                 return existing
         return None
 
-    def ingest(
-        self,
-        text: str,
-        tags: list[str] | None = None,
-        source: str | None = None,
-        metadata: dict | None = None,
-        enrich: bool = True,
-        importance: float | None = None,
-        user_id: str | None = None,
-        session_id: str | None = None,
-        workspace_id: str | None = None,
-        agent_id: str | None = None,
-        observed_at: str | None = None,
-        valid_from: str | None = None,
-        valid_to: str | None = None,
-        status: str = "active",
-        confidence: float | None = None,
-        evidence_quote: str | None = None,
-        source_id: str | None = None,
-        claim_key: str | None = None,
-        supersedes_id: int | None = None,
-        source_text: str | None = None,
-    ) -> int | None:
+    @atomic_client
+    def ingest(self,
+    text: str,
+    tags: list[str] | None = None,
+    source: str | None = None,
+    metadata: dict | None = None,
+    enrich: bool = True,
+    importance: float | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    agent_id: str | None = None,
+    observed_at: str | None = None,
+    valid_from: str | None = None,
+    valid_to: str | None = None,
+    status: str = "active",
+    confidence: float | None = None,
+    evidence_quote: str | None = None,
+    source_id: str | None = None,
+    claim_key: str | None = None,
+    supersedes_id: int | None = None,
+    source_text: str | None = None,
+    preserve_lineage: bool = False,) -> int | None:
         text = str(text or "").strip()
         if not text:
             return None
@@ -552,16 +568,24 @@ class MemoryClient:
         # explicit supersession is retained as a conflict instead of erasing
         # the prior claim.
         if canonical_claim_key:
+            # An explicit successor may be observed in another session. Preserve
+            # any session capability bound on the client, but do not mistake the
+            # new observation's session metadata for the predecessor's ownership.
+            claim_scope = effective_scope
+            if supersedes_id is not None and "session_id" not in self.scope:
+                claim_scope = {key: value for key, value in effective_scope.items() if key != "session_id"}
             finder = getattr(self.backend, "find_by_claim_key", None)
             existing_claims = []
             if callable(finder):
                 try:
-                    existing_claims = finder(canonical_claim_key, scope=effective_scope)
-                except Exception:  # noqa: BLE001
+                    existing_claims = finder(canonical_claim_key, scope=claim_scope)
+                except Exception:
+                    if self.backend.in_transaction:
+                        raise
                     existing_claims = []
             for existing in existing_claims:
                 if not memory_matches_scope(
-                    existing, effective_scope, include_global=False, active_only=False
+                    existing, claim_scope, include_global=False, active_only=False
                 ):
                     continue
                 if existing.status not in {"active", "conflicted"}:
@@ -595,7 +619,7 @@ class MemoryClient:
         # overwrite a memory from wording, language, or importance alone:
         # contradictory observations remain inspectable unless the caller
         # explicitly supplies a supersession relationship.
-        should_try_replace = self.settings.rule_auto_replace and supersedes_id is not None
+        should_try_replace = self.settings.rule_auto_replace and supersedes_id is not None and not preserve_lineage
         if should_try_replace:
             replaced = self._maybe_replace_explicit(
                 content,
@@ -716,31 +740,32 @@ class MemoryClient:
                     _try_index_graph(self.backend, existing)
                     return best_id
             return None
-        except Exception:  # noqa: BLE001 -- best-effort replace
+        except Exception:
+            if self.backend.in_transaction:
+                raise
             return None
 
-    def ingest_batch(
-        self,
-        texts: list[str],
-        tags: list[list[str] | None] | None = None,
-        source: str | None = None,
-        metadata: list[dict | None] | None = None,
-        enrich: bool = True,
-        importance: float | None = None,
-        user_id: str | None = None,
-        session_id: str | None = None,
-        workspace_id: str | None = None,
-        agent_id: str | None = None,
-        observed_at: str | None = None,
-        valid_from: str | None = None,
-        valid_to: str | None = None,
-        status: str = "active",
-        confidence: float | None = None,
-        evidence_quote: str | None = None,
-        source_id: str | None = None,
-        claim_key: str | None = None,
-        supersedes_id: int | None = None,
-    ) -> list[int | None]:
+    @atomic_client
+    def ingest_batch(self,
+    texts: list[str],
+    tags: list[list[str] | None] | None = None,
+    source: str | None = None,
+    metadata: list[dict | None] | None = None,
+    enrich: bool = True,
+    importance: float | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    agent_id: str | None = None,
+    observed_at: str | None = None,
+    valid_from: str | None = None,
+    valid_to: str | None = None,
+    status: str = "active",
+    confidence: float | None = None,
+    evidence_quote: str | None = None,
+    source_id: str | None = None,
+    claim_key: str | None = None,
+    supersedes_id: int | None = None,) -> list[int | None]:
         """Batch ingest mirroring :meth:`ingest` per item.
 
         Whitelist-rejected items yield ``None`` at their index. Embeddings
@@ -938,6 +963,8 @@ class MemoryClient:
                 try:
                     existing_claims = finder(mem.claim_key, scope=mem_scope) if finder else []
                 except Exception:
+                    if self.backend.in_transaction:
+                        raise
                     logger.debug("batch claim lookup failed", exc_info=True)
                     existing_claims = []
                 for existing in existing_claims:
@@ -1015,34 +1042,37 @@ class MemoryClient:
             return None
         return memory
 
-    def supersede(
-        self,
-        memory_id: int,
-        content: str,
-        *,
-        evidence_quote: str | None = None,
-        observed_at: str | None = None,
-        valid_from: str | None = None,
-        valid_to: str | None = None,
-        source: str | None = None,
-        source_id: str | None = None,
-        metadata: dict | None = None,
-        tags: list[str] | None = None,
-        claims: list[dict] | None = None,
-        source_text: str | None = None,
-    ) -> int | None:
+    @atomic_client
+    def supersede(self,
+    memory_id: int,
+    content: str,
+    *,
+    evidence_quote: str | None = None,
+    observed_at: str | None = None,
+    valid_from: str | None = None,
+    valid_to: str | None = None,
+    source: str | None = None,
+    source_id: str | None = None,
+    session_id: str | None = None,
+    metadata: dict | None = None,
+    tags: list[str] | None = None,
+    claims: list[dict] | None = None,
+    source_text: str | None = None,) -> int | None:
         """Create a new version of a claim while preserving the old row.
 
         ``claims`` and ``source_text`` let an evidence-grounded curator carry
         the new claim ledger forward when its quote lives in the conversation
         turn rather than in the distilled memory content.
+        ``session_id`` attributes a new observation to its current session;
+        when omitted, the successor retains the predecessor's session.
         """
         previous = self.get(memory_id)
         if previous is None:
             raise ValueError(f"memory {memory_id} does not exist in this scope")
         self._assert_mutable(previous)
         if not previous.claim_key:
-            raise ValueError("supersede requires the previous memory to have a claim_key")
+            previous.claim_key = f"memory:{previous.id}"
+            self.update(previous)
         next_metadata = dict(metadata or previous.metadata)
         if claims is not None:
             next_metadata["claims"] = claims
@@ -1054,7 +1084,7 @@ class MemoryClient:
             enrich=False,
             importance=previous.importance,
             user_id=previous.user_id,
-            session_id=previous.session_id,
+            session_id=session_id if session_id is not None else previous.session_id,
             workspace_id=previous.workspace_id,
             agent_id=previous.agent_id,
             observed_at=observed_at,
@@ -1065,16 +1095,16 @@ class MemoryClient:
             claim_key=previous.claim_key,
             supersedes_id=memory_id,
             source_text=source_text,
+            preserve_lineage=True,
         )
 
-    def resolve_conflict(
-        self,
-        memory_id: int,
-        *,
-        status: str = "active",
-        evidence_quote: str | None = None,
-        source_id: str | None = None,
-    ) -> None:
+    @atomic_client
+    def resolve_conflict(self,
+    memory_id: int,
+    *,
+    status: str = "active",
+    evidence_quote: str | None = None,
+    source_id: str | None = None,) -> None:
         """Explicitly resolve a conflicted claim; never silently merge it."""
         if status not in {"active", "conflicted", "superseded", "expired"}:
             raise ValueError("invalid conflict resolution status")
@@ -1091,6 +1121,7 @@ class MemoryClient:
         self._sync_claim_status(memory_id, status)
         self._record_event("resolve_conflict", memory_id, before=before, after=memory)
 
+    @atomic_client
     def retract(self, memory_id: int, *, reason: str | None = None) -> None:
         """Soft-delete a claim while retaining the row and audit history."""
         memory = self.get(memory_id)
@@ -1104,6 +1135,7 @@ class MemoryClient:
         self.update(memory)
         self._record_event("retract", memory_id, before=before, after=memory)
 
+    @atomic_client
     def update(self, memory: Memory) -> None:
         """Update a memory and keep every derived index/provenance in sync."""
         if memory.id is None:
@@ -1165,6 +1197,7 @@ class MemoryClient:
         if changed_content or before.tags != memory.tags:
             _try_index_graph(self.backend, memory)
 
+    @atomic_client
     def delete(self, id: int) -> None:
         """Delete a memory, recording the pre-delete snapshot first."""
         before = self.backend.get(id)
