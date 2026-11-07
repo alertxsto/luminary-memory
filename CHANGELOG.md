@@ -25,13 +25,32 @@
   hooks require an explicit cutover to prevent duplicate loading.
 - Keyboard-accessible entity neighborhoods and supporting-memory inspection.
   Recall Activity records actual retrieval rank/score separately from returned
-  context order; core-only context is not presented as a successful query match.
+  context order; unrelated core rows cannot turn native recall abstention into success.
 - Summary includes authorized lifecycle counts and stored created/updated
   timestamp bounds in UTC, including offset-aware ordering and microseconds.
   Missing or invalid timestamp coverage is explicit; refresh remains offline.
 
 ### Fixed
 
+- Concurrent store startup now keeps inspector schema inspection and migration
+  under the existing cross-process writer transaction. Independent SQLite
+  workers no longer race to add the same audit-ownership column.
+- Native recall preserves the engine's abstention and returns only relevant,
+  current rows, including core-tagged rows only when retrieval selects them.
+  Reference data stays outside system instructions, is request-local, and is
+  serialized once as complete records. Empty recall adds no model message or
+  transcript entry in OpenCode, pi, or omp.
+- Native model writes require a bounded quote verified against current user
+  input by the adapter, not self-evidence or a model-supplied confirmation flag.
+  Per-call launcher provenance cannot be restored from an operator config file.
+  User-grounded paraphrases retain their original quote without invented full
+  confidence; owner-typed commands remain explicit assertions. Core/rule
+  promotion uses the owner-confirmed inspector. Existing records are not
+  retroactively re-certified or rewritten.
+- Structural transcript-noise filtering now runs in shared API/CLI/bridge
+  retrieval as well as Hermes. Short legitimate facts remain eligible.
+  Destructive-verb suppression is not reinstated; no language keyword list
+  decides whether a live user request may recall.
 - Precompiled OpenCode TUI binds Solid/OpenTUI imports to the host's shared
   runtime instead of creating an independent reactive owner and a blank panel.
   Native review dialogs keep the decision visible while complete proposals
@@ -316,6 +335,13 @@ Cloudflare-protected gateways.
   provider/runtime boundary, hook cursor resolution, and the current `505`
   regression baseline.
 
+### Removed
+
+- **Destructive-imperative recall suppression** was removed in `f303511`.
+  The old Hermes query-word heuristic introduced in 0.2.18 did not remain
+  active in 0.3.0. This entry corrects the missing removal history; it does
+  not claim an unrecorded rationale or restore that heuristic.
+
 ### Tests & documentation
 
 - Added scope, lifecycle, hash-repair, claim-rollback, inactive-hook, and
@@ -346,12 +372,13 @@ Cloudflare-protected gateways.
 
 ### Added
 
-- **Recall noise filter** — shell/terminal artifacts (`&&`, `===`, `echo `,
-  etc.) and near-empty content are dropped before they can pollute context.
-- **Destructive-imperative suppression** — a query that is a destructive
-  instruction (`hapus`, `delete`, `remove`, `stop`, `disable`, ...) suppresses
-  the recall block so the agent follows the instruction instead of re-anchoring
-  on the stored topic.
+- **Hermes recall noise filter** — shell/terminal artifacts (`&&`, `===`,
+  `echo `, etc.) and near-empty content were dropped by the provider formatter.
+  This was not yet filtering on the shared API/CLI retrieval path.
+- **Destructive-imperative suppression (historical)** — Hermes suppressed
+  recall for destructive instructions (`hapus`, `delete`, `remove`, `stop`,
+  `disable`, ...). This query-word heuristic was removed in 0.3.0; see Removed
+  above. It is not the current recall policy.
 - **Scoped claim/evidence schema** — ownership fields, episodes, claims,
   claim evidence, memory evidence, conflict/supersession status, and
   `needs_reindex` repair state are migrated idempotently for existing SQLite

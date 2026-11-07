@@ -28,7 +28,7 @@ Agents are only as good as what they remember. A stateless agent re-learns the s
 
 Strategies fuse via **weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1)** → **scope/status/time filtering** → **conservative confidence and abstention** → **adaptive cutoff** → **Jaccard deduplication** → **token budget**. Short queries may be expanded with graph entities or stored content tokens before embedding; there is no language-specific alias classifier.
 
-**Important rules always in context.** Durable rules tagged `core` are auto-loaded into the system prompt every session (the DB-backed `MEMORY.md`). All other durable memories are surfaced through query retrieval: relevant facts are recalled on demand (ranked by query relevance) and merged with the core block under anti-duplication. When durable recall abstains, the Hermes provider can also expose a bounded exact-session continuity block so an ambiguous follow-up stays attached to its active task without turning raw conversation into durable memory.
+**Core and recall are different surfaces.** The Hermes provider separately loads owner-designated `core` rules (the DB-backed `MEMORY.md`) and deduplicates them against query retrieval. Native OpenCode, pi, and omp adapters return only relevant, evidence-bearing recall; a core tag cannot turn abstention into success. Their historical reference stays outside system instructions and the persistent transcript. Hermes can also expose bounded exact-session continuity without turning raw conversation into durable memory.
 
 ---
 
@@ -280,7 +280,7 @@ after, and a background lifecycle keeps the store lean.
 | **Abstention** | Strict provider/CLI paths can return `abstain` when support is weak or ambiguous |
 | **Evidence** | Stored claims retain evidence quote, source, validity time, and audit provenance |
 | **Conflict safety** | Conflicting claim keys remain versioned/conflicted until explicit supersession or resolution |
-| **Core memory** | Rules tagged `core` are auto-loaded into the system prompt every session (the DB-backed MEMORY.md), independent of query match |
+| **Core memory** | Hermes separately loads designated `core` rows; native adapters require core-tagged rows to pass ordinary retrieval |
 | **Weighted fusion** | Each strategy carries a tunable weight (semantic 0.4, keyword 0.3, graph 0.2, temporal 0.1), so high-signal strategies dominate the ranking |
 | **Query expansion** | Short queries are expanded with co-occurring graph entities before embedding; when the graph is empty, content tokens from a topically related important memory may be appended (v0.2.15). No language-specific alias list is used. |
 | **Importance boost** | Memories at importance ≥ 0.8 get a ranking bonus, lifting durable rules above weak-but-recent noise |

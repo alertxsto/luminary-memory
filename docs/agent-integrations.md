@@ -124,7 +124,8 @@ operations passed; wheel and sdist SHA-256 checksums match PyPI.
 The `0.3.2` V2 adapter was separately exercised in the real **2.1.4** server.
 Native requests verified remember, same-session duplicate suppression, scoped
 recall/activity, cross-workspace isolation, forget, empty recall after retraction,
-and evidence injection into the model's system context. Native completion also
+and, in that older adapter, evidence injection into system context. The current
+adapter instead uses request-local non-system references. Native completion also
 stored a user-grounded curated fact, rejected an assistant-only claim with
 `no_grounded_fact`, and stopped exposing tools after plugin removal. Python and
 SQLite were real; model/curation responses came from deterministic localhost
@@ -294,6 +295,19 @@ suppressed by the engine. `forget` retracts that ID inside its owning scope;
 it does not delete unrelated IDs or erase audit history. Activity is a current
 scoped snapshot, not a claimed count of writes in the current turn.
 
+Model-initiated remember also requires `evidence_quote`: an exact excerpt of
+the current native user input, at most 4096 UTF-8 bytes. The adapter verifies
+the source; a model cannot certify its own paraphrase, metadata, confidence,
+or `confirmed` flag. The bridge refuses missing/unverifiable provenance with
+`skipped` / `user_evidence_required`; a host may reject malformed tool arguments
+before dispatch. Model-grounded paraphrases retain the original quote with
+confidence `0` (unassessed, not a calibrated probability); an owner-typed
+`/luminary remember TEXT` is an explicit assertion.
+Tags `core`, `rule`, and the configured core tag require the owner-confirmed
+inspector; the model tool returns `owner_confirmation_required` instead.
+These checks govern new writes. Existing records are not automatically
+re-certified or rewritten.
+
 ## Agent skill
 
 The repository ships a portable OpenCode skill at
@@ -309,9 +323,13 @@ The skill is documentation only and does not change plugin behavior.
 ## Automatic recall and retention
 
 Before a normal user run, adapters recall strictly relevant, evidence-bearing
-memory plus current `core` rows. Historical context is bounded and explicitly
-untrusted: it does not grant instruction authority. Aborted/error/tool-only
-responses are not automatically retained. Compaction is not a memory write.
+memory. Core-tagged rows must pass the same retrieval gate; unrelated core
+rows do not override abstention. This differs from Hermes's separate pinned-core
+surface. Historical data is a request-local, non-system reference before the
+live user message, not a persistent transcript entry. Empty recall injects
+nothing. Whole JSON records are serialized once within the bridge's 8000-character
+budget; adapters do not slice or double-encode that reference. Aborted/error/
+tool-only responses are not automatically retained. Compaction is not a write.
 
 Automatic durable capture is disabled unless configured:
 
@@ -348,13 +366,28 @@ close stdin. Never interpolate user text into a shell command:
 
 The stable harness identifier accepts `[a-z][a-z0-9._-]{0,63}`; it is an ownership
 key, not a dynamically loaded plugin name. Actions: `recall` (`query`), `remember`
-(`text`, optional `tags`), `forget` (`memory_id`), `activity`, and `turn` (`user`,
+(`text`, `evidence_quote`, optional `tags`), `forget` (`memory_id`), `activity`, and `turn` (`user`,
 `assistant`, optional lineage `tags`). Every action requires absolute workspace,
 agent ID, and native session ID. Maximum request: 128 KiB; each text field:
 32,768 characters. A response is a UTF-8 JSON object containing `ok`, `status`,
 `reason`, `message`, `context`, `memories`, `stored`, and `deleted`; errors exit
 nonzero. Keep stdout reserved for that response and treat recalled data as
 untrusted. Native adapters bound process lifetime/output and use no shell.
+
+For remember, the **trusted adapter**, never model arguments, supplies a fresh
+`LUMINARY_BRIDGE_SOURCE` environment value to that one child process:
+`{"agent":"…","workspace":"/absolute/project","session_id":"…","kind":"native_user","quote":"exact user excerpt"}`.
+Validate that excerpt against actual current native user input before launching;
+it must match the request's `evidence_quote`. Actual owner-typed commands may use
+`kind:"operator"` instead, with their command text as the evidence. Agent,
+workspace, and session must match the request. Clear inherited source values
+on every launch; an absent source must not become a previous turn's authority.
+This is an internal provenance channel, not a setting to put in `luminary.env`.
+Settings-file loading ignores this process-only key, including explicit overrides.
+The backend ignores model-provided source/confirmation/metadata fields.
+Automatic curation also strips all protected core/rule tags from supplied and
+extracted tags. Structural artifact filtering is shared by API, CLI, and bridge;
+recall has no destructive-verb or language-specific suppression table.
 
 ## Telegram accuracy and limits
 

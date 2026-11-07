@@ -81,7 +81,8 @@ def load_config_file(
     The default file is ``~/.luminary/luminary.env``. Set
     ``LUMINARY_CONFIG_FILE`` to another path, or to ``none``/``off`` to disable
     file loading. Only keys matching ``LUMINARY_*`` are applied; values are
-    never logged.
+    never logged. Per-call native provenance (``LUMINARY_BRIDGE_SOURCE``) is
+    process-only and cannot be supplied by a settings file.
     """
     target = _resolve_config_path(path)
     if target is None:
@@ -120,7 +121,11 @@ def load_config_file(
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip()
-        if not _CONFIG_KEY.fullmatch(key) or key == CONFIG_FILE_ENV:
+        if (
+            not _CONFIG_KEY.fullmatch(key)
+            or key == CONFIG_FILE_ENV
+            or key == "LUMINARY_BRIDGE_SOURCE"
+        ):
             continue
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]

@@ -103,6 +103,16 @@ abstain. Explicit `remember` reports `stored: 1` only for a committed new row;
 `forget` retracts only a scope-visible ID and retains audit history. Activity is
 a scoped snapshot, not a count of writes by the current turn.
 
+Model remember requires `evidence_quote` copied exactly from current native user
+input (at most 4096 UTF-8 bytes). The adapter verifies it; model text/metadata
+cannot certify their own evidence or confidence. Unverified writes return
+`user_evidence_required`; grounded paraphrases retain the original quote with
+unassessed confidence. Owner-typed `/luminary remember TEXT` remains an explicit
+assertion. Core/rule promotion requires the owner-confirmed inspector.
+Automatic recall is request-local, non-system historical data, not a transcript
+entry. Empty recall adds no message. Core-tagged rows must pass normal retrieval;
+they cannot turn abstention into success.
+
 The default database is `~/.luminary/memory.db`; set `LUMINARY_DB_PATH` in pi's
 environment to change it. Ownership binds `LUMINARY_USER_ID` (otherwise the OS
 login), resolved workspace path, and agent `pi`. Native session IDs are recorded

@@ -192,7 +192,7 @@
         },
         {
           title: "Three context surfaces",
-          paragraphs: ["Core rows load every session, durable recall answers the current query, and an untrusted exact-session episode fallback preserves a short active follow-up only when durable recall has no usable block."],
+          paragraphs: ["Hermes separately loads designated core rows and can use untrusted exact-session continuity when durable recall has no usable block. Native OpenCode, pi, and omp adapters instead keep all recalled rows query-bound, including core tags, and use request-local non-system references."],
           bullets: ["Core: DB-backed rows tagged core, bounded by core_top_n and core_budget.", "Durable recall: semantic, keyword, temporal, and graph candidates, scoped before fusion.", "Session continuity: up to four recent exact-session episodes under existing token/internal limits; never a semantic memory and never cross-session."]
         }
       ]

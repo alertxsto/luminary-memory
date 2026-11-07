@@ -47,6 +47,7 @@ for (const agent of ["pi", "omp", "opencode"]) {
           location: { directory, project: { id: "package-project", directory, canonical: directory } },
           session: {
             async get({ sessionID }) { return { id: sessionID, location: { directory } }; },
+            async context() { return [{ type: "user", id: "package-message", text: "Do not claim this was stored" }]; },
             async hook() { return { async dispose() {} }; },
           },
           event: { async *subscribe() {} },
@@ -59,7 +60,7 @@ for (const agent of ["pi", "omp", "opencode"]) {
           },
         });
         const output = await tools.get("luminary_remember").execute(
-          { text: "Do not claim this was stored" },
+          { text: "Do not claim this was stored", evidence_quote: "Do not claim this was stored" },
           {
             sessionID: "package-consumer", agent: "build", messageID: "package-message", id: "package-call",
             signal: abort.signal, async progress() {},

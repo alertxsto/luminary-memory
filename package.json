@@ -12,7 +12,7 @@
     "build:plugins": "node scripts/build-plugins.mjs",
     "build:ui": "node scripts/build-uis.mjs",
     "build": "npm run build:plugins && npm run build:ui",
-    "test:plugins": "node --test tests/plugins/packages.test.mjs",
+    "test:plugins": "node --test tests/plugins/packages.test.mjs tests/plugins/context.test.mjs",
     "test:ui-contracts": "node --test tests/ui/controller.test.mjs tests/hermes/ui.test.mjs",
     "check:opencode": "node scripts/check-opencode-types.mjs",
     "pack:plugins": "node scripts/pack-plugins.mjs"

@@ -73,6 +73,14 @@ versioning path. A different value with the same claim key but no explicit
 supersession remains a visible conflict instead of silently replacing the old
 fact.
 
+For trusted library writes, an unspecified (`None`) evidence quote keeps the
+existing content fallback. An explicit `evidence_quote=""` stays empty in both
+single and batch ingest; evidence-required recall excludes that record instead
+of substituting its content as proof. Native model tools have a stricter
+boundary: the adapter must verify a quote against actual current user input.
+User-grounded paraphrases retain that original quote with unassessed confidence;
+tool-supplied text, confidence, metadata, or confirmation flags cannot certify it.
+
 `ingest_batch()` mirrors these write rules and returns one ID/`None` per input;
 its `tags` and `metadata` arguments are parallel lists. `list(limit=0)` means
 unlimited, and `count()` is the active, scope-visible public count. `search()`

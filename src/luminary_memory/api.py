@@ -489,7 +489,9 @@ class MemoryClient:
         )
         now = _utc_now()
         observed = observed_at or meta.get("observed_at") or now
-        quote = evidence_quote or meta.get("evidence_quote") or content
+        quote = evidence_quote if evidence_quote is not None else meta.get("evidence_quote")
+        if quote is None:
+            quote = content
         # An extractor-provided quote is evidence only when it is grounded in
         # the original source.  Invalid quotes are discarded rather than
         # presented as provenance.
@@ -848,7 +850,8 @@ class MemoryClient:
                     item_metadata["evidence_quote"] = first_claim.get("evidence_quote")
             else:
                 item_metadata.pop("claims", None)
-            item_quote = str(item_metadata.get("evidence_quote") or evidence_quote or raw_text)
+            item_quote = evidence_quote if evidence_quote is not None else item_metadata.get("evidence_quote")
+            item_quote = str(raw_text if item_quote is None else item_quote)
             if item_quote not in raw_text and item_quote not in str(content or ""):
                 item_quote = str(content or raw_text)
             item_metadata["evidence_quote"] = item_quote
@@ -915,7 +918,7 @@ class MemoryClient:
                 valid_to=valid_to or item_metadata.get("valid_to"),
                 status=normalized_status,
                 confidence=confidence_value,
-                evidence_quote=item_metadata.get("evidence_quote") or content,
+                evidence_quote=item_metadata.get("evidence_quote", content),
                 source_id=source_id or item_metadata.get("source_id") or source,
                 claim_key=claim_key or item_metadata.get("claim_key"),
                 supersedes_id=supersedes_id,
@@ -1862,6 +1865,7 @@ class MemoryClient:
             raise ValueError("limit must be >= 0 (0 means unlimited)")
         output_limit: int | None = None if n_limit == 0 else n_limit
         from luminary_memory.recall.dedup import dedup_jaccard
+        from luminary_memory.recall.filters import is_noise_memory
         from luminary_memory.recall.fusion import reciprocal_rank_fusion
         from luminary_memory.recall.graph import graph_recall
         from luminary_memory.recall.keyword import keyword_recall
@@ -2022,10 +2026,16 @@ class MemoryClient:
         evidence_required = bool(getattr(self.settings, "evidence_required", False))
 
         def _has_required_evidence(memory: Memory) -> bool:
-            """Accept only a quote grounded in the memory content."""
+            """Require a content quote or native-verified original user evidence."""
             quote = " ".join(str(memory.evidence_quote or "").split()).casefold()
             content = " ".join(str(memory.content or "").split()).casefold()
-            return bool(quote and content and quote in content)
+            native = (memory.metadata or {}).get("native_evidence")
+            # This marker is created after source validation by the native bridge;
+            # tool-supplied metadata is never passed through that boundary.
+            native_user = isinstance(native, dict) and native.get("origin") in {
+                "user", "operator", "curated_user",
+            }
+            return bool(quote and content and (quote in content or native_user))
 
         def _is_current(memory: Memory) -> bool:
             if memory.status != "active" and not (include_conflicted and memory.status == "conflicted"):
@@ -2038,6 +2048,8 @@ class MemoryClient:
             ):
                 return False
             if allowed_ids is not None and memory.id not in allowed_ids:
+                return False
+            if is_noise_memory(memory.content):
                 return False
             now = datetime.now(UTC)
             if memory.valid_from:

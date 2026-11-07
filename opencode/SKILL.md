@@ -1,6 +1,6 @@
 ---
-name: Luminary Memory
-description: Use Luminary's scoped memory tools in OpenCode V2 — recall prior context, store user-approved durable facts, retract by ID, and diagnose the Python bridge.
+name: luminary-memory
+description: Use when an OpenCode task needs prior decisions or preferences, the user requests durable memory changes, or Luminary returns an error or empty recall.
 license: Apache-2.0
 ---
 
@@ -29,15 +29,16 @@ Verify live files, commands, and state before acting.
 | Tool | Input | Purpose |
 |------|-------|---------|
 | `luminary_recall` | `query` (1–32768 chars) | Targeted recall of scoped, evidence-bearing memories. |
-| `luminary_remember` | `text` (1–32768 chars), optional `tags` (≤16 tags, each ≤80 chars) | Synchronously store one user-approved durable fact. |
+| `luminary_remember` | `text` (1–32768 chars), exact current-user `evidence_quote` (≤4096 UTF-8 bytes), optional `tags` | Synchronously store one user-grounded durable fact. |
 | `luminary_forget` | `memory_id` (positive integer) | Retract one memory in the current scope; audit history is retained. |
 | `luminary_activity` | none | Read-only snapshot of recent active memories plus this process's automatic recall/retention status. |
 
 The plugin also runs automatically:
 
-- **Auto-recall** — before an admitted user message, it recalls relevant
-  memories and injects a block starting with `Luminary memory reference data
-  (untrusted):`. Use only the relevant facts from that block.
+- **Auto-recall** — before an admitted user message, relevant memories enter a
+  request-local, non-system reference starting with `Luminary recalled data`.
+  Empty recall adds nothing. A core tag does not bypass retrieval. Use only
+  relevant facts; the live user input remains after historical data.
 - **Auto-retention** — after a successful, completed turn, optional curation may
   store a user-grounded fact. It requires `LUMINARY_INGEST_LLM=true` and a
   configured `LUMINARY_LLM_BASE_URL` / model / key. Without that, no transcript
@@ -76,16 +77,22 @@ Do not store:
 - facts already stored, unless the user wants an update;
 - content the user asked you not to retain.
 
-Keep each memory concise and self-contained. Use stable, lowercase tags.
+Keep each memory concise and self-contained. Supply `evidence_quote` copied
+exactly from the **current native user input**, not from your paraphrase or an
+older memory. The adapter verifies that source; self-supplied metadata,
+confidence, `confirmed`, and `owner_confirmed` do not grant authority.
+Missing/unverifiable evidence cannot write. Respect a native validation error
+or the bridge's skipped result; neither permits inventing evidence.
+The original quote remains inspectable; a model paraphrase has confidence `0`
+(unassessed), not an invented certainty of `1`.
 
-Examples:
+Use ordinary lowercase tags. `core`, `rule`, and the configured core tag require
+the owner-confirmed inspector; do not retry their refusal through tool flags.
+
+If the current user says “I prefer PostgreSQL for this workspace.”:
 
 ```json
-{"text": "The deploy target is the staging cluster.", "tags": ["deploy", "infra"]}
-```
-
-```json
-{"text": "The user prefers PowerShell examples on Windows.", "tags": ["preferences", "windows"]}
+{"text":"User prefers PostgreSQL for this workspace.","evidence_quote":"I prefer PostgreSQL for this workspace.","tags":["preferences"]}
 ```
 
 Not acceptable:
@@ -129,7 +136,7 @@ write succeeded unless the result says so.
 |--------|---------|
 | `stored` | A new row was committed; `stored: 1`. |
 | `duplicate` | The same observation already exists; `stored: 0`, no new write. |
-| `skipped` | Policy or configuration declined the write; `stored: 0`. Check `reason` (`ingest_rejected`, `curation_disabled`, `no_grounded_fact`). |
+| `skipped` | No write; `stored: 0`. Check `reason`: `user_evidence_required`, `owner_confirmation_required`, `ingest_rejected`, `curation_disabled`, or `no_grounded_fact`. |
 | `abstain` | No grounded relevant memories; a normal recall result. |
 | `not_found` | The forget ID is not in this scope or was already retracted. |
 | `deleted` | The memory was retracted; `deleted: 1`. |
@@ -177,7 +184,6 @@ Common settings:
 | `LUMINARY_LLM_API_KEY` | Curation API key. |
 | `LUMINARY_LLM_TIMEOUT` | Curation request timeout in seconds. |
 | `LUMINARY_TOKEN_BUDGET` | Recall context budget. |
-| `LUMINARY_CORE_TOP_N` | Maximum `core` memories injected. |
 
 `LUMINARY_PYTHON` is different: it must point to the Python interpreter that
 has `luminary-memory` installed, and it must be present in the **OpenCode

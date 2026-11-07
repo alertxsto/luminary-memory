@@ -99,8 +99,18 @@ The model can use `luminary_recall`, `luminary_remember`, `luminary_forget`, and
 `luminary_activity`. Native results/progress report the bridge's actual
 `stored`, `duplicate`, `skipped`, `error`, and deletion outcomes.
 
-The V2 context hook recalls historical data for the admitted native user
-message. Successful native execution triggers optional, user-grounded curation;
+Remember requires `evidence_quote`, an exact excerpt of the current native user
+input (at most 4096 UTF-8 bytes), verified by the adapter. A paraphrase cannot
+serve as its own evidence; unverified writes return `user_evidence_required`.
+Grounded model paraphrases keep the original quote with unassessed confidence,
+not an invented certainty of 1. Core/rule promotion requires the owner-confirmed
+inspector, not a tool-supplied boolean.
+
+The V2 context hook recalls relevant historical data for the admitted native user
+message. Core tags do not bypass retrieval or turn abstention into success.
+Whole JSON records enter request-local, non-system messages before the live
+user input; empty recall adds nothing. Successful native execution triggers
+optional, user-grounded curation;
 failed/interrupted execution does not promote a transcript. Automatic writes
 require explicit `LUMINARY_INGEST_LLM` and `LUMINARY_LLM_*` configuration.
 Without it, no raw transcript is automatically saved.
@@ -142,8 +152,9 @@ entry. Reload/restart the server as needed. Stored memory is not deleted.
 Real OpenCode V2 2.1.4 native sessions, the Python bridge, and SQLite verified:
 remember, same-session duplicate suppression, scoped recall/activity, cross-
 workspace isolation, ID-scoped forget, and empty recall after retraction.
-Automatic recall evidence reached the model's system context. Native completion
-also stored a user-grounded curated fact and rejected an assistant-only claim
+That older adapter placed evidence in system context; the current implementation
+uses request-local non-system references instead. The earlier native completion
+stored a user-grounded curated fact and rejected an assistant-only claim
 with `no_grounded_fact`. Removing the plugin stopped its tools from appearing.
 
 Model and curation responses came from deterministic localhost fixtures; memory

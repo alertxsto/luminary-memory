@@ -14,7 +14,6 @@ import json
 import logging
 import os
 import queue
-import re
 import threading
 import time
 import uuid
@@ -27,6 +26,7 @@ from luminary_memory.api import MemoryClient
 from luminary_memory.config import Settings
 from luminary_memory.hermes.activity import operation_snapshot
 from luminary_memory.hermes.config import _DEFAULTS, load_config, save_config
+from luminary_memory.recall.filters import is_noise_memory
 from luminary_memory.scope import memory_matches_scope
 
 _LUMINARY_GLYPH = "🌙"
@@ -40,29 +40,6 @@ _SESSION_CONTEXT_MAX_CHARS = 9000
 
 _SENTINEL = None  # writer-queue shutdown marker
 
-# Structural artifact markers only. This deliberately contains no words from
-# any language: recall filtering may reject a malformed transport/code shape,
-# but it must never decide durability from vocabulary.
-_STRUCTURAL_ARTIFACT_RE = re.compile(
-    r"```|</?[ \t]*[A-Za-z][^>]{0,200}>|&&|={3,}",
-    re.IGNORECASE,
-)
-
-def _is_noise_memory(content: str) -> bool:
-    c = (content or "").strip()
-    if not c:
-        return True
-    if len(c.split()) < 3:
-        return True  # too short to be a useful memory
-    # A single operator, tag, or code token can be the fact itself.  Only
-    # reject dense structural dumps (for example a pasted shell transcript)
-    # when the same language-neutral markers appear repeatedly.  This keeps
-    # technical memories such as ``&&`` and ``===`` recallable without adding
-    # vocabulary lists for any particular language.
-    markers = _STRUCTURAL_ARTIFACT_RE.findall(c)
-    if c.count("```") >= 2:
-        return True
-    return len(markers) >= 2 and len(markers) / max(len(c.split()), 1) >= 0.25
 
 
 def _stable_content_hash(content: str) -> str:
@@ -1970,7 +1947,7 @@ class LuminaryMemoryProvider(MemoryProvider):
         n = 0
         skipped_dup = 0
         for m, s in zip(memories, scores):
-            if _is_noise_memory(str(getattr(m, "content", "") or "")):
+            if is_noise_memory(str(getattr(m, "content", "") or "")):
                 continue
             mid = getattr(m, "id", None)
             if mid is not None and mid in injected:

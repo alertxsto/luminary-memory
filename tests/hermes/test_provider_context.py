@@ -8,10 +8,7 @@ vocabulary.
 
 from types import SimpleNamespace
 
-from luminary_memory.hermes.provider import (
-    LuminaryMemoryProvider,
-    _is_noise_memory,
-)
+from luminary_memory.hermes.provider import LuminaryMemoryProvider
 
 
 def _init_provider(tmp_path, mode="hybrid"):
@@ -115,11 +112,3 @@ def test_recall_filters_shell_noise(tmp_path):
     p.shutdown()
 
 
-def test_is_noise_memory_flags_artifacts():
-    assert _is_noise_memory("ls -la && echo === test ===")
-    assert _is_noise_memory("short")
-    assert not _is_noise_memory("The deploy target is the staging cluster.")
-    assert not _is_noise_memory("User prefers concise bullet responses.")
-    assert not _is_noise_memory("The agent uses && in JavaScript conditions for feature flags.")
-    assert not _is_noise_memory("Use the === operator for strict comparisons in JavaScript.")
-    assert not _is_noise_memory("The HTML response includes a <main> element.")

@@ -126,7 +126,9 @@ class InspectorSQL:
         if hasattr(self, "_psycopg"):
             self._sql("SELECT pg_advisory_xact_lock(718946072154113)")
 
+    @atomic_backend
     def _inspector_schema(self):
+        """Keep schema inspection and migration under the cross-process writer lock."""
         self._sql("CREATE TABLE IF NOT EXISTS inspector_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         fields = ("content", "metadata", "source", "tags", "ttl_seconds", "user_id",
                   "session_id", "workspace_id", "agent_id", "observed_at", "valid_from",
