@@ -1,6 +1,6 @@
 import { InspectorController } from '../../src/luminary_memory/integrations/assets/common/console-controller.js';
 import { TABS, type ConsoleResult, type ConsoleTransport } from '../../src/luminary_memory/integrations/assets/common/console-contract.js';
-import { inspectorActions, inspectorRows, runInspectorAction, type NativeDialogs, type InspectorRow } from '../../src/luminary_memory/integrations/assets/common/console-actions.js';
+import { inspectorActions, inspectorRows, inspectorContextLine, runInspectorAction, type NativeDialogs, type InspectorRow } from '../../src/luminary_memory/integrations/assets/common/console-actions.js';
 
 const tabs = document.querySelector<HTMLElement>('#tabs')!;
 const view = document.querySelector<HTMLElement>('#view')!;
@@ -10,6 +10,8 @@ const modal = document.querySelector<HTMLDialogElement>('#dialog')!;
 let csrf = sessionStorage.getItem('luminary-inspector-csrf') || '';
 let selected: InspectorRow | undefined;
 let controller: InspectorController;
+let permissionSnapshot: { rows: InspectorRow[]; epoch?: string; policy?: number; selection?: string } | undefined;
+let overviewVersion = 0;
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string) {
   const node = document.createElement(tag);
@@ -25,7 +27,7 @@ function button(text: string, action: () => unknown, primary = false) {
   }); });
   return node;
 }
-async function json(path: string, body: unknown): Promise<any> {
+async function json<T = unknown>(path: string, body: unknown): Promise<T> {
   const response = await fetch(path, { method: 'POST', headers: {
     'Content-Type': 'application/json', 'X-Luminary-CSRF': csrf,
   }, body: JSON.stringify(body), credentials: 'same-origin' });
@@ -87,9 +89,24 @@ async function transfer(direction: 'import' | 'export') {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 }
+async function loadCompact() {
+  const version = ++overviewVersion, selection = controller.selectionHandle;
+  permissionSnapshot = undefined;
+  const result = await controller.execute('browse', { view: 'memories', limit: 5 });
+  if (!result || !controller.activeContext || version !== overviewVersion ||
+      !document.body.classList.contains('compact') || selection !== controller.selectionHandle ||
+      (result.status !== 'ok' && result.status !== 'empty')) return;
+  const items = result.data?.items;
+  if (Array.isArray(items)) permissionSnapshot = { rows: items as InspectorRow[], epoch: result.context_epoch, policy: result.policy_revision, selection };
+  await controller.selectTab('activity');
+}
 async function action(name: string, row?: InspectorRow) {
-  if (name === 'Import records' || name === 'Export records') await transfer(name === 'Import records' ? 'import' : 'export');
-  else await runInspectorAction(controller, dialogs, name, row);
+  if (name === 'Refresh' && document.body.classList.contains('compact')) await loadCompact();
+  else if (name === 'Import records' || name === 'Export records') await transfer(name === 'Import records' ? 'import' : 'export');
+  else {
+    await runInspectorAction(controller, dialogs, name, row);
+    if (name === 'Select project' && document.body.classList.contains('compact')) await loadCompact();
+  }
 }
 function fields(values: Record<string, unknown>) {
   const list = element('dl', undefined, 'fields');
@@ -100,6 +117,7 @@ function fields(values: Record<string, unknown>) {
 }
 function render() {
   const state = controller.state;
+  const compact = document.body.classList.contains('compact');
   connection.textContent = `${state.busy ? 'Loading' : state.status} · ${controller.selectionHandle ? 'Explicit shared project' : 'Own native project'} · policy ${state.policy_revision ?? '—'} · ${state.as_of || ''}${state.error ? ' · ' + state.error : ''}`;
   for (const node of tabs.querySelectorAll<HTMLButtonElement>('button')) {
     const active = node.dataset.tab === state.tab;
@@ -109,6 +127,15 @@ function render() {
   view.replaceChildren();
   if (state.error) view.append(element('p', state.error, 'notice warning'));
   const data = state.data;
+  if (data.native_context) view.append(element('p', inspectorContextLine(controller), 'muted'));
+  if (compact && permissionSnapshot && permissionSnapshot.epoch === state.context_epoch &&
+      permissionSnapshot.policy === state.policy_revision && permissionSnapshot.selection === controller.selectionHandle) {
+    const permissions = element('section', undefined, 'record');
+    permissions.setAttribute('aria-label', 'Permissions on visible records');
+    permissions.append(element('h2', 'Permissions on visible records'));
+    for (const row of permissionSnapshot.rows) permissions.append(element('p', `#${row.id}: read ${row.permissions?.read ? '✓' : '—'} · contribute ${row.permissions?.contribute ? '✓' : '—'} · edit ${row.permissions?.edit ? '✓' : '—'} · retract ${row.permissions?.retract ? '✓' : '—'}`));
+    view.append(permissions);
+  }
   if (data.gap === true) view.append(element('p', 'Activity history is incomplete. Refresh to load a new snapshot.', 'notice warning'));
   else if (data.replayed === true) view.append(element('p', `${Array.isArray(data.items) && data.items.length ? 'Showing new activity only.' : 'No new activity since the checkpoint.'} Refresh loads recent history.`, 'notice'));
   if (state.tab === 'summary' && data.totals && typeof data.totals === 'object') {
@@ -130,7 +157,8 @@ function render() {
   if (state.tab === 'sharing') view.append(element('p', 'Select a project explicitly. Read, contribute, edit and retract are separate rights; matching paths do not establish sharing.', 'notice'));
   if (state.tab === 'transfer') view.append(element('p', 'Memory-record transfer is not a full backup of evidence, episodes, audit, settings or grants. Every transfer shows a preview before confirmation.', 'notice'));
   const rows = inspectorRows(controller);
-  for (const row of rows) {
+  for (let index = 0, count = compact ? Math.min(rows.length, 5) : rows.length; index < count; index++) {
+    const row = rows[index];
     const card = element('article', undefined, 'record');
     card.append(element('h3', row.kind === 'native_recall' ? 'Recall activity' : row.kind === 'hermes_operation' ? 'Hermes activity' : row.id !== undefined ? `Memory #${row.id} · ${row.status ?? ''} · revision ${row.revision ?? '—'}` : String(row.kind ?? row.label ?? row.event_id ?? 'Record')));
     if (row.operation && typeof row.operation === 'object') {
@@ -171,7 +199,7 @@ function render() {
 async function start() {
   const params = new URLSearchParams(location.hash.slice(1));
   const token = params.get('token'); history.replaceState(null, '', location.pathname);
-  if (token) { const response = await json('/api/bootstrap', { token }); csrf = response.csrf_token; sessionStorage.setItem('luminary-inspector-csrf', csrf); }
+  if (token) { const response = await json<{ csrf_token: string }>('/api/bootstrap', { token }); csrf = response.csrf_token; sessionStorage.setItem('luminary-inspector-csrf', csrf); }
   if (!csrf) throw new Error('Launch the companion again for a one-use owner sign-in link.');
   const transport: ConsoleTransport = {
     async request(request, signal) {
@@ -180,7 +208,7 @@ async function start() {
       if (!response.ok) throw new Error('Inspector session unavailable');
       return response.json();
     },
-    confirm: preview_id => json('/api/confirm', { preview_id }),
+    confirm: preview_id => json<ConsoleResult>('/api/confirm', { preview_id }),
   };
   controller = new InspectorController(transport);
   for (const tab of TABS) { const node = button(tab.label, async () => { selected = undefined; await controller.selectTab(tab.id); }); node.dataset.tab = tab.id; node.setAttribute('role', 'tab'); tabs.append(node); }
@@ -194,7 +222,8 @@ async function start() {
   document.querySelector('#compact')!.addEventListener('click', () => {
     const compact = document.body.classList.toggle('compact');
     document.querySelector('#compact')!.textContent = compact ? 'Full inspector' : 'Compact view';
-    if (compact) void controller.selectTab('activity');
+    if (compact) void loadCompact();
+    else { overviewVersion++; permissionSnapshot = undefined; void controller.selectTab('memories'); }
   });
   document.querySelector('#signout')!.addEventListener('click', async () => {
     await json('/api/sign-out', {}); sessionStorage.removeItem('luminary-inspector-csrf'); controller.dispose();

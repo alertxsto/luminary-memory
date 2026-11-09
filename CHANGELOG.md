@@ -1,6 +1,18 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.3] - 2026-11-09
+
+Interactive memory inspection, explicit owner controls and safer native recall.
+This incremental release includes only the verified native surfaces and the
+opt-in loopback companion; it does not complete the entire interactive UI roadmap.
+
+### Compatibility
+
+- Native OpenCode Web GUI discovery remains unsupported. Server tools remain
+  separate from a client-native inspector; the companion is not a Web plugin.
+- Hermes CLI/TUI inspector rendering remains blocked on authenticated native
+  context and scope lifecycle. Existing provider and command integrations remain
+  separate from that unfinished visual target.
 
 ### Added
 
@@ -32,6 +44,50 @@
 
 ### Fixed
 
+- OpenCode's compact inspector shows bounded, server-reported record permissions;
+  native session, policy and explicit-project changes discard stale snapshots.
+  Read-only shared projects no longer display the previous project's edit rights.
+  Native sharing cards identify the granting agent, recipient and capabilities.
+- The opt-in browser companion includes scoped record permissions in compact
+  mode, limits activity rendering to five events and clears the overview when
+  its project selection changes.
+- Hermes UI installation ignores generated Python bytecode without replacing
+  profile-owned caches or activating a provider. Wheels include only required
+  native/UI resources, so incidental `__pycache__` files cannot break installation.
+- Hermes panels inherit native text colors and use documented host border
+  tokens; dashboard themes can no longer turn the whole inspector transparent.
+- Hermes tab navigation and refresh select the requested backend projection.
+  Sharing displays grants instead of memory rows; memory filters stay limited
+  to the views that actually support them.
+- Hermes session admission loads the selected view immediately, including the
+  native plugin settings page, rather than presenting browse rows as settings.
+- Hermes REST inspectors preserve their bound scope through socket reconnects;
+  only native session, profile and gateway activation changes invalidate it.
+- Hermes compact views now show read-only context, server-reported record
+  permissions, up to five activity events, and a full-inspector entry instead
+  of squeezing all tabs and mutation forms into a sidebar.
+- The dashboard overview uses the rendered native `pre-main` slot, behind an
+  explicit open/close control, rather than the unmounted `sidebar` slot.
+- omp headless RPC returns the scoped inspector state instead of silently
+  discarding it through unavailable dialogs. UI-enabled RPC keeps its native
+  dialogs; neither mode constructs terminal components. Acceptance was
+  re-verified on the currently installed omp **18.18.5** with a copy-installed
+  extension: `/luminary full` JSON state over a seeded store, headless RPC state
+  delivery, and UI-enabled RPC opening all nine native dialogs.
+- Native OpenCode Summary keeps authorized lifecycle totals and UTC time bounds
+  visible even when recent changes are present. Activity and Relations now use
+  the same operational and supporting-memory labels as the pi/omp inspector.
+- Sharing now lists the native actor's incoming/outgoing grants rather than
+  unrelated memory rows. Project, user and actor filtering happens before SQL
+  pagination; capability lists remain independent and browsing grants no access.
+- Inspector headers expose secret-safe native agent/profile/store/host labels,
+  not frontend-selected identity or the native bearer. Long pi/omp terminal
+  proposals use a scrollable review and a separate Cancel-first confirmation;
+  narrow terminals no longer hide the decision below a long proposal.
+- Terminal memory rows identify lifecycle state and revision, including deleted
+  and superseded records explicitly requested through status filters. Memory
+  search controls appear only on supported views; shared-resource selection
+  does not offer native-own-project policy mutations.
 - Concurrent store startup now keeps inspector schema inspection and migration
   under the existing cross-process writer transaction. Independent SQLite
   workers no longer race to add the same audit-ownership column.

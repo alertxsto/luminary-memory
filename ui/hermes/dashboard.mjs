@@ -39,4 +39,13 @@ async function send(path, body, native, signal) {
 }
 const Inspector = createInspectorView(React, useNativeContext, send);
 registry.register('luminary-inspector', () => React.createElement(Inspector));
-registry.registerSlot('luminary-inspector', 'sidebar', () => React.createElement(Inspector, { compact: true }));
+function CompactOverview() {
+  const [opened, setOpened] = React.useState(false);
+  return React.createElement('section', { 'aria-label': 'Luminary overview launcher', style: { marginBottom: 8 } },
+    React.createElement('button', { type: 'button', 'aria-expanded': opened, onClick: () => setOpened(value => !value) },
+      opened ? 'Hide compact memory overview' : 'Show compact memory overview'),
+    opened && React.createElement(Inspector, { compact: true,
+      onOpenFull: () => window.location.assign(`/luminary-inspector${window.location.search}`) }));
+}
+// Hermes 0.22.5 renders pre-main; its shell no longer mounts the documented sidebar slot.
+registry.registerSlot('luminary-inspector', 'pre-main', CompactOverview);

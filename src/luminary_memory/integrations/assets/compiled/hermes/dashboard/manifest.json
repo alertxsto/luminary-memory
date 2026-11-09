@@ -4,7 +4,7 @@
   "description": "Owner-scoped native memory inspection, confirmed operations and profile settings",
   "icon": "Database",
   "tab": { "path": "/luminary-inspector", "position": "end" },
-  "slots": ["sidebar"],
+  "slots": ["pre-main"],
   "entry": "dist/index.js",
   "api": "plugin_api.py"
 }

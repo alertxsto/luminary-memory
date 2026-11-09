@@ -175,6 +175,20 @@ on installation/open. The three installation surfaces are independent:
   disabled. Desktop uses `ctx.rest`, not dashboard globals or hand-read tokens.
   The local Desktop half does not install/enable a remote machine's profile
   backend. Install that backend on each intended remote/profile independently.
+  The development Desktop adapter targets the **0.22.5 SDK**. The older bundled
+  **0.22.0** app lacks the required `gatewayActivationEpoch` export and cannot
+  load it; a dashboard/backend installation does not upgrade that local app.
+  After replacing installed frontend files, use the native Plugins **Rescan**
+  action and reopen the contribution; an already mounted view can retain its
+  previous module. The settings contribution binds the native session before
+  loading effective settings, without activating the provider.
+
+Hermes can prepare a managed Python dependency environment independently of the
+shell interpreter. Install the matching Luminary wheel in that actual backend
+environment too. Do not mix another Python version with its `site-packages`;
+compiled dependencies must match the interpreter. Native declared-schema HTTP
+fields carry textual values even for boolean/number kinds; saved Luminary
+configuration retains the corresponding JSON boolean/number types.
 
 The ordinary plugin also registers a concrete typed CLI settings consumer:
 
@@ -201,6 +215,14 @@ sufficient: sockets are not required, including OAuth remotes. A disabled or
 unavailable backend is reported as unavailable, never as an empty healthy store.
 Desktop gateway/profile/session epochs and dashboard profile-owned component
 unmounting discard old results instead of publishing them into another context.
+
+Compact mode is a read-only overview: native context, permissions reported for
+up to five visible records, and at most five activity events. **Open full
+inspector** opens the host-native full view for all tabs and confirmed changes.
+The dashboard exposes an initially closed **Show compact memory overview**
+control in its public `pre-main` slot. Hermes 0.22.5 documents a `sidebar` slot
+but does not render it in the actual shell; no cockpit theme or host patch is
+required for this overview. Closing it disposes its pending model.
 
 #### Exact provider ownership and legacy setup
 

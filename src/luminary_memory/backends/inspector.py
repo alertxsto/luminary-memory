@@ -198,6 +198,25 @@ class InspectorSQL:
         rows = self._sql("SELECT key,value FROM inspector_metadata WHERE key LIKE ? ORDER BY key", (prefix + "%",)).fetchall()
         return [(row[0], json.loads(row[1])) for row in rows]
 
+    def inspector_grants(self, project_id, user_id, agent_id, *, after=None, limit=101):
+        """Page only this native actor's incoming/outgoing project grants."""
+        def field(name):
+            return f"value::jsonb->>'{name}'" if hasattr(self, "_psycopg") else f"json_extract(value,'$.{name}')"
+
+        clauses = [f"{field('project_id')}=?", f"{field('user_id')}=?",
+                   f"({field('grantor_agent_id')}=? OR {field('recipient_agent_id')}=?)",
+                   "key LIKE ?"]
+        params = [project_id, user_id, agent_id, agent_id, "grant:" + project_id + ":%"]
+        if after is not None:
+            clauses.append("key>?")
+            params.append(after)
+        params.append(limit)
+        rows = self._sql(
+            f"SELECT key,value FROM {self._inspector_table('inspector_metadata')} WHERE "
+            + " AND ".join(clauses) + " ORDER BY key LIMIT ?", params,
+        ).fetchall()
+        return [(row[0], json.loads(row[1])) for row in rows]
+
     def inspector_memories(self, scopes, *, statuses=None, tags=None, query=None,
                            created_after=None, created_before=None, after=None, limit=101):
         """Apply exact authorized resource scopes before ordering and limits."""

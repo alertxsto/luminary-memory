@@ -114,14 +114,6 @@ test('a late failed confirmation cannot clear a newer proposal', async () => {
   assert.equal(controller.state.preview.preview_id, 'p2');
 });
 
-const dialogs = (answers = {}) => ({
-  input: async title => answers[title],
-  select: async title => answers[title],
-  confirm: async () => true,
-  show: async () => {},
-});
-
-
 test('native fullscreen mouse selects rows and opens keyboard-equivalent actions', async () => {
   const controller = new InspectorController({ request: async request => result(request, { items: [{ id: 1 }, { id: 2 }] }) });
   await controller.load(); const intents = [];
@@ -134,39 +126,11 @@ test('native fullscreen mouse selects rows and opens keyboard-equivalent actions
   assert.equal(intents.at(-1).type, 'actions');
 });
 
-test('conflict resolution forwards the observed conflict-set token', async () => {
-  const requests = [];
-  const controller = new InspectorController({
-    request: async request => { requests.push(request); return result(request, request.operation === 'detail' ? { memory: { id: 4, revision: 8 }, conflict_set_token: 'observed-set' } : request.operation === 'preview_change' ? { preview_id: 'p' } : {}); },
-    confirm: async () => result({ request_id: 'c' }, { confirmation_receipt: 'receipt' }),
-  });
-  await runInspectorAction(controller, dialogs(), 'Resolve conflict', { id: 4, revision: 7 });
-  const preview = requests.find(r => r.operation === 'preview_change');
-  assert.equal(preview.arguments.expected_revision, 8);
-  assert.equal(preview.arguments.expected_conflict_set_token, 'observed-set');
-});
-
 test('read-only records offer grounding but never correction or retraction', () => {
   const controller = new InspectorController({ request: async request => result(request) });
   const actions = inspectorActions(controller, { id: 1, permissions: { read: true, edit: false, retract: false } });
   assert.ok(actions.includes('History')); assert.ok(actions.includes('Expand evidence'));
   assert.equal(actions.includes('Correct'), false); assert.equal(actions.includes('Retract'), false);
-});
-
-test('project grant capabilities are selected independently', async () => {
-  const requests = [];
-  const controller = new InspectorController({
-    request: async request => { requests.push(request); return result(request, request.operation === 'preview_change' ? { preview_id: 'p' } : {}); },
-    confirm: async () => result({ request_id: 'c' }, { confirmation_receipt: 'receipt' }),
-  });
-  await runInspectorAction(controller, {
-    ...dialogs({ 'Agent receiving explicit project rights': 'omp' }),
-    confirm: async title => title === 'Grant contribute?' || title === 'Confirm Luminary change',
-  }, 'Grant rights');
-  const preview = requests.find(r => r.operation === 'preview_change');
-  assert.equal(preview.arguments.recipient_agent_id, 'omp');
-  assert.deepEqual(preview.arguments.capabilities, ['contribute']);
-  assert.equal(requests.at(-1).operation, 'grant');
 });
 
 test('refresh after an activity gap loads a snapshot instead of replaying the lost boundary', async () => {

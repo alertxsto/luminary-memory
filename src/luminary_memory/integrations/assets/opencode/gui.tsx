@@ -3,7 +3,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack }
 import type { OpenCodeClient } from '@opencode/client/promise';
 import { TABS, type ConsoleTransport } from '../common/console-contract.js';
 import { InspectorController } from '../common/console-controller.js';
-import { inspectorActions, inspectorRows, runInspectorAction, type InspectorRow, type NativeDialogs } from '../common/console-actions.js';
+import { inspectorActions, inspectorRows, inspectorRowContent, inspectorContextLine, runInspectorAction, type InspectorRow, type NativeDialogs } from '../common/console-actions.js';
 import { LuminaryConsole } from './rpc.js';
 
 const flow = { display: 'flex', 'flex-wrap': 'wrap', gap: '8px', 'align-items': 'center' } as const;
@@ -16,7 +16,7 @@ function Inspector(props: { ctx: Context; session: MountedSession; compact?: boo
   const [state, setState] = createSignal(controller.state);
   const [selected, setSelected] = createSignal<InspectorRow>();
   const [compact, setCompact] = createSignal(props.compact === true);
-  const initialTab = props.compact ? 'activity' : 'memories';
+  const [permissionSnapshot, setPermissionSnapshot] = createSignal<{ rows: InspectorRow[]; epoch?: string; policy?: number; selection?: string }>();
   const pending = new Set<() => void>();
   const unsubscribe = controller.subscribe(value => setState(value));
   const closeDialogs = () => { for (const close of pending) close(); };
@@ -61,7 +61,7 @@ function Inspector(props: { ctx: Context; session: MountedSession; compact?: boo
     stopEvents?.();
     bound = { key: session.key, client, directory, visit, connected };
     const location = directory ? { directory } : undefined;
-    closeDialogs(); setSelected(undefined);
+    closeDialogs(); setSelected(undefined); setPermissionSnapshot(undefined);
     const api = client.rpc(LuminaryConsole);
     const transport: ConsoleTransport = {
       request: (request, signal) => {
@@ -80,11 +80,26 @@ function Inspector(props: { ctx: Context; session: MountedSession; compact?: boo
     controller.switchContext(transport);
     stopEvents = api.events.on('invalidated', event => {
       if (event.data.session_id !== sessionID || !location || event.location.directory !== location.directory) return;
-      closeDialogs(); setSelected(undefined); controller.switchContext(transport);
+      closeDialogs(); setSelected(undefined); setPermissionSnapshot(undefined); controller.switchContext(transport);
     });
-    untrack(() => { void controller.selectTab(initialTab); });
+    untrack(() => { void (compact() ? load() : controller.selectTab('memories')); });
   });
   onCleanup(() => { stopEvents?.(); closeDialogs(); unsubscribe(); controller.dispose(); });
+  async function load() {
+    if (!compact()) { await controller.load(); return; }
+    setPermissionSnapshot(undefined);
+    const source = bound, selection = controller.selectionHandle;
+    const result = await controller.execute('browse', { view: 'memories', limit: 3 });
+    if (!result || !controller.activeContext || source !== bound || selection !== controller.selectionHandle ||
+        (result.status !== 'ok' && result.status !== 'empty')) return;
+    const items = result.data?.items;
+    if (Array.isArray(items)) setPermissionSnapshot({ rows: items as InspectorRow[], epoch: result.context_epoch, policy: result.policy_revision, selection });
+    await controller.selectTab('activity');
+  }
+  const permissionRows = () => {
+    const snapshot = permissionSnapshot(), current = state();
+    return snapshot?.epoch === current.context_epoch && snapshot?.policy === current.policy_revision && snapshot?.selection === controller.selectionHandle ? snapshot?.rows : undefined;
+  };
   const rows = () => { state(); return inspectorRows(controller); };
   const actions = createMemo(() => { state(); return inspectorActions(controller, selected()).filter(name => name !== 'Refresh' && name !== 'View projection'); });
   let interacting = false;
@@ -104,7 +119,10 @@ function Inspector(props: { ctx: Context; session: MountedSession; compact?: boo
       } else if (name === 'Import records' || name === 'Export records') {
         nativeDialogs = { ...dialogs, input: title => dialogs.input(`${title} on server ${props.session.server.name}; no local file picker is used`) };
       }
-      if (controller.activeContext && controller.contextVersion === epoch) await runInspectorAction(controller, nativeDialogs, name, row);
+      if (controller.activeContext && controller.contextVersion === epoch) {
+        await runInspectorAction(controller, nativeDialogs, name, row);
+        if (controller.activeContext && compact() && name === 'Select project') await load();
+      }
     } catch { if (controller.activeContext && controller.contextVersion === epoch) await dialogs.show('Inspector unavailable', 'No successful change is claimed. Refresh Activity before retrying a change.'); }
     finally { interacting = false; }
   }
@@ -118,13 +136,17 @@ function Inspector(props: { ctx: Context; session: MountedSession; compact?: boo
   }
   return <section aria-label="Luminary memory inspector" style={{ display: 'flex', 'flex-direction': 'column', gap: '12px', padding: '12px', 'overflow-y': 'auto', 'min-width': '0', height: '100%', 'font-size': '14px', 'white-space': 'normal', 'overflow-wrap': 'anywhere' }}>
     <header style={flow}><strong>Luminary Memory</strong><span role="status">{state().busy ? 'Loading' : state().status}</span>
-      <ctx.ui.Button size="small" onClick={() => { if (props.expand && compact()) props.expand(); else { setCompact(!compact()); void controller.selectTab(compact() ? 'activity' : 'memories'); } }}>{compact() ? 'Full inspector' : 'Compact Activity'}</ctx.ui.Button>
-      <ctx.ui.Button size="small" onClick={() => void controller.load()} disabled={state().busy}>Refresh</ctx.ui.Button>
+      <ctx.ui.Button size="small" onClick={() => { if (props.expand && compact()) props.expand(); else { setCompact(!compact()); void (compact() ? load() : controller.selectTab('memories')); } }}>{compact() ? 'Full inspector' : 'Compact Activity'}</ctx.ui.Button>
+      <ctx.ui.Button size="small" onClick={() => void load()} disabled={state().busy}>Refresh</ctx.ui.Button>
     </header>
     <small>{props.session.server.name} · {props.session.location?.directory ?? 'Location unavailable'} · {state() && controller.selectionHandle ? 'Explicit shared project' : 'Own native project'} · policy {state().policy_revision ?? '—'}</small>
+    <Show when={state().data.native_context}><small>{state() && inspectorContextLine(controller)}</small></Show>
     <Show when={state().error}><p role="alert">{state().error}</p></Show>
     <Show when={state().data.gap === true}><p role="alert">Activity history is incomplete. Refresh to load a new snapshot.</p></Show>
     <Show when={state().data.replayed === true && !state().data.gap}><p>{rows().length ? 'Showing new activity only.' : 'No new activity since the checkpoint.'} Refresh loads recent history.</p></Show>
+    <Show when={compact()}><section aria-label="Permissions on visible records"><strong>Permissions on visible records</strong>
+      <For each={permissionRows()}>{row => <p>#{String(row.id)}: read {row.permissions?.read ? '✓' : '—'} · contribute {row.permissions?.contribute ? '✓' : '—'} · edit {row.permissions?.edit ? '✓' : '—'} · retract {row.permissions?.retract ? '✓' : '—'}</p>}</For>
+    </section></Show>
     <Show when={!compact()}>
       <nav role="tablist" aria-label="Memory views" onKeyDown={tabKey} style={flow}><For each={TABS}>{tab => <button type="button" data-tab={tab.id} role="tab" aria-selected={state().tab === tab.id} tabIndex={state().tab === tab.id ? 0 : -1} style={{ ...box, padding: '6px 10px', 'font-weight': state().tab === tab.id ? '700' : '400' }} onClick={() => { setSelected(undefined); void controller.selectTab(tab.id); }}>{tab.label}</button>}</For></nav>
       <div aria-label="Inspector actions" style={flow}><For each={actions()}>{name => <ctx.ui.Button size="small" disabled={state().busy} onClick={() => void action(name, selected())}>{name}</ctx.ui.Button>}</For></div>
@@ -145,6 +167,7 @@ function Inspector(props: { ctx: Context; session: MountedSession; compact?: boo
     <For each={compact() ? rows().slice(0, 3) : rows()}>{row => <article style={box}>
       <h3>{row.event_id !== undefined ? kinds[String(row.kind)] ?? String(row.kind) : row.id !== undefined ? `Memory #${row.id}` : String(row.label ?? row.kind ?? 'Record')}</h3>
       <Show when={row.content}><p style={{ 'white-space': 'pre-wrap' }}>{String(row.content)}</p></Show>
+      <Show when={typeof row.grantor_agent_id === 'string' && typeof row.recipient_agent_id === 'string'}><p>{inspectorRowContent(row)}</p></Show>
       <Show when={row.event_id !== undefined}><small>Event #{String(row.event_id)} · memory #{String(row.memory_id ?? '—')} · {String(row.created_at ?? '')}</small></Show>
       <Show when={row.operation as Record<string, unknown> | undefined}>{operation => <>
         <p>{String(operation().summary)}</p>

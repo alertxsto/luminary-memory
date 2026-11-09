@@ -38,3 +38,15 @@ def test_missing_native_identity_never_falls_back(scenario, missing):
 def test_other_owner_cannot_initialize_existing_store(scenario):
     with pytest.raises(PermissionError):
         resolve_context(scenario.client, dict(scenario.native, user_id="bob"), initialize=True)
+
+
+def test_display_context_never_exposes_bearer_or_accepts_browser_identity(scenario):
+    import json
+
+    result = scenario.request("summary")
+    assert result.status == "ok"
+    assert result.data["native_context"]
+    assert scenario.context.identity_token not in json.dumps(result.to_dict())
+    assert "identity_token" not in result.data["native_context"]
+    forged = scenario.request("summary", native_context={"store_id": "foreign", "agent_id": "omp"})
+    assert forged.status == "denied" and forged.data is None

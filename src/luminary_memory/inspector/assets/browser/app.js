@@ -201,26 +201,35 @@ var InspectorController = class {
 
 // src/luminary_memory/integrations/assets/common/console-actions.ts
 var base = ["Refresh", "View projection", "Search / filters", "Next page", "Select project"];
+var resourceBase = ["Refresh", "View projection", "Next page", "Select project"];
+function inspectorCanSearch(controller2) {
+  return controller2.state.tab === "memories" || controller2.state.tab === "evidence" || controller2.state.tab === "maintenance";
+}
 function inspectorRows(controller2) {
   const data = controller2.state.data;
   if (data.memory && typeof data.memory === "object") return [data.memory];
   const rows = data.items ?? data.nodes ?? data.changes ?? data.projects ?? data.grants;
   return Array.isArray(rows) ? rows.filter((r) => !!r && typeof r === "object") : [];
 }
+function inspectorContextLine(controller2) {
+  const native = controller2.state.data.native_context;
+  if (!native || typeof native !== "object") return "";
+  return `Agent ${native.agent_id} \xB7 profile ${native.profile_id} \xB7 store ${String(native.store_id).slice(0, 12)} \xB7 host ${native.host_id}`.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+}
 function inspectorActions(controller2, row) {
   switch (controller2.state.tab) {
     case "memories":
       return [...base, "Create memory", ...row?.id !== void 0 ? ["Inspect", "History", "Expand evidence", "Expand source episodes", "Claims / conflicts", "Lineage", ...row.permissions?.edit ? ["Correct", "Tags", "Core designation", ...row.claim_key ? ["Resolve conflict"] : []] : [], ...row.permissions?.retract ? ["Retract"] : []] : []];
     case "activity":
-      return [...base, ...typeof controller2.state.data.replay_context === "string" ? ["Check new activity"] : [], "Event details"];
+      return [...resourceBase, ...typeof controller2.state.data.replay_context === "string" ? ["Check new activity"] : [], "Event details"];
     case "evidence":
       return [...base, ...row?.id !== void 0 ? ["Inspect", "History", "Expand evidence", "Expand source episodes", "Claims / conflicts", "Lineage"] : []];
     case "relations":
-      return ["Refresh", "View projection", "Next page", "Select project", "Explore entity", "All relations", "Adjacency details", ...typeof row?.memory_id === "number" ? ["Inspect supporting memory"] : []];
+      return [...resourceBase, "Explore entity", "All relations", "Adjacency details", ...typeof row?.memory_id === "number" ? ["Inspect supporting memory"] : []];
     case "maintenance":
       return [...base, "Preview maintenance", ...row?.id !== void 0 ? ["Inspect", ...row.permissions?.edit && row.claim_key ? ["Resolve conflict"] : []] : []];
     case "sharing":
-      return [...base, "Project information", "Grant rights", "Revoke rights", "Bind location"];
+      return [...resourceBase, "Project information", ...!controller2.selectionHandle ? ["Grant rights", "Revoke rights", "Bind location"] : []];
     case "settings":
       return ["Refresh", "View projection", "Change setting", "Readiness / diagnostics"];
     case "transfer":
@@ -279,6 +288,10 @@ async function runInspectorAction(controller2, nativeDialogs, action2, row, regi
       await replayActivity(controller2, dialogs2);
       break;
     case "Search / filters": {
+      if (!inspectorCanSearch(controller2)) {
+        await dialogs2.show("Memory search", "Search is available in Memories, Evidence & History, and Review & Maintenance. No filter was applied to this view.");
+        return;
+      }
       const query = await input("Search memory (empty clears)");
       if (query === void 0) return;
       const tags = await input("Filter tags (comma separated; empty clears)");
@@ -422,9 +435,11 @@ async function runInspectorAction(controller2, nativeDialogs, action2, row, regi
       await change("resolve_conflict", { memory_id: memory, expected_revision: current.revision, expected_conflict_set_token: token });
       break;
     }
-    case "Project information":
-      await controller2.execute("browse", { view: "projects" });
+    case "Project information": {
+      const result = await controller2.execute("browse", { view: "sharing" });
+      if (live() && result?.status === "ok") await dialogs2.show("Project information and explicit rights", JSON.stringify(result.data, null, 2));
       break;
+    }
     case "Grant rights": {
       const recipient_agent_id = await input("Agent receiving explicit project rights");
       if (!recipient_agent_id) return;
@@ -514,6 +529,8 @@ var modal = document.querySelector("#dialog");
 var csrf = sessionStorage.getItem("luminary-inspector-csrf") || "";
 var selected;
 var controller;
+var permissionSnapshot;
+var overviewVersion = 0;
 function element(tag, text, className) {
   const node = document.createElement(tag);
   if (text !== void 0) node.textContent = text;
@@ -623,9 +640,22 @@ async function transfer(direction) {
     setTimeout(() => URL.revokeObjectURL(url), 1e3);
   }
 }
+async function loadCompact() {
+  const version = ++overviewVersion, selection = controller.selectionHandle;
+  permissionSnapshot = void 0;
+  const result = await controller.execute("browse", { view: "memories", limit: 5 });
+  if (!result || !controller.activeContext || version !== overviewVersion || !document.body.classList.contains("compact") || selection !== controller.selectionHandle || result.status !== "ok" && result.status !== "empty") return;
+  const items = result.data?.items;
+  if (Array.isArray(items)) permissionSnapshot = { rows: items, epoch: result.context_epoch, policy: result.policy_revision, selection };
+  await controller.selectTab("activity");
+}
 async function action(name, row) {
-  if (name === "Import records" || name === "Export records") await transfer(name === "Import records" ? "import" : "export");
-  else await runInspectorAction(controller, dialogs, name, row);
+  if (name === "Refresh" && document.body.classList.contains("compact")) await loadCompact();
+  else if (name === "Import records" || name === "Export records") await transfer(name === "Import records" ? "import" : "export");
+  else {
+    await runInspectorAction(controller, dialogs, name, row);
+    if (name === "Select project" && document.body.classList.contains("compact")) await loadCompact();
+  }
 }
 function fields(values) {
   const list = element("dl", void 0, "fields");
@@ -636,6 +666,7 @@ function fields(values) {
 }
 function render() {
   const state = controller.state;
+  const compact = document.body.classList.contains("compact");
   connection.textContent = `${state.busy ? "Loading" : state.status} \xB7 ${controller.selectionHandle ? "Explicit shared project" : "Own native project"} \xB7 policy ${state.policy_revision ?? "\u2014"} \xB7 ${state.as_of || ""}${state.error ? " \xB7 " + state.error : ""}`;
   for (const node of tabs.querySelectorAll("button")) {
     const active = node.dataset.tab === state.tab;
@@ -646,6 +677,14 @@ function render() {
   view.replaceChildren();
   if (state.error) view.append(element("p", state.error, "notice warning"));
   const data = state.data;
+  if (data.native_context) view.append(element("p", inspectorContextLine(controller), "muted"));
+  if (compact && permissionSnapshot && permissionSnapshot.epoch === state.context_epoch && permissionSnapshot.policy === state.policy_revision && permissionSnapshot.selection === controller.selectionHandle) {
+    const permissions = element("section", void 0, "record");
+    permissions.setAttribute("aria-label", "Permissions on visible records");
+    permissions.append(element("h2", "Permissions on visible records"));
+    for (const row of permissionSnapshot.rows) permissions.append(element("p", `#${row.id}: read ${row.permissions?.read ? "\u2713" : "\u2014"} \xB7 contribute ${row.permissions?.contribute ? "\u2713" : "\u2014"} \xB7 edit ${row.permissions?.edit ? "\u2713" : "\u2014"} \xB7 retract ${row.permissions?.retract ? "\u2713" : "\u2014"}`));
+    view.append(permissions);
+  }
   if (data.gap === true) view.append(element("p", "Activity history is incomplete. Refresh to load a new snapshot.", "notice warning"));
   else if (data.replayed === true) view.append(element("p", `${Array.isArray(data.items) && data.items.length ? "Showing new activity only." : "No new activity since the checkpoint."} Refresh loads recent history.`, "notice"));
   if (state.tab === "summary" && data.totals && typeof data.totals === "object") {
@@ -673,7 +712,8 @@ function render() {
   if (state.tab === "sharing") view.append(element("p", "Select a project explicitly. Read, contribute, edit and retract are separate rights; matching paths do not establish sharing.", "notice"));
   if (state.tab === "transfer") view.append(element("p", "Memory-record transfer is not a full backup of evidence, episodes, audit, settings or grants. Every transfer shows a preview before confirmation.", "notice"));
   const rows = inspectorRows(controller);
-  for (const row of rows) {
+  for (let index = 0, count = compact ? Math.min(rows.length, 5) : rows.length; index < count; index++) {
+    const row = rows[index];
     const card = element("article", void 0, "record");
     card.append(element("h3", row.kind === "native_recall" ? "Recall activity" : row.kind === "hermes_operation" ? "Hermes activity" : row.id !== void 0 ? `Memory #${row.id} \xB7 ${row.status ?? ""} \xB7 revision ${row.revision ?? "\u2014"}` : String(row.kind ?? row.label ?? row.event_id ?? "Record")));
     if (row.operation && typeof row.operation === "object") {
@@ -768,7 +808,12 @@ async function start() {
   document.querySelector("#compact").addEventListener("click", () => {
     const compact = document.body.classList.toggle("compact");
     document.querySelector("#compact").textContent = compact ? "Full inspector" : "Compact view";
-    if (compact) void controller.selectTab("activity");
+    if (compact) void loadCompact();
+    else {
+      overviewVersion++;
+      permissionSnapshot = void 0;
+      void controller.selectTab("memories");
+    }
   });
   document.querySelector("#signout").addEventListener("click", async () => {
     await json("/api/sign-out", {});

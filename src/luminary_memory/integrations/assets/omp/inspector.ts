@@ -4,7 +4,7 @@ import { matchesKey, truncateToWidth } from '@oh-my-pi/pi-tui';
 import { TABS } from '../common/console-contract.js';
 import { InspectorController } from '../common/console-controller.js';
 import { createInspectorTransport } from '../common/inspector-transport.js';
-import { inspectorActions, inspectorRows, runInspectorAction, type NativeDialogs } from '../common/console-actions.js';
+import { inspectorActions, inspectorRows, inspectorRowContent, inspectorContextLine, confirmTerminalText, runInspectorAction, type NativeDialogs } from '../common/console-actions.js';
 import { TerminalInspectorView, type InspectorIntent } from '../common/terminal-view.js';
 
 export function registerOmpInspector(pi: ExtensionAPI) {
@@ -24,18 +24,18 @@ export function registerOmpInspector(pi: ExtensionAPI) {
     const dialogs: NativeDialogs = {
       input: (title, value) => value !== undefined && ctx.mode === 'tui' ? ctx.ui.editor(title, value) : ctx.ui.input(title, value),
       select: (title, choices) => ctx.ui.select(title, choices),
-      confirm: (title, message) => ctx.ui.confirm(title, message),
+      confirm: (title, message) => ctx.mode === 'tui' ? confirmTerminalText(ctx.ui, title, message, live) : ctx.ui.confirm(title, message),
       show: async (title, message) => { if (ctx.mode === 'tui') await ctx.ui.editor(`${title} · read-only preview; edits are discarded`, message); else await ctx.ui.select(`${title}\n${message}`, ['Back']); },
     };
     await view.load(); if (!live()) return;
     if (ctx.mode !== 'tui') {
-      if (ctx.mode !== 'rpc') { pi.sendMessage({ customType: 'luminary_inspector', content: JSON.stringify(view.state), display: true, details: view.state }, { triggerTurn: false }); return; }
+      if (ctx.mode !== 'rpc' || !ctx.hasUI) { pi.sendMessage({ customType: 'luminary_inspector', content: JSON.stringify(view.state), display: true, details: view.state }, { triggerTurn: false }); return; }
       // Only supported RPC dialogs are forwarded; never instantiate terminal components.
       while (live()) {
         const tab = await dialogs.select('Luminary inspector · select tab', [...TABS.map(t => t.label), 'Close']); if (!tab || tab === 'Close' || !live()) return;
         await view.selectTab(TABS.find(t => t.label === tab)!.id); if (!live()) return;
         await dialogs.show(tab, JSON.stringify(view.state.data, null, 2));
-        const rows = inspectorRows(view); const rowLabel = rows.length ? await dialogs.select('Record', rows.map((r, i) => `${i + 1}. ${r.id ?? ''} ${r.content ?? r.kind ?? ''}`.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' '))) : undefined;
+        const rows = inspectorRows(view); const rowLabel = rows.length ? await dialogs.select('Record', rows.map((r, i) => `${i + 1}. ${r.id ?? ''} ${inspectorRowContent(r)}`.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' '))) : undefined;
         const row = rowLabel ? rows[Number(rowLabel.split('.')[0]) - 1] : undefined;
         const action = await dialogs.select('Actions', inspectorActions(view, row)); if (action && live()) await runInspectorAction(view, dialogs, action, row);
       }
@@ -48,7 +48,14 @@ export function registerOmpInspector(pi: ExtensionAPI) {
       ctx.ui.setWidget('luminary-inspector', (tui, theme) => {
         unsubscribe = view.subscribe(() => tui.requestRender());
         return {
-          render: width => [`Luminary · Activity · ${view.state.status} · ${view.selectionHandle ? 'shared selection' : resolve(ctx.cwd)}`, `Session ${ctx.sessionManager.getSessionId()} · policy ${view.state.policy_revision ?? '—'} · rights rechecked on every operation`, view.state.error ?? view.state.as_of ?? '', ...inspectorRows(view).slice(0, 3).map(r => `${r.created_at ?? ''} ${r.kind ?? ''} ${r.source ?? r.memory_id ?? ''}`), '/luminary full: all tabs, per-record permissions and actions · /luminary close'].map(line => truncateToWidth(theme.fg('muted', line.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')), width)),
+          render: width => [
+            `Luminary · Activity · ${view.state.status} · ${view.selectionHandle ? 'shared selection' : resolve(ctx.cwd)}`,
+            inspectorContextLine(view),
+            `Session ${ctx.sessionManager.getSessionId()} · policy ${view.state.policy_revision ?? '—'} · rights rechecked on every operation`,
+            view.state.error ?? view.state.as_of ?? '',
+            ...inspectorRows(view).slice(0, 3).map(r => `${r.created_at ?? ''} ${r.kind ?? ''} ${r.source ?? r.memory_id ?? ''}`),
+            '/luminary full: all tabs, per-record permissions and actions · /luminary close',
+          ].map(line => truncateToWidth(theme.fg('muted', line.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')), width)),
           invalidate() {},
           dispose: () => unsubscribe?.(),
         };

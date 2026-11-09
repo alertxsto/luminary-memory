@@ -7,6 +7,7 @@ export const TABS = [
 ];
 const WRITES = new Set(['mutate', 'maintenance_commit', 'set_settings', 'transfer_commit', 'grant', 'revoke']);
 const PAGINATED = new Set(['browse', 'history', 'events', 'graph']);
+const MEMORY_VIEWS = new Set(['memories', 'evidence', 'maintenance']);
 const commitFor = (operation, kind) => operation === 'maintenance_preview' ? 'maintenance_commit'
   : operation === 'transfer_preview' ? 'transfer_commit' : ['grant', 'revoke', 'set_settings', 'explain'].includes(kind) ? kind : 'mutate';
 
@@ -54,6 +55,7 @@ export function createSession(send) {
   }
   const api = {
     state,
+    get shared() { return selection !== undefined; },
     subscribe(listener) { listeners.add(listener); listener({ ...state }); return () => listeners.delete(listener); },
     setContext(next) {
       // A native React effect can mount → clean up → mount in StrictMode.
@@ -109,9 +111,9 @@ export function createSession(send) {
 export function createInspectorView(React, useNativeContext, send, subscribeInvalidation) {
   const h = React.createElement;
   const button = (label, onClick, disabled = false, extra = {}) => h('button', {
-    type: 'button', onClick, disabled, style: { border: '1px solid var(--ui-border, var(--border))', borderRadius: 4, padding: '5px 9px', cursor: disabled ? 'default' : 'pointer' }, ...extra,
+    type: 'button', onClick, disabled, style: { border: '1px solid var(--ui-stroke-secondary, var(--color-border, currentColor))', borderRadius: 4, padding: '5px 9px', cursor: disabled ? 'default' : 'pointer' }, ...extra,
   }, label);
-  const inputStyle = { border: '1px solid var(--ui-border, var(--border))', background: 'transparent', color: 'inherit', padding: 6, borderRadius: 4, minWidth: 0 };
+  const inputStyle = { border: '1px solid var(--ui-stroke-secondary, var(--color-border, currentColor))', background: 'transparent', color: 'inherit', padding: 6, borderRadius: 4, minWidth: 0 };
   function Input({ label, value, onChange, type = 'text' }) {
     return h('label', { style: { display: 'grid', gap: 3 } }, label,
       h('input', { type, value, onChange: event => onChange(event.target.value), style: inputStyle }));
@@ -170,7 +172,7 @@ export function createInspectorView(React, useNativeContext, send, subscribeInva
         h('h4', null, key), h(Fields, { value: data[key] || [] }))));
     return null;
   }
-  function Inspector({ native, compact = false, initialTab = 'memories' }) {
+  function Inspector({ native, compact = false, initialTab = 'memories', onOpenFull }) {
     const liveNative = React.useRef(native.key);
     liveNative.current = native.key;
     const [model] = React.useState(() => createSession((path, body, signal) => send(path, body, native, signal)));
@@ -191,6 +193,7 @@ export function createInspectorView(React, useNativeContext, send, subscribeInva
     const [projectChoices, setProjectChoices] = React.useState([]);
     const [file, setFile] = React.useState(null), [exportHandle, setExportHandle] = React.useState('');
     const [download, setDownload] = React.useState(null);
+    const [permissionRows, setPermissionRows] = React.useState([]);
     React.useEffect(() => model.subscribe(setState), [model]);
     React.useEffect(() => { setSession(native.session || ''); setSessions([]); setRow(null); setContent(''); setNotice(''); model.setContext(native.session || ''); }, [native.key, native.session]);
     React.useEffect(() => { model.setContext(session); setRow(null); setContent(''); setProjectChoices([]); setFile(null); setExportHandle(''); setDownload(null); }, [session]);
@@ -211,8 +214,19 @@ export function createInspectorView(React, useNativeContext, send, subscribeInva
     const operation = TABS.find(item => item[0] === tab)?.[2] || 'browse';
     const filters = () => ({ query, tags: tags.split(',').map(value => value.trim()).filter(Boolean),
       statuses: status === 'all' ? ['active', 'candidate', 'conflicted', 'superseded', 'expired', 'deleted'] : [status] });
-    const load = () => model.request(operation, tab === 'relations' ? { entity_id: state.result?.data?.focus_entity_id ?? undefined, limit: 50 } : filters());
-    const chooseTab = next => { setTab(next); setRow(null); setContent(''); model.cancelPreview(); if (model.state.opened) model.request(TABS.find(item => item[0] === next)[2]); };
+    const viewArguments = view => ({ view, ...(MEMORY_VIEWS.has(view) ? filters() : {}) });
+    const load = () => compact ? model.request('events', { view: 'activity', limit: 5 })
+      : model.request(operation, tab === 'relations' ? { ...viewArguments(tab), entity_id: state.result?.data?.focus_entity_id ?? undefined, limit: 50 } : viewArguments(tab));
+    const loadCurrentView = React.useRef(load);
+    loadCurrentView.current = load;
+    // Admission is a native browse; then load the currently selected projection.
+    const open = async () => {
+      const result = await model.open();
+      if (!result || !model.state.opened) return;
+      if (compact) setPermissionRows((result.data?.items || []).slice(0, 5).map(({ id, permissions }) => ({ id, permissions })));
+      await loadCurrentView.current();
+    };
+    const chooseTab = next => { setTab(next); setRow(null); setContent(''); model.cancelPreview(); if (model.state.opened) model.request(TABS.find(item => item[0] === next)[2], viewArguments(next)); };
     const tabKeyDown = (event, index) => {
       let next;
       if (event.key === 'ArrowRight') next = (index + 1) % TABS.length;
@@ -225,7 +239,7 @@ export function createInspectorView(React, useNativeContext, send, subscribeInva
       chooseTab(TABS[next][0]);
     };
     const data = state.result?.data || {};
-    const rows = Array.isArray(data.items) ? data.items : Array.isArray(data.nodes) ? data.nodes : [];
+    const rows = Array.isArray(data.items) ? data.items : Array.isArray(data.nodes) ? data.nodes : Array.isArray(data.grants) ? data.grants : [];
     const change = (kind, args = {}, operation = 'preview_change') => model.request(operation, {
       kind, ...(row?.id !== undefined ? { memory_id: row.id, expected_revision: row.revision } : {}), ...args,
     });
@@ -239,6 +253,29 @@ export function createInspectorView(React, useNativeContext, send, subscribeInva
     };
     const editable = Array.isArray(data.editable) ? data.editable : [];
     const canAct = state.opened && !state.pending;
+    const header = [
+      h('header', { key: 'heading' }, h('h2', { style: { margin: 0 } }, 'Luminary Inspector'), h('small', null, compact ? 'Compact native pane' : 'Full native view')),
+      h('p', { key: 'trust', style: { margin: 0 } }, 'Bound to the authenticated Hermes profile and verified native session. Owner-level installed plugins are not sandboxed by memory grants.'),
+      data.native_context && h('p', { key: 'context', style: { margin: 0, overflowWrap: 'anywhere' } }, `User ${data.native_context.user_id} · agent ${data.native_context.agent_id} · workspace ${data.native_context.workspace_id} · profile ${data.native_context.profile_id} · store ${String(data.native_context.store_id).slice(0, 12)} · host ${data.native_context.host_id}`),
+      h('div', { key: 'binding', style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'end' } },
+        native.session ? h('span', null, `Session: ${native.session}`) : h('label', null, 'Native session ', h('select', { value: session, onChange: event => setSession(event.target.value), style: inputStyle }, h('option', { value: '' }, 'Choose session'), ...sessions.map(item => h('option', { key: item.id, value: item.id }, item.title)))),
+        !native.session && button('Load native sessions', async () => { const key = native.key; try { const result = await send('/sessions', undefined, native); if (key === liveNative.current) { setSessions(result.items || []); setNotice(''); } } catch { if (key === liveNative.current) setNotice('Native session list unavailable; enable the profile backend and restart Hermes.'); } }),
+        button('Open / bind session', open, !session || state.pending),
+        button('Refresh', compact ? open : load, !canAct)),
+    ];
+    if (compact) return h('section', { 'aria-label': 'Luminary Inspector', style: { color: 'inherit', padding: 10, display: 'grid', gap: 10, overflow: 'auto', maxHeight: 420, boxSizing: 'border-box' } },
+      ...header, button('Open full inspector', onOpenFull, !onOpenFull),
+      h('p', { style: { margin: 0 } }, 'Read-only overview. Open the full inspector for tabs and confirmed changes.'),
+      h('div', { role: 'status' }, state.pending ? 'Loading…' : state.result ? `${state.result.status}${state.result.error ? ': ' + state.result.error.message : ''}` : 'Open the native session to inspect its explicitly bound scope.'),
+      notice && h('p', { role: 'alert' }, notice),
+      state.opened && !state.pending && state.result?.status === 'ok' && h('div', null,
+        h('h3', null, 'Permissions on visible records'),
+        permissionRows.length ? h('ul', null, ...permissionRows.map(item => h('li', { key: item.id }, `#${item.id}: ${['read', 'contribute', 'edit', 'retract'].map(right => `${right} ${item.permissions?.[right] === true ? '✓' : '—'}`).join(' · ')}`)))
+          : h('p', null, 'No visible memory records. Record permissions are not inferred from an empty scope.'),
+        h('h3', null, 'Recent activity (up to five events)'),
+        data.items?.length ? h(Projection, { tab: 'activity', data }) : h('p', null, 'No committed activity in this scope.'),
+        state.result.as_of && h('small', null, `As of ${state.result.as_of}`),
+        h('details', null, h('summary', null, 'Technical authorized response'), h(Json, { value: data }))));
     const controls = [];
     if (tab === 'memories') controls.push(
       h('label', { key: 'text' }, 'Memory content', h('textarea', { value: content, onChange: event => setContent(event.target.value), rows: compact ? 3 : 5, style: { ...inputStyle, width: '100%', boxSizing: 'border-box' } })),
@@ -269,7 +306,8 @@ export function createInspectorView(React, useNativeContext, send, subscribeInva
       button('Preview maintenance', () => change(maintenance, {}, 'maintenance_preview'), !canAct),
       h(Input, { label: 'Conflict-set token from claim details', value: conflictToken, onChange: setConflictToken }),
       button('Preview selected conflict winner', () => change('resolve_conflict', { expected_conflict_set_token: conflictToken }), !canAct || !row || !conflictToken)));
-    if (tab === 'sharing') controls.push(h('div', { key: 'sharing', style: { display: 'grid', gap: 8 } },
+    if (tab === 'sharing' && model.shared) controls.push(h('p', { key: 'policy-scope' }, 'Project policy changes require the native own scope. Return to native own scope before granting, revoking or binding a location.'));
+    if (tab === 'sharing' && !model.shared) controls.push(h('div', { key: 'sharing', style: { display: 'grid', gap: 8 } },
       h('p', null, 'Rights are independent for this explicit project. Granting one never grants the others.'),
       h(Input, { label: 'Agent receiving project rights', value: targetAgent, onChange: setTargetAgent }),
       h('div', null, ...['read', 'contribute', 'edit', 'retract'].map(right => h('label', { key: right, style: { marginRight: 12 } }, h('input', { type: 'checkbox', checked: rights[right], onChange: event => setRights({ ...rights, [right]: event.target.checked }) }), right))),
@@ -296,19 +334,13 @@ export function createInspectorView(React, useNativeContext, send, subscribeInva
     if (tab === 'summary') controls.push(h('div', { key: 'summary' },
       h('p', null, 'Deterministic authorized Summary. AI is optional and never requested by navigation.'),
       button('Preview AI disclosure', () => model.request('explain', { phase: 'preview', kind: 'explain' }), !canAct)));
-    return h('section', { 'aria-label': 'Luminary Inspector', style: { color: 'var(--ui-text, var(--foreground))', background: 'var(--ui-bg, var(--background))', padding: compact ? 10 : 20, display: 'grid', gap: 12, overflow: 'auto', height: '100%', boxSizing: 'border-box' } },
-      h('header', null, h('h2', { style: { margin: 0 } }, 'Luminary Inspector'), h('small', null, compact ? 'Compact native pane' : 'Full native view')),
-      h('p', { style: { margin: 0 } }, 'Bound to the authenticated Hermes profile and verified native session. Owner-level installed plugins are not sandboxed by memory grants.'),
-      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'end' } },
-        native.session ? h('span', null, `Session: ${native.session}`) : h('label', null, 'Native session ', h('select', { value: session, onChange: event => setSession(event.target.value), style: inputStyle }, h('option', { value: '' }, 'Choose session'), ...sessions.map(item => h('option', { key: item.id, value: item.id }, item.title)))),
-        !native.session && button('Load native sessions', async () => { const key = native.key; try { const result = await send('/sessions', undefined, native); if (key === liveNative.current) { setSessions(result.items || []); setNotice(''); } } catch { if (key === liveNative.current) setNotice('Native session list unavailable; enable the profile backend and restart Hermes.'); } }),
-        button('Open / bind session', () => model.open(), !session || state.pending),
-        button('Refresh', load, !canAct)),
+    return h('section', { 'aria-label': 'Luminary Inspector', style: { color: 'inherit', padding: compact ? 10 : 20, display: 'grid', gap: 12, overflow: 'auto', height: '100%', boxSizing: 'border-box' } },
+      ...header,
       h('nav', { 'aria-label': 'Inspector tabs', role: 'tablist', style: { display: 'flex', flexWrap: 'wrap', gap: 5 } }, ...TABS.map(([id, label], index) => button(label, () => chooseTab(id), false, {
         key: id, id: `${viewId}-${id}`, role: 'tab', 'aria-selected': tab === id, 'aria-controls': `${viewId}-panel`,
         tabIndex: tab === id ? 0 : -1, onKeyDown: event => tabKeyDown(event, index),
       }))),
-      tab !== 'relations' && h('form', { onSubmit: event => { event.preventDefault(); if (canAct) load(); }, style: { display: 'grid', gridTemplateColumns: compact ? '1fr' : '2fr 1fr 1fr', gap: 8 } },
+      MEMORY_VIEWS.has(tab) && h('form', { onSubmit: event => { event.preventDefault(); if (canAct) load(); }, style: { display: 'grid', gridTemplateColumns: compact ? '1fr' : '2fr 1fr 1fr', gap: 8 } },
         h(Input, { label: 'Search', value: query, onChange: setQuery }), h(Input, { label: 'Tags (comma separated)', value: tags, onChange: setTags }),
         h('label', null, 'Status ', h('select', { value: status, onChange: event => setStatus(event.target.value), style: inputStyle }, ...['active', 'candidate', 'conflicted', 'superseded', 'expired', 'deleted', 'all'].map(item => h('option', { key: item }, item))))),
       h('div', { role: 'status' }, state.pending ? 'Loading…' : state.result ? `${state.result.status}${state.result.error ? ': ' + state.result.error.message : ''}` : 'Open the native session to inspect its explicitly bound scope.'),
@@ -334,7 +366,7 @@ export function createInspectorView(React, useNativeContext, send, subscribeInva
         button('Choose explicit project resource', async () => { const result = await model.request('browse'); if (result) setProjectChoices(result.data?.projects || []); }, !canAct),
         button('Return to native own scope', () => { model.setSelection(undefined); setRow(null); setContent(''); load(); }, !canAct),
         ...projectChoices.map(project => button(String(project.workspace_id || project.project_id), () => { model.setSelection(project.selection_handle); setRow(null); setContent(''); load(); }, !canAct, { key: project.project_id }))),
-      state.preview && h('div', { role: 'dialog', 'aria-label': 'Confirm Luminary change', style: { border: '2px solid var(--ui-border, var(--border))', borderRadius: 6, padding: 12 } },
+      state.preview && h('div', { role: 'dialog', 'aria-label': 'Confirm Luminary change', style: { border: '2px solid var(--ui-stroke-secondary, var(--color-border, currentColor))', borderRadius: 6, padding: 12 } },
         h('h3', null, `Review ${state.preview.kind || 'operation'}`),
         h('h4', null, 'Before'), h(Fields, { value: state.preview.before }),
         h('h4', null, 'After'), h(Fields, { value: state.preview.after }),

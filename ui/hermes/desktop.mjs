@@ -10,13 +10,13 @@ export default {
     function useNativeContext() {
       const session = useValue(host.state.focusedStoredSessionId);
       const profile = useValue(host.state.focusedSessionProfile);
-      const gateway = useValue(host.state.gateway);
       const [epoch, setEpoch] = React.useState(gatewayActivationEpoch());
       React.useEffect(() => {
         const stop = ctx.setInterval(() => setEpoch(gatewayActivationEpoch()), 200);
         return stop;
       }, []);
-      return { session: session || '', epoch, key: `${epoch}:${profile}:${gateway}:${session || ''}` };
+      // Socket liveness is not scope identity; REST also works without a socket.
+      return { session: session || '', epoch, key: `${epoch}:${profile}:${session || ''}` };
     }
     async function send(path, body, native, signal) {
       const epoch = gatewayActivationEpoch();
@@ -53,7 +53,7 @@ export default {
     });
     ctx.registerMany([
       { id: 'pane', area: PANES_AREA, title: 'Luminary', data: { placement: 'right', width: '420px' },
-        render: () => React.createElement(Inspector, { compact: true }) },
+        render: () => React.createElement(Inspector, { compact: true, onOpenFull: () => host.navigate('/luminary-inspector') }) },
       { id: 'page', area: ROUTES_AREA, data: { path: '/luminary-inspector' },
         render: () => React.createElement(Inspector) },
       { id: 'nav', area: SIDEBAR_NAV_AREA, data: { path: '/luminary-inspector', label: 'Luminary Inspector', codicon: 'database' } },

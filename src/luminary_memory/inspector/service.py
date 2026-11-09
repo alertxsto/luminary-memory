@@ -38,6 +38,8 @@ class InspectorService:
 
     def result(self, context, request, status="ok", data=None, code=None, message=None):
         store = self.client.backend.inspector_get("store", {})
+        if isinstance(data, dict):
+            data = {**data, "native_context": context.to_dict()}
         return ConsoleResult(status=status, data=data,
             error={"code": code or status, "message": message or status.replace("_", " ")} if code or message else None,
             request_id=request.request_id, context_epoch=context.context_epoch,

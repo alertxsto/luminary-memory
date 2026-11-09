@@ -228,6 +228,8 @@ def install_hermes_ui(
 
     def collect(root, prefix=""):
         for entry in root.iterdir():
+            if entry.name == "__pycache__":
+                continue
             name = prefix + entry.name
             if entry.is_dir():
                 collect(entry, name + "/")

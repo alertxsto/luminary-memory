@@ -10,7 +10,7 @@ continues to use its public `MemoryProvider` lifecycle.
 | Hermes | Public `MemoryProvider`, existing installer | Provider tools/status in supported Hermes clients; read-only scoped Telegram activity hook |
 | OpenCode V2 | `@opencode/cli` and `@opencode/plugin` 2.1.4, `Plugin.define` server API | Native tools/progress/results in connected clients; automatic recall and curated retention |
 | pi | Extension API verified against `@earendil-works/pi-coding-agent` 1.4.0 | `/luminary`, model tool, TUI dialogs/status, serializable session messages for RPC consumers |
-| omp | Extension API verified against v18.12.6 | `/luminary`, model tool, TUI dialogs/status, serializable session messages for RPC consumers |
+| omp | Extension API verified against v18.12.6; installed **18.18.5** acceptance re-verified | `/luminary`, model tool, TUI dialogs/status, serializable session messages for RPC consumers |
 
 OpenCode V2 uses the plural `plugins` config, a default `Plugin.define` export,
 and Promise domain APIs. The older Luminary npm `0.3.1` adapter targets V1;
@@ -138,10 +138,12 @@ for maintainer review with its V1 adapter pinned; it is not a V2 catalog or
 proof of a live website listing.
 
 
-## Unreleased interactive inspectors
+## Interactive inspectors
 
-The following is development-source functionality, **not** an npm/PyPI
-`0.3.2` release or a claim of completed native-host acceptance.
+The inspector ships in the `0.3.3` Python wheel and the three native npm
+packages. Installing it does not enable saving, start a server on import, or
+call an AI model. Exact tested native hosts and the two remaining blocked
+surfaces are recorded in the [roadmap matrix](ROADMAP.md#target-support-matrix).
 
 Build the complete resources before installing this checkout or building its
 wheel:
@@ -163,9 +165,44 @@ loader, just as for the released copy installer.
 
 OpenCode development sources target SDK `2.2.0`: server, typed RPC, TUI and the
 separate `./gui-experimental` Desktop entry. The GUI uses the official preset,
-not the terminal JSX transform. Desktop native runtime acceptance is still
-pending; no arbitrary third-party Web loader or fullscreen-route support is
-implied.
+not the terminal JSX transform. Actual CLI/Desktop 2.2.0 development acceptance
+includes distinct remote stores, confirmed changes, native file dialogs,
+read-only shared resources, revocation and reload. The full view is a native
+dialog, not a fullscreen route. Actual Web 2.2.0 loads the server plugin but not
+its GUI contributions; a released Web loader remains a separate dependency.
+
+The native Sharing view lists only the current actor's incoming/outgoing
+project grants, with bounded pagination. Receiving `read` does not grant
+`contribute`, `edit` or `retract`, and an incoming grant still requires explicit
+project selection before shared facts appear. Browsing this view never changes
+memory ownership, access counters or saving configuration.
+
+Headers display the verified server's native agent, profile, store identifier
+and host. These are display fields, not browser-controlled identity selectors;
+the native bearer stays server-side.
+
+After updating a compiled pi package, restart pi. In the inspected bundled
+pi1.4.0 runtime, `/reload` reset resources but retained the previous JavaScript
+module; a full restart loaded the updated package. Long pi/omp TUI proposals use
+a scrollable native review followed by a separate Cancel-first decision.
+Review-editor changes are discarded; only the cached server proposal can commit.
+
+For nonvisual pi inspector output, use its JSON print format:
+
+```bash
+pi --offline --mode json --print "/luminary full"
+```
+
+The inspected pi1.4.0 plain-text print mode does not display custom inspector
+messages; JSON print returns the actual scoped state. RPC forwards supported
+owner dialogs without constructing terminal components.
+
+omp18.12.6 also returns scoped structured state with `--mode json --print` and
+`--mode rpc --no-ui`. Headless RPC emits no dialog requests; UI-enabled RPC uses
+supported dialogs, never a terminal overlay. This was re-verified on installed
+omp **18.18.5** with a copy-installed extension. Host startup can require a
+selected model even for these owner commands; inspecting memory does not invoke
+it.
 
 Install the matching unified Hermes UI/backend resources without changing the
 selected provider or retention configuration:
@@ -175,8 +212,9 @@ luminary-memory hook install-hermes-ui --home /absolute/hermes-profile
 ```
 
 Backend and local Desktop/dashboard enablement remain separate; see
-[Hermes integration](hermes-integration.md). Rich classic Hermes CLI panels
-remain gated on a supported host renderer API.
+[Hermes integration](hermes-integration.md). Hermes 0.22.5 terminal widget
+discovery/rendering exists, but its SDK still needs authenticated native
+session/profile/connection context and lifecycle before inspector completion.
 
 The optional companion starts **only** through an explicit command:
 

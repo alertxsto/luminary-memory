@@ -27,6 +27,6 @@ class CustomBuildHook(BuildHookInterface):
         missing = [name for name in required if not (Path(self.root) / name).is_file()]
         if missing:
             raise RuntimeError("Incomplete native/UI resources; run npm ci && npm run build first. Missing: " + ", ".join(missing))
-        # Artifacts override VCS ignores (notably Hermes dashboard/dist) without
-        # adding a second archive entry for resources already selected normally.
-        build_data["artifacts"].extend([f"/{compiled}/**", f"/{browser}/**"])
+        # Include required runtime files despite VCS ignores, not generated
+        # Python caches or other incidental files beneath these directories.
+        build_data["artifacts"].extend(f"/{name}" for name in required)

@@ -149,6 +149,34 @@ def test_install_preserves_config_and_refuses_unapproved_replacement(tmp_path):
     assert plugin.read_text() == "user modified plugin"
 
 
+def test_hermes_ui_install_excludes_source_bytecode_and_preserves_profile_cache(tmp_path, monkeypatch):
+    from luminary_memory.integrations import cli
+
+    resources = tmp_path / "resources"
+    source = resources / "assets" / "compiled" / "hermes"
+    (source / "__pycache__").mkdir(parents=True)
+    (source / "plugin.yaml").write_text("name: luminary-inspector\n", encoding="utf-8")
+    (source / "__pycache__" / "plugin.cpython-311.pyc").write_bytes(b"\xa7\r\r\n\x00")
+    monkeypatch.setattr(cli.importlib.resources, "files", lambda package: resources)
+    home = tmp_path / "profile"
+    home.mkdir()
+    config = home / "config.yaml"
+    config.write_text("memory:\n  provider: none\n", encoding="utf-8")
+    before = config.read_bytes()
+    target = home / "plugins" / "luminary-inspector"
+    cache = target / "__pycache__" / "existing.cpython-311.pyc"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"\xffexisting-runtime-cache")
+
+    cli.install_hermes_ui(home, force=False)
+
+    assert config.read_bytes() == before
+    assert cache.read_bytes() == b"\xffexisting-runtime-cache"
+    ownership = json.loads((target / ".luminary-install.json").read_text(encoding="utf-8"))
+    assert set(ownership["files"]) == {"plugin.yaml"}
+    assert not (target / "__pycache__" / "plugin.cpython-311.pyc").exists()
+
+
 def test_bridge_accepts_other_supported_harness_identity(native, monkeypatch):
     client, request = native
     other = MemoryClient(settings=client.settings, engine=Engine(), scope={

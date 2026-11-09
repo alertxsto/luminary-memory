@@ -91,6 +91,19 @@ def browse(service, context, request):
     authorization = service.authorizer(context, request)
     args = thaw(request.arguments)
     limit, binding, after = _page(service, context, request, authorization)
+    if args.get("view") == "sharing":
+        if after is not None and not isinstance(after, str):
+            raise ValueError("invalid grant cursor")
+        grants = service.client.backend.inspector_grants(
+            authorization.project_id, context.user_id, context.agent_id, after=after, limit=limit + 1,
+        )
+        page = grants[:limit]
+        return {
+            "project": {"project_id": authorization.project_id, "workspace_id": authorization.workspace_id},
+            "grants": [{key: grant[key] for key in ("grantor_agent_id", "recipient_agent_id", "capabilities")}
+                       for _, grant in page],
+            "next_cursor": _cursor(context, binding, page[-1][0]) if len(grants) > limit else None,
+        }
     statuses = args.get("statuses", ["active", "candidate", "conflicted"])
     if not isinstance(statuses, list) or not statuses or any(status not in VALID_STATUSES for status in statuses):
         raise ValueError("invalid statuses")

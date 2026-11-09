@@ -6,8 +6,8 @@
 [![Python](https://img.shields.io/pypi/pyversions/luminary-memory?color=8ab4e8)](https://pypi.org/project/luminary-memory)
 [![License](https://img.shields.io/github/license/alertxsto/luminary-memory?color=8ab4e8)](LICENSE)
 [![CI](https://github.com/alertxsto/luminary-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/alertxsto/luminary-memory/actions)
-[![Tests](https://img.shields.io/badge/tests-541%2B%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
-[![Coverage](https://img.shields.io/badge/coverage-83%25-8ab4e8)](https://github.com/alertxsto/luminary-memory)
+[![Tests](https://img.shields.io/badge/tests-703%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
+[![Coverage](https://img.shields.io/badge/coverage-79%25-8ab4e8)](https://github.com/alertxsto/luminary-memory)
 [![Stars](https://img.shields.io/github/stars/alertxsto/luminary-memory?color=8ab4e8)](https://github.com/alertxsto/luminary-memory)
 
 **Self-hosted · Private · Budget-aware · Self-maintaining**
@@ -83,10 +83,13 @@ API or standalone desktop app is assumed. A portable OpenCode agent skill lives
 at [`opencode/SKILL.md`](opencode/SKILL.md); install it under
 `~/.config/opencode/skills/luminary-memory/` or a project's `.opencode/skills/`.
 
-Interactive inspectors are being implemented separately from the published
-`0.3.2` hooks. See [development setup and explicit companion launch](docs/agent-integrations.md#unreleased-interactive-inspectors)
-and the [native support/acceptance roadmap](docs/ROADMAP.md). Browser verification
-does not imply that Desktop, Web or terminal host acceptance is complete.
+Native interactive inspectors now ship in `0.3.3` for the verified surfaces:
+OpenCode CLI/Desktop, pi and omp, plus Hermes Desktop/dashboard and an explicitly
+launched loopback companion. Two native targets remain blocked on upstream
+contracts and are recorded in the roadmap: OpenCode Web GUI contribution
+discovery and Hermes terminal/TUI authority plus scope lifecycle. See
+[development setup and explicit companion launch](docs/agent-integrations.md#interactive-inspectors)
+and the [native support/acceptance roadmap](docs/ROADMAP.md).
 
 ### Luminary-maintained plugin packages
 

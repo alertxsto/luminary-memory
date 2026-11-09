@@ -26,28 +26,52 @@ old, new = sys.argv[1], sys.argv[2]
 if not re.fullmatch(r"\d+\.\d+\.\d+", new):
     raise SystemExit("version must have the form X.Y.Z")
 
-# Parse JSON structurally: dependency versions and other package metadata must
-# not be touched by the display-version replacements below.
-plugin_updates = []
-agents = ("pi", "opencode", "omp")
-for agent in agents:
-    path = Path("plugins") / agent / "package.json"
-    manifest = json.loads(path.read_text(encoding="utf-8"))
-    if manifest.get("name") != f"luminary-memory-{agent}":
-        raise SystemExit(f"{path}: unexpected plugin package name")
-    manifest["version"] = new
-    plugin_updates.append((path, manifest))
+# Documentation carries non-ASCII text, so never rely on the locale codec
+# (cp1252 on Windows) for these rewrites.
+def read_doc(path):
+    with open(path, encoding="utf-8", newline="") as handle:
+        return handle.read()
+
+
+def write_doc(path, text):
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
+
+# Parse JSON structurally to validate identity, but rewrite only the version
+# token so hand-formatted manifests and the lockfile keep their layout.
+def sync_json_version(path, key, expected_name):
+    raw = read_doc(path)
+    document = json.loads(raw)
+    manifest = document if key is None else document["packages"][key]
+    if manifest.get("name") != expected_name:
+        raise SystemExit(f"{path}: unexpected package name for {key or 'root'}")
+    if key is None:
+        start, end = 0, len(raw)
+    else:
+        marker = f'"{key}": {{'
+        start = raw.index(marker)
+        closer = re.compile(r"\r?\n    \},?")
+        match = closer.search(raw, start)
+        if match is None:
+            raise SystemExit(f"{path}: unterminated workspace block {key}")
+        end = match.start()
+    block = raw[start:end]
+    updated, count = re.subn(
+        r'("version"\s*:\s*")[^"]+(")', rf"\g<1>{new}\g<2>", block, count=1
+    )
+    if count != 1:
+        raise SystemExit(f"{path}: no version field inside {key or 'root'}")
+    write_doc(path, raw[:start] + updated + raw[end:])
+    print(f"  {path}: plugin version synchronized")
+
+
+for agent in ("pi", "opencode", "omp"):
+    sync_json_version(Path("plugins") / agent / "package.json", None, f"luminary-memory-{agent}")
 
 # npm ci checks workspace versions against this lockfile. The private root
 # package deliberately has no version and must remain unversioned.
-lock_path = Path("package-lock.json")
-lock = json.loads(lock_path.read_text(encoding="utf-8"))
-for agent in agents:
-    key = f"plugins/{agent}"
-    if key not in lock.get("packages", {}):
-        raise SystemExit(f"{lock_path}: missing workspace {key}")
-    lock["packages"][key]["version"] = new
-plugin_updates.append((lock_path, lock))
+for agent in ("pi", "opencode", "omp"):
+    sync_json_version(Path("package-lock.json"), f"plugins/{agent}", f"luminary-memory-{agent}")
 
 # (path, regex, replacement) — regex matches ANY 0.2.X so a file missed by a
 # previous bump still gets caught up.
@@ -62,12 +86,12 @@ edits = [
 ]
 for path, pat, repl in edits:
     try:
-        s = open(path).read()
+        s = read_doc(path)
     except FileNotFoundError:
         continue
     n = len(re.findall(pat, s, re.M))
     if n:
-        open(path, "w").write(re.sub(pat, repl, s, flags=re.M))
+        write_doc(path, re.sub(pat, repl, s, flags=re.M))
         print(f"  {path}: {n} replacement(s)")
 
 # remaining version displays (v-prefixed) and pip floors
@@ -77,28 +101,25 @@ for path, pat, repl in [
     ("website/index.html", r'<span>v\d+\.\d+\.\d+</span>', f"<span>v{new}</span>"),
 ]:
     try:
-        s = open(path).read()
+        s = read_doc(path)
     except FileNotFoundError:
         continue
     n = len(re.findall(pat, s))
     if n:
-        open(path, "w").write(re.sub(pat, repl, s))
+        write_doc(path, re.sub(pat, repl, s))
         print(f"  {path}: {n} version-display replacement(s)")
 
 # pip requirement floors — any >=0.2.X
 for path in ("hermes/install.sh", "hermes/SKILL.md", "hermes/README.md", "src/luminary_memory/hermes/plugin.yaml"):
     try:
-        s = open(path).read()
+        s = read_doc(path)
     except FileNotFoundError:
         continue
-    n = len(re.findall(r'luminary-memory(\[hermes\])?>=\d+\.\d+\.\d+', s))
+    n = len(re.findall(r"luminary-memory(\[hermes\])?>=\d+\.\d+\.\d+", s))
     if n:
-        open(path, "w").write(re.sub(r'luminary-memory(\[hermes\])?>=\d+\.\d+\.\d+', lambda m: f"luminary-memory{m.group(1) or ''}>={new}", s))
+        write_doc(path, re.sub(r"luminary-memory(\[hermes\])?>=\d+\.\d+\.\d+", lambda m: f"luminary-memory{m.group(1) or ''}>={new}", s))
         print(f"  {path}: {n} pip-floor replacement(s)")
 
-for path, document in plugin_updates:
-    path.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"  {path}: plugin versions synchronized")
 PY
 
 # CHANGELOG — prepend new entry if not present

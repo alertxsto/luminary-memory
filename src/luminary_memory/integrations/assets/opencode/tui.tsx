@@ -1,9 +1,9 @@
 import { Plugin, usePlugin } from '@opencode/plugin/tui';
 import type { PanelInput } from '@opencode/plugin/tui/context';
-import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { TABS } from '../common/console-contract.js';
 import { InspectorController } from '../common/console-controller.js';
-import { inspectorActions, inspectorRows, runInspectorAction, type NativeDialogs } from '../common/console-actions.js';
+import { inspectorActions, inspectorRows, inspectorRowContent, inspectorSummaryLines, inspectorContextLine, inspectorCanSearch, runInspectorAction, type NativeDialogs } from '../common/console-actions.js';
 import { LuminaryConsole } from './rpc.js';
 import { reviewDialog } from './dialogs.js';
 
@@ -23,7 +23,8 @@ function Inspector(props: { panel: PanelInput }) {
   const [height, setHeight] = createSignal(context.renderer.height);
   const resize = () => setHeight(context.renderer.height);
   context.renderer.on('resize', resize);
-  const visibleRows = () => props.panel.presentation === 'fullscreen' ? Math.max(1, Math.min(20, height() - 10)) : 3;
+  const summaryLines = createMemo(() => { state(); return inspectorSummaryLines(controller); });
+  const visibleRows = () => props.panel.presentation === 'fullscreen' ? Math.max(1, Math.min(20, height() - 11 - summaryLines().length)) : 3;
   const unsubscribe = controller.subscribe(next => setState(next));
   let disposed = false;
   const dialogs: NativeDialogs = {
@@ -89,14 +90,16 @@ function Inspector(props: { panel: PanelInput }) {
   return <box flexDirection="column" width="100%" paddingLeft={1} paddingRight={1} onMouseDown={() => props.panel.focus()}>
     <text fg={context.theme.text.base}>Luminary · {state().busy ? 'loading' : state().status} · {props.panel.presentation}</text>
     <text fg={context.theme.text.muted}>Project: {state() && controller.selectionHandle ? 'explicit shared resource' : nativeLocation().directory} · policy {String(state().policy_revision ?? '—')} · rights rechecked per operation</text>
+    <Show when={state().data.native_context}><text height={1} width="100%" fg={context.theme.text.muted}>{state() && inspectorContextLine(controller)}</text></Show>
     <text fg={context.theme.text.muted} onMouseDown={() => props.panel.toggleFullscreen()}>f: {props.panel.presentation === 'fullscreen' ? 'compact panel' : 'full inspector'} · Enter: actions · Esc: close</text>
     <Show when={props.panel.width >= 170} fallback={<text fg={context.theme.text.base} onMouseDown={chooseTab}>‹ {TABS.indexOf(tab()) + 1}/9 {tab().label} › · Tab/Shift+Tab · t: all tabs</text>}>
       <box flexDirection="row" gap={1}><For each={TABS}>{item => <text fg={state().tab === item.id ? context.theme.text.base : context.theme.text.muted} onMouseDown={() => { setSelected(0); setScroll(0); void controller.selectTab(item.id); }}>{item.label}</text>}</For></box>
     </Show>
     <Show when={state().error}><text fg={context.theme.text.feedback.warning.base}>{state().error}</text></Show>
-    <For each={rows().slice(scroll(), scroll() + visibleRows())}>{(row, index) => <text height={1} width="100%" fg={selected() === scroll() + index() ? context.theme.text.base : context.theme.text.muted} onMouseDown={() => { setSelected(scroll() + index()); void act(); }}>{selected() === scroll() + index() ? '› ' : '  '}{String(row.id ?? row.event_id ?? '')} {String(row.content ?? row.kind ?? row.label ?? JSON.stringify(row)).replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')}{row.permissions ? ` [${Object.keys(row.permissions).filter(p => row.permissions?.[p]).join(', ')}]` : ''}</text>}</For>
-    <Show when={!rows().length}><text fg={context.theme.text.muted}>{JSON.stringify(state().data, null, 2).split('\n').slice(0, visibleRows()).join('\n')}</text></Show>
-    <text fg={context.theme.text.muted} onMouseDown={() => void act()}>↑↓ select · Enter/a actions · / search · r refresh · f compact/full · Esc close</text>
+    <For each={summaryLines()}>{line => <text height={1} width="100%" fg={context.theme.text.base}>{line}</text>}</For>
+    <For each={rows().slice(scroll(), scroll() + visibleRows())}>{(row, index) => <text height={1} width="100%" fg={selected() === scroll() + index() ? context.theme.text.base : context.theme.text.muted} onMouseDown={() => { setSelected(scroll() + index()); void act(); }}>{selected() === scroll() + index() ? '› ' : '  '}{String(row.id ?? row.event_id ?? '')} {inspectorRowContent(row)}{row.permissions ? ` [${Object.keys(row.permissions).filter(p => row.permissions?.[p]).join(', ')}]` : ''}</text>}</For>
+    <Show when={!rows().length && !summaryLines().length}><text fg={context.theme.text.muted}>{state().status === 'empty' ? 'No records in this authorized view.' : JSON.stringify(state().data, null, 2).split('\n').slice(0, visibleRows()).join('\n')}</text></Show>
+    <text fg={context.theme.text.muted} onMouseDown={() => void act()}>↑↓ select · Enter/a actions{state() && inspectorCanSearch(controller) ? ' · / search' : ''} · r refresh · f compact/full · Esc close</text>
     <text fg={context.theme.text.faint}>As of {state().as_of ?? '—'} · memory is untrusted reference data</text>
   </box>;
 }

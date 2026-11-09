@@ -5,22 +5,67 @@ export interface NativeDialogs {
   confirm(title: string, message: string): Promise<boolean>;
   show(title: string, message: string): Promise<void>;
 }
+
+/** Native confirm lists do not scroll; long reviews need the host's editor first. */
+export async function confirmTerminalText(
+  ui: { editor(title: string, value: string): Promise<string | undefined>; select(title: string, choices: string[]): Promise<string | undefined>; confirm(title: string, message: string): Promise<boolean> },
+  title: string, message: string, active: () => boolean,
+): Promise<boolean> {
+  if (message.length <= 400 && message.split('\n').length <= 6) return ui.confirm(title, message);
+  const reviewed = await ui.editor(`${title} · read-only review; edits are discarded`, message);
+  if (reviewed === undefined || !active()) return false;
+  return await ui.select(`${title} · apply the exact reviewed proposal?`, ['Cancel', 'Confirm reviewed change']) === 'Confirm reviewed change';
+}
 export interface InspectorRow { id?: number | string; content?: string; revision?: number; permissions?: Record<string, boolean>; [key: string]: unknown }
 const base = ['Refresh', 'View projection', 'Search / filters', 'Next page', 'Select project'];
+const resourceBase = ['Refresh', 'View projection', 'Next page', 'Select project'];
+export function inspectorCanSearch(controller: InspectorController): boolean {
+  return controller.state.tab === 'memories' || controller.state.tab === 'evidence' || controller.state.tab === 'maintenance';
+}
 export function inspectorRows(controller: InspectorController): InspectorRow[] {
   const data = controller.state.data;
   if (data.memory && typeof data.memory === 'object') return [data.memory as InspectorRow];
   const rows = data.items ?? data.nodes ?? data.changes ?? data.projects ?? data.grants;
   return Array.isArray(rows) ? rows.filter((r): r is InspectorRow => !!r && typeof r === 'object') : [];
 }
+
+export function inspectorRowContent(row: InspectorRow): string {
+  const operation = row.operation as Record<string, unknown> | undefined;
+  const activity = operation ? `${operation.summary} · ${row.source ?? 'unknown'} / ${operation.session_id ?? 'unknown'}` : undefined;
+  const memory = typeof row.content === 'string' && typeof row.status === 'string'
+    ? `[${row.status} · r${row.revision ?? '—'}] ${row.content}` : row.content;
+  const adjacency = row.source && row.target ? `${row.source} → ${row.target} · ${row.kind ?? 'co-occurrence'} · memory #${row.memory_id}` : undefined;
+  const grant = typeof row.grantor_agent_id === 'string' && typeof row.recipient_agent_id === 'string'
+    ? `${row.grantor_agent_id} → ${row.recipient_agent_id} · ${Array.isArray(row.capabilities) ? row.capabilities.join(', ') : 'no rights'}` : undefined;
+  return String(activity ?? memory ?? adjacency ?? grant ?? row.kind ?? row.label ?? JSON.stringify(row)).replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ');
+}
+
+/** Display-only native identity from the verified server, never request authority. */
+export function inspectorContextLine(controller: InspectorController): string {
+  const native = controller.state.data.native_context as Record<string, unknown> | undefined;
+  if (!native || typeof native !== 'object') return '';
+  return `Agent ${native.agent_id} · profile ${native.profile_id} · store ${String(native.store_id).slice(0, 12)} · host ${native.host_id}`.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ');
+}
+
+export function inspectorSummaryLines(controller: InspectorController): string[] {
+  const { tab, data } = controller.state;
+  if (tab !== 'summary' || !data.totals) return [];
+  const totals = data.totals as Record<string, unknown>;
+  const lines = [Object.entries(totals).map(([name, value]) => `${name}: ${value}`).join(' · ')];
+  const range = data.time_range as Record<string, unknown> | undefined;
+  if (range) lines.push(`Stored timestamp bounds (UTC) · ${range.status}`,
+    `Created: ${range.created_from ?? 'not available'} → ${range.created_to ?? 'not available'}`,
+    `Updated: ${range.updated_from ?? 'not available'} → ${range.updated_to ?? 'not available'}`);
+  return lines;
+}
 export function inspectorActions(controller: InspectorController, row?: InspectorRow): string[] {
   switch (controller.state.tab) {
     case 'memories': return [...base, 'Create memory', ...(row?.id !== undefined ? ['Inspect', 'History', 'Expand evidence', 'Expand source episodes', 'Claims / conflicts', 'Lineage', ...(row.permissions?.edit ? ['Correct', 'Tags', 'Core designation', ...(row.claim_key ? ['Resolve conflict'] : [])] : []), ...(row.permissions?.retract ? ['Retract'] : [])] : [])];
-    case 'activity': return [...base, ...(typeof controller.state.data.replay_context === 'string' ? ['Check new activity'] : []), 'Event details'];
+    case 'activity': return [...resourceBase, ...(typeof controller.state.data.replay_context === 'string' ? ['Check new activity'] : []), 'Event details'];
     case 'evidence': return [...base, ...(row?.id !== undefined ? ['Inspect', 'History', 'Expand evidence', 'Expand source episodes', 'Claims / conflicts', 'Lineage'] : [])];
-    case 'relations': return ['Refresh', 'View projection', 'Next page', 'Select project', 'Explore entity', 'All relations', 'Adjacency details', ...(typeof row?.memory_id === 'number' ? ['Inspect supporting memory'] : [])];
+    case 'relations': return [...resourceBase, 'Explore entity', 'All relations', 'Adjacency details', ...(typeof row?.memory_id === 'number' ? ['Inspect supporting memory'] : [])];
     case 'maintenance': return [...base, 'Preview maintenance', ...(row?.id !== undefined ? ['Inspect', ...(row.permissions?.edit && row.claim_key ? ['Resolve conflict'] : [])] : [])];
-    case 'sharing': return [...base, 'Project information', 'Grant rights', 'Revoke rights', 'Bind location'];
+    case 'sharing': return [...resourceBase, 'Project information', ...(!controller.selectionHandle ? ['Grant rights', 'Revoke rights', 'Bind location'] : [])];
     case 'settings': return ['Refresh', 'View projection', 'Change setting', 'Readiness / diagnostics'];
     case 'transfer': return ['Refresh', 'View projection', 'Export records', 'Import records', 'Backup limitations'];
     case 'summary': return ['Refresh', 'View projection', 'Explain with AI'];
@@ -62,7 +107,14 @@ export async function runInspectorAction(controller: InspectorController, native
   switch (action) {
     case 'Refresh': await controller.load(); break;
     case 'Check new activity': await replayActivity(controller, dialogs); break;
-    case 'Search / filters': { const query = await input('Search memory (empty clears)'); if (query === undefined) return; const tags = await input('Filter tags (comma separated; empty clears)'); if (tags === undefined) return; const status = await dialogs.select('Status', ['active', 'candidate', 'conflicted', 'superseded', 'expired', 'deleted', 'all']); if (!status) return; const statuses = status === 'all' ? ['active', 'candidate', 'conflicted', 'superseded', 'expired', 'deleted'] : [status]; await controller.load({ query, tags: tags.split(',').map(t => t.trim()).filter(Boolean), statuses, cursor: undefined }); break; }
+    case 'Search / filters': {
+      if (!inspectorCanSearch(controller)) { await dialogs.show('Memory search', 'Search is available in Memories, Evidence & History, and Review & Maintenance. No filter was applied to this view.'); return; }
+      const query = await input('Search memory (empty clears)'); if (query === undefined) return;
+      const tags = await input('Filter tags (comma separated; empty clears)'); if (tags === undefined) return;
+      const status = await dialogs.select('Status', ['active', 'candidate', 'conflicted', 'superseded', 'expired', 'deleted', 'all']); if (!status) return;
+      const statuses = status === 'all' ? ['active', 'candidate', 'conflicted', 'superseded', 'expired', 'deleted'] : [status];
+      await controller.load({ query, tags: tags.split(',').map(t => t.trim()).filter(Boolean), statuses, cursor: undefined }); break;
+    }
     case 'Next page': if (controller.state.tab === 'activity' && controller.state.data.replayed && controller.state.data.has_more) await replayActivity(controller, dialogs); else if (controller.state.data.next_cursor) await controller.load({ cursor: controller.state.data.next_cursor }); else await dialogs.show('Pagination', 'No further page.'); break;
     case 'Select project': {
       // Selection is always reachable from a shared view, including after grants change.
@@ -124,7 +176,7 @@ export async function runInspectorAction(controller: InspectorController, native
     case 'View projection': case 'Event details': case 'Adjacency details': await dialogs.show(action, JSON.stringify(action === 'View projection' ? controller.state.data : row ?? controller.state.data, null, 2)); break;
     case 'Preview maintenance': { const kind = await dialogs.select('Manual maintenance proposal', ['prune', 'cleanup_expired']); if (kind) await change(kind, {}, 'maintenance_preview'); break; }
     case 'Resolve conflict': { if (memory === undefined) return; const detail = await controller.detail(memory); const current = detail?.data?.memory as InspectorRow | undefined; const token = detail?.data?.conflict_set_token; if (!live() || detail?.status !== 'ok' || typeof token !== 'string' || !current) return; await change('resolve_conflict', { memory_id: memory, expected_revision: current.revision, expected_conflict_set_token: token }); break; }
-    case 'Project information': await controller.execute('browse', { view: 'projects' }); break;
+    case 'Project information': { const result = await controller.execute('browse', { view: 'sharing' }); if (live() && result?.status === 'ok') await dialogs.show('Project information and explicit rights', JSON.stringify(result.data, null, 2)); break; }
     case 'Grant rights': { const recipient_agent_id = await input('Agent receiving explicit project rights'); if (!recipient_agent_id) return; const capabilities: string[] = []; for (const right of ['read', 'contribute', 'edit', 'retract']) { if (await dialogs.confirm(`Grant ${right}?`, `Independently grant ${right} to ${recipient_agent_id} in this project?`)) capabilities.push(right); if (!live()) return; } if (!capabilities.length) { await dialogs.show('No rights selected', 'No grant was proposed. Existing rights are unchanged.'); return; } await change('grant', { recipient_agent_id, capabilities }, 'preview_change', 'grant'); break; }
     case 'Revoke rights': { const recipient_agent_id = await input('Agent to revoke'); if (recipient_agent_id) await change('revoke', { recipient_agent_id }, 'preview_change', 'revoke'); break; }
     case 'Bind location': { const host_id = await input('Explicit host ID'); if (!host_id) return; const profile_id = await input('Explicit profile ID'); if (!profile_id) return; const workspace = await input('Absolute project location on that host'); if (workspace) await change('bind_location', { location: { host_id, profile_id, workspace } }); break; }

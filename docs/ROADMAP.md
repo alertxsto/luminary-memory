@@ -6,9 +6,9 @@ Make Luminary a visible, interactive memory-management system inside supported a
 
 The complete product includes compact and full native inspectors, substantial controls organized into tabs, explicit project sharing, and a final Summary tab. One existing memory engine serves every UI. A browser companion and AI explanation are opt-in options, not hidden requirements or substitutes for native functionality.
 
-**Status: implementation in progress; not released.** The inspector service, scoped sharing/confirmed changes, shared controllers, native renderer sources and explicit browser companion are being integrated. SQLite inspector/transport/installer checks and browser workflows have run; native host acceptance and the remaining gates below are still open. Published `0.3.2` packages do not contain this inspector.
+**Status: shipped incrementally in `0.3.3` for the verified native surfaces; the whole-product goal is not complete.** OpenCode Web GUI discovery and Hermes terminal authority/lifecycle contracts remain blocked. `0.3.3` packages include the inspector for OpenCode CLI/Desktop, pi, omp, Hermes Desktop/dashboard and the explicit companion; they do not include those two blocked targets.
 
-**Development checkpoint:** shared backend/controller and installed-wheel packaging gates pass. Actual OpenCode CLI 2.2.0 now renders the native inspector and has completed an owner-confirmed tag edit against real SQLite; native omp has also exercised real create/correction flows. These focused observations do not complete the native matrix: remote-server isolation, remaining host/mode/action coverage and whole-product acceptance are still open. Do not treat this checkpoint as a release.
+**Development checkpoint:** actual installed OpenCode CLI/Desktop, pi, omp, Hermes Desktop/dashboard and optional companion workflows have been exercised. Native switching, independent sharing rights, confirmed changes, transfer and offline Summary have evidence per exact host version. Passing local gates does not complete the two blocked native targets.
 
 ## Product decisions
 
@@ -60,15 +60,15 @@ Documented capability is not proof that Luminary's new implementation works on a
 
 | Target | Native end state | Contract and completion gate |
 | --- | --- | --- |
-| **OpenCode CLI** | Compact session panel, full panel/page, shortcuts and all tabs/actions. | Documented TUI and typed server RPC. Verify actual package exports, host version, remote context and rendering. |
-| **OpenCode Desktop** | In-application compact/full inspector. | Released `@opencode/plugin` **2.2.0** now exposes the [experimental GUI SDK](https://opencode.ai/v2/docs/build/plugins/gui/). The separate CommonJS GUI entry builds with its official Vite preset and passes SDK type-checking. Actual Desktop installation, session switching and mutation/teardown acceptance remain open; this is not a fullscreen-route claim. |
-| **OpenCode Web** | Host-native inspector using authorized connected-server data. | The Desktop GUI bundle does not establish a Web loader. Supported third-party Web discovery and real Web acceptance remain separate open gates; the optional companion does not satisfy them. |
-| **Hermes Desktop** | Dockable pane, full page, sidebar/settings and native controls. | Documented Desktop SDK; typed provider schema, explicit discovery, profile routing and real installation must pass. |
-| **Hermes web dashboard** | Host-native tab plus compact slots. | Separate dashboard SDK and manifest/backend mount, not the Desktop SDK or standalone companion. |
-| **Hermes CLI/TUI** | In-host compact/full terminal inspector. | Commands/prompts exist; a general rich rendering contribution seam is not verified. Needs native API/enabler before completion. |
-| **pi** | Compact widget/in-chat rendering and full custom TUI. | Documented custom UI. RPC forwards supported interactions, not custom TUI components. Verify exact host/mode behavior. |
-| **omp** | Compact widget and custom overlay/full inspector. | Versioned UI declarations support these primitives. Verify lifecycle, parent/child isolation and input separately from pi. |
-| **Browser companion** | Complete inspector when explicitly launched. | Optional authenticated local transport/frontend. It is not Hermes dashboard or a substitute for native targets. |
+| **OpenCode CLI** | Compact session panel, full panel/page, shortcuts and all tabs/actions. | Development acceptance passed on **2.2.0** with installed resources, actual keyboard/pointer/resize, confirmed changes, sharing/transfer/settings, independent server-only execution, foreign-session denial and reload/removal. Registry publication and whole-product release gates remain separate. |
+| **OpenCode Desktop** | In-application compact/full inspector. | Development acceptance passed on released **2.2.0**, using its [experimental GUI SDK](https://opencode.ai/docs/build/plugins/gui/): installed discovery, nine views, native confirmed edits, settings, independent grants/revocation, native file dialogs, duplicate import receipts, distinct remote-store authority, pending server-switch cancellation, keyboard navigation and GUI disable/reload without duplicate adapters. Full view is a native dialog, not a fullscreen route. Registry publication remains separate. |
+| **OpenCode Web** | Host-native inspector using authorized connected-server data. | Actual authenticated **2.2.0** Web host lists the server plugin, but does not load its GUI command, panel or settings contribution. Needs a documented released third-party Web GUI loader; the SDK's `platform: "web"` type alone is not discovery. The optional companion does not satisfy this blocked native target. |
+| **Hermes Desktop** | Dockable pane, full page, sidebar/settings and native controls. | Development acceptance passed on an official **0.22.5 source build**: compact/full views, nine projections, confirmed changes, persistent settings, native upload/download, authenticated remote REST, pending-request profile disposal, disabled-backend errors, return-profile rebind and independent Desktop-half reload. REST works without a healthy socket. Whole-product release gates remain open; the older bundled 0.22.0 SDK cannot load this adapter. |
+| **Hermes web dashboard** | Host-native tab plus compact slots. | Actual **0.22.5** dashboard full views, read-only compact overview through the rendered `pre-main` slot, confirmed changes/sharing/transfer/settings, and pending-request profile disposal verified. Uses its own dashboard SDK and authenticated backend mount, not the Desktop SDK or standalone companion. Whole-product release gates remain open. |
+| **Hermes CLI/TUI** | In-host compact/full terminal inspector. | Actual **0.22.5** command discovery works. Classic CLI documents protected wrapper hooks; Ink also discovers `$HERMES_HOME/tui-widgets/*.mjs` with ambient/modal rendering. Its widget SDK does not expose authenticated native session/profile/connection context or scope-change lifecycle. Needs that authority contract and normal-host integration before an inspector can safely claim native completion; commands or an unrelated wrapper/companion do not close the gate. |
+| **pi** | Compact widget/in-chat rendering and full custom TUI. | Development acceptance passed on **1.4.0**: installed discovery, regular-mode keyboard/light theme, fullscreen pointer, all views, confirmed correction/retraction, grants/revocation, session-switch cancellation against a real locked SQLite store, JSON print/RPC and disposal. Compiled-JS updates required restart in the inspected bundled runtime. |
+| **omp** | Compact widget and custom overlay/full inspector. | Development acceptance passed on **18.12.6/Bun1.4.4**, and re-verified on installed **18.18.5**: actual nine-view overlay, keyboard/resize/native theme, confirmed Unicode create/correct/retract, explicit grants/revocation, persistent preferences, native session reset, official parent/child/sibling factory isolation under a real SQLite lock, JSON print/RPC/headless and clean shutdown. The 18.18.5 re-check covered installed copy-extension discovery, `/luminary full` JSON state over a seeded store, headless RPC state delivery and UI-enabled nine-dialog RPC. Pointer support is not claimed. |
+| **Browser companion** | Complete inspector when explicitly launched. | Installed-wheel development acceptance passed: actual authenticated browser, nine views, confirmed versioned edits, offline Summary, scoped compact permissions, real download/upload and duplicate receipts. Real-time sign-in/session expiry, signout revocation, CSRF/origin/Host checks and forged context/file refusal verified. It remains optional, loopback-only and never substitutes for a native target. |
 
 Server plugins, terminal plugins, providers, Hermes Desktop/dashboard and ordinary agent plugins have different entrypoints. A generic single export does not establish all surfaces.
 
@@ -125,10 +125,11 @@ Deterministic Summary uses actual authorized data and a visible reference time. 
 
 ### Observed implementation checks
 
-- **Backend:** the core inspector, project grants, content revisions and durable audit were exercised with SQLite and real PostgreSQL/pgvector. Subsequent integrated SQLite/transport/file-installer checks passed 71 tests.
-- **View state:** 25 shared/native-controller checks passed, including stale-context rejection, separate owner confirmation, unknown write outcomes, file-upload cancellation and independently selected rights.
-- **Optional companion:** real Chromium and a real SQLite store exercised all nine tab registrations, cancelled versus confirmed creation, detail, deterministic Summary, compact Activity, keyboard tab navigation and sign-out without JavaScript page errors. This is browser-companion evidence, not native-host acceptance.
-- **Build:** native package bundles, Hermes Desktop/dashboard resources and browser assets build locally. OpenCode Desktop has its own official Solid DOM/CommonJS GUI build, separate from the Solid/OpenTUI terminal transform. Actual pi/omp/OpenCode/Hermes host runs and installed-wheel acceptance remain open.
+- **Backend:** the full official Hermes SDK plus independent installed-wheel consumer suite passed **703 tests**, with one known Windows0600 permission case deselected and one upstream Starlette deprecation warning. The real PostgreSQL inspector matrix passed **104 tests**; two cases were inapplicable or covered by the separate installed-consumer gate.
+- **View state:** **21** shared/native-controller checks passed, including stale-context rejection, native confirmation, unknown outcomes and file-upload cancellation. Two forwarding-only tests were removed rather than treated as behavioral proof.
+- **Actual surfaces:** the target matrix records exact installed host versions and native input, changes, permissions, transfer and lifecycle evidence. Companion observations never count as native Web or terminal support.
+- **Scale:** an installed in-process SQLite service was measured with 20,000 memories, 10,000 authorized records and 33,600 graph edges. Browse/graph output stayed bounded, cursor pages did not overlap, foreign data stayed absent and Summary counted only the authorized scope. These are service measurements, not UI-latency or embedding-throughput claims.
+- **Build and regression gates:** local wheel/source/native-package builds, strict SDK/browser TypeScript checks and Ruff passed. The unchanged real default-embedding-model gate passed all five cases; a separate deterministic 400-cycle soak had zero control misses or no-answer leaks.
 - **Release boundary:** none of this establishes a published inspector, approved catalog listing, completed AI-model evaluation or whole-product completion.
 
 
@@ -156,7 +157,7 @@ flowchart TD
 
 ### M0 — Reconciled baseline and verified host contracts
 
-**State:** baseline reconciled locally; host-specific acceptance continues.
+**State:** baseline and tested host contracts verified locally; the remaining upstream dependencies are named in M7.
 
 Released native integrations and subsequent `develop` operator-config/OpenCode-skill fixes are incorporated into the implementation baseline. Existing release artifacts are unchanged. New native surfaces are not considered verified from a build or manifest alone.
 
@@ -200,16 +201,25 @@ Deliver:
 
 ### M5 — OpenCode CLI, pi and omp native inspectors
 
+**State:** verified in development on OpenCode 2.2.0, pi 1.4.0 and omp 18.12.6/Bun 1.4.4; publication remains separate.
+
 Deliver:
 - OpenCode server typed RPC and separate packaged TUI entrypoint; compact session panel and full inspector.
 - Pi compact widget/in-chat view and full custom TUI, honoring its own mode/focus lifecycle.
 - Omp widget/overlay/full inspector with session-local state and its own input/mode contracts.
 - Commands/shortcuts, all tabs/actions, narrow layouts, themes and keyboard paths.
 - Complete wheel/package/copy-install resource graphs without repo-only imports or duplicate obsolete adapters.
+- Actual OpenCode CLI used remote RPC with unavailable client Python and a
+  different local database; writes and transfers stayed on the selected server.
+  Foreign-location and missing sessions were denied. Pi and omp exercised their
+  own native modes, confirmed edits, sharing/revocation and session disposal.
+  Exact versions and host-specific limits are recorded in the target matrix.
 
 **Exit:** installed native hosts demonstrate every tab, confirmed changes, sharing restrictions, Summary, resize, restored focus, reload/removal and session switching. Remote OpenCode uses remote memory. Headless/RPC/JSON/print do not attempt custom terminal UI and retain supported nonvisual operations.
 
 ### M6 — Hermes contracts, Desktop and dashboard
+
+**State:** verified in development on official 0.22.5 SDK/dashboard and an unmodified Desktop source build; the older bundled 0.22.0 Desktop SDK remains incompatible.
 
 Deliver typed provider config and CLI consumer, scoped secrets/context workers, actual storage roundtrip, separate provider/backend/frontend enablement, native Desktop pane/page/sidebar/settings, and independent host dashboard tab/slots/API mounting.
 
@@ -219,7 +229,7 @@ Account for app-level local Desktop installation versus profile-scoped remote ba
 
 ### M7 — Remaining native extension surfaces
 
-**State:** blocked on verified public rendering seams; enabler work begins at M0.
+**State:** OpenCode Desktop 2.2.0 is verified. OpenCode Web GUI discovery and Hermes terminal authenticated context/lifecycle remain blocked; rendering types or visual widgets alone do not close them.
 
 Deliver:
 - Supported native OpenCode Desktop and Web loader/contribution/context/input/lifecycle/package contracts.
@@ -233,6 +243,8 @@ If upstream support is unavailable, keep the exact dependency and target incompl
 
 ### M8 — Explicit optional browser companion
 
+**State:** installed-wheel/browser development acceptance verified, including real-time expiry, revocation, forged-context/file refusal and actual download/upload.
+
 Deliver the complete inspector over the same service/permissions, packaged local frontend, optional dependencies, explicit launch/context selection and authenticated loopback transport with short-lived session setup, same-origin/CSRF checks and safe file handles.
 
 No server/browser starts on import, install, ordinary agent startup or native UI failure. No permissive CORS or browser-selected DB/user identity.
@@ -240,6 +252,8 @@ No server/browser starts on import, install, ordinary agent startup or native UI
 **Exit:** real browser/service/storage prove full operations, expiry/revocation, unauthenticated/cross-origin denial, context isolation, safe stop and unchanged native/retention behavior. Optional means opt-in at runtime, not an unfinished stub or native-support claim.
 
 ### M9 — Whole-product acceptance and release
+
+**State:** `0.3.3` publishes the verified inspector surfaces and keeps the whole-product goal open. M7 remains blocked for the two native targets, so M9's complete acceptance criteria are not met and this release does not claim them.
 
 Deliver:
 - SQLite/real-pgvector inspection, sharing, concurrency, audit, graph, transfer, settings and Summary coverage.
@@ -298,7 +312,7 @@ Complete means:
 - [Released native integration baseline](https://github.com/alertxsto/luminary-memory/blob/main/docs/agent-integrations.md)
 - [API](api.md), [architecture](architecture.md), [backends](backends.md), [configuration](config-reference.md)
 - [OpenCode CLI UI](https://opencode.ai/v2/docs/build/plugins/cli/) and [typed RPC](https://opencode.ai/v2/docs/build/plugins/rpc/)
-- [Inspected published OpenCode SDK](https://unpkg.com/@opencode/plugin@2.1.4/package.json)
+- [Inspected published OpenCode SDK 2.2.0](https://unpkg.com/@opencode/plugin@2.2.0/package.json) and [experimental GUI contract](https://opencode.ai/docs/build/plugins/gui/)
 - [Hermes Desktop SDK](https://hermes-agent.nousresearch.com/docs/developer-guide/desktop-plugin-sdk), [dashboard SDK](https://hermes-agent.nousresearch.com/docs/user-guide/features/extending-the-dashboard), [memory-provider contract](https://hermes-agent.nousresearch.com/docs/developer-guide/memory-provider-plugin)
 - [pi extensions](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md) and [terminal UI](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/tui.md)
 - [Inspected versioned omp contract](https://github.com/can1357/oh-my-pi/blob/v18.12.6/packages/coding-agent/src/extensibility/extensions/types.ts)

@@ -75,3 +75,49 @@ def test_revocation_blocks_pending_access(scenario):
     assert scenario.client.backend.get(scenario.own_id).tags == ["deployment"]
     if page.data["next_cursor"]:
         assert scenario.request("browse", context=peer, cursor=page.data["next_cursor"]).status != "ok"
+
+
+def test_sharing_inventory_is_actor_scoped_and_paginated(scenario):
+    for recipient, capabilities in (("omp", ["read"]), ("opencode", ["contribute", "retract"])):
+        assert scenario.commit(scenario.preview(
+            "grant", recipient_agent_id=recipient, capabilities=capabilities,
+        )).status == "ok"
+    from luminary_memory.inspector.authorization import grant_key
+    backend = scenario.client.backend
+    for project, user, recipient, grantor in (
+        (scenario.context.project_id, "bob", "foreign-user", "pi"),
+        (scenario.context.project_id, "alice", "unrelated-agent", "other"),
+        ("other-project", "alice", "foreign-project", "pi"),
+    ):
+        backend.inspector_put(grant_key(project, recipient, grantor), {
+            "project_id": project, "user_id": user, "recipient_agent_id": recipient,
+            "grantor_agent_id": grantor, "capabilities": ["edit"],
+        })
+    before = scenario.snapshot()
+    first = scenario.request("browse", view="sharing", limit=1)
+    assert first.status == "ok"
+    assert len(first.data["grants"]) == 1
+    assert first.data["next_cursor"]
+    second = scenario.request("browse", view="sharing", limit=1, cursor=first.data["next_cursor"])
+    recipients = {
+        row["recipient_agent_id"]: list(row["capabilities"])
+        for page in (first, second) for row in page.data["grants"]
+    }
+    assert recipients == {"omp": ["read"], "opencode": ["contribute", "retract"]}
+    assert second.data["next_cursor"] is None
+    assert scenario.request("browse", view="memories", limit=1,
+                            cursor=first.data["next_cursor"]).status == "invalid_request"
+    assert scenario.snapshot() == before
+
+
+def test_sharing_inventory_explains_incoming_rights_without_implicit_selection(scenario):
+    peer = grant(scenario, ["read"])
+    inventory = scenario.request("browse", context=peer, view="sharing")
+    assert inventory.status == "ok"
+    assert [(row["grantor_agent_id"], row["recipient_agent_id"], list(row["capabilities"]))
+            for row in inventory.data["grants"]] == [("pi", "omp", ["read"])]
+    ordinary = scenario.request("browse", context=peer, view="memories")
+    assert scenario.own_id not in {row["id"] for row in ordinary.data["items"]}
+    assert scenario.request("preview_change", context=peer, kind="tag",
+                            memory_id=scenario.own_id, expected_revision=1,
+                            tags=["not-authorized"]).status == "denied"

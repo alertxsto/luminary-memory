@@ -1,6 +1,6 @@
 import { TABS } from './console-contract.js';
 import { InspectorController } from './console-controller.js';
-import { inspectorRows, type InspectorRow } from './console-actions.js';
+import { inspectorRows, inspectorRowContent, inspectorSummaryLines, inspectorContextLine, inspectorCanSearch, type InspectorRow } from './console-actions.js';
 export type InspectorIntent = { type: 'close' | 'actions' | 'search' | 'refresh' | 'tabs' | 'compact'; row?: InspectorRow };
 type InspectorKey = 'escape' | 'ctrl+c' | 'tab' | 'right' | 'shift+tab' | 'left' | 'up' | 'down' | 'pageUp' | 'pageDown' | 'enter';
 /** Stateless host drawing helpers; native hosts retain input, themes, focus and sizing. */
@@ -61,17 +61,12 @@ export class TerminalInspectorView {
       }
     }
     const lines = [this.color('accent', `Luminary · ${tab.label} · ${state.busy ? 'loading' : state.status}`), tabs.length <= width ? tabs : `‹ ${index + 1}/${TABS.length} ${tab.label} ›  Tab/Shift+Tab · t: all tabs`, `Project: ${this.controller.selectionHandle ? 'explicit shared selection' : 'native session project'} · policy ${state.policy_revision ?? '—'} · ${state.as_of ?? ''}`];
+    const nativeContext = inspectorContextLine(this.controller);
+    if (nativeContext) lines.push(this.color('muted', nativeContext));
     if (state.error) lines.push(this.color('warning', state.error));
     if (state.data.gap === true) lines.push(this.color('warning', 'Activity history is incomplete. Press r to load a new snapshot.'));
     else if (state.data.replayed === true) lines.push(this.color('muted', `${Array.isArray(state.data.items) && state.data.items.length ? 'New activity only.' : 'No new activity.'} r: recent snapshot`));
-    if (state.tab === 'summary' && state.data.totals) {
-      const totals = state.data.totals as Record<string, unknown>;
-      lines.push(Object.entries(totals).map(([name, value]) => `${name}: ${value}`).join(' · '));
-      const range = state.data.time_range as Record<string, unknown> | undefined;
-      if (range) lines.push(`Stored timestamp bounds (UTC) · ${range.status}`,
-        `Created: ${range.created_from ?? 'not available'} → ${range.created_to ?? 'not available'}`,
-        `Updated: ${range.updated_from ?? 'not available'} → ${range.updated_to ?? 'not available'}`);
-    }
+    lines.push(...inspectorSummaryLines(this.controller));
     const rows = inspectorRows(this.controller); const available = Math.max(1, this.height() - lines.length - 4);
     this.rowStart = lines.length;
     this.rowCount = Math.min(rows.length, available);
@@ -79,21 +74,20 @@ export class TerminalInspectorView {
     if (rows.length) {
       this.offset = Math.max(0, Math.min(this.offset, this.selected)); if (this.selected >= this.offset + available) this.offset = this.selected - available + 1;
       for (const [i, row] of rows.slice(this.offset, this.offset + available).entries()) {
-        const operation = row.operation as Record<string, unknown> | undefined;
-        const activity = operation ? `${operation.summary} · ${row.source ?? 'unknown'} / ${operation.session_id ?? 'unknown'}` : undefined;
-        const adjacency = row.source && row.target ? `${row.source} → ${row.target} · ${row.kind ?? 'co-occurrence'} · memory #${row.memory_id}` : undefined;
-        const text = `${this.offset + i === this.selected ? '›' : ' '} ${row.id ?? row.event_id ?? ''} ${activity ?? row.content ?? adjacency ?? row.kind ?? row.label ?? JSON.stringify(row)} ${row.permissions ? `[${Object.keys(row.permissions).filter(p => row.permissions?.[p]).join(',')}]` : ''}`.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ');
+        const text = `${this.offset + i === this.selected ? '›' : ' '} ${row.id ?? row.event_id ?? ''} ${inspectorRowContent(row)} ${row.permissions ? `[${Object.keys(row.permissions).filter(p => row.permissions?.[p]).join(',')}]` : ''}`;
         lines.push(this.offset + i === this.selected ? this.color('accent', text) : text);
       }
+    } else if (state.status === 'empty' && state.tab !== 'activity') {
+      lines.push('No records in this authorized view.');
     } else if (state.tab !== 'activity') {
-      const projectionData = state.tab === 'summary' && state.data.totals
-        ? Object.fromEntries(Object.entries(state.data).filter(([key]) => key !== 'totals' && key !== 'time_range')) : state.data;
+      const projectionData = Object.fromEntries(Object.entries(state.data).filter(([key]) =>
+        key !== 'native_context' && (state.tab !== 'summary' || !state.data.totals || key !== 'totals' && key !== 'time_range')));
       const projection = JSON.stringify(projectionData, null, 2).split('\n');
       this.offset = Math.min(this.offset, Math.max(0, projection.length - available));
-      lines.push(...(Object.keys(state.data).length ? projection.slice(this.offset, this.offset + available) : ['No records in this authorized view.']));
+      lines.push(...(Object.keys(projectionData).length ? projection.slice(this.offset, this.offset + available) : ['No records in this authorized view.']));
     }
     else if (!state.data.gap && !state.data.replayed) lines.push('No activity recorded in this authorized scope.');
-    lines.push(this.color('muted', '↑↓/j k select · Enter/a actions · / search · r refresh · c compact · Esc close'));
+    lines.push(this.color('muted', `↑↓/j k select · Enter/a actions${inspectorCanSearch(this.controller) ? ' · / search' : ''} · r refresh · c compact · Esc close`));
     return lines.map(line => this.truncate(line, Math.max(1, width)));
   }
   invalidate() { this.tabRanges = []; this.rowCount = 0; }

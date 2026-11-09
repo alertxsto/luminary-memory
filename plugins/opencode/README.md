@@ -4,11 +4,12 @@ The Luminary-maintained development package targets **`@opencode/cli` 2.2.0**
 and **`@opencode/plugin` 2.2.0**. This is an official Luminary package,
 **not** an OpenCode endorsement.
 
-**Unreleased checkpoint:** the interactive inspector is not in the published
-`0.3.2` packages. That released V2 bridge was verified on OpenCode 2.1.4;
-`0.3.1` targets the separate V1 API. The published install commands below do
-not install this development inspector. Build the local artifact to try it;
-the complete native/remote/Desktop/Web acceptance matrix is still open.
+**Release scope:** `0.3.3` ships this inspector for OpenCode CLI and Desktop on
+`@opencode/cli` `@opencode/plugin` **2.2.0**. The earlier published `0.3.2`
+bridge contained no inspector and was verified on OpenCode 2.1.4; `0.3.1`
+targets the separate V1 API. Native Web GUI contribution discovery remains
+blocked upstream. See the [target matrix](https://github.com/alertxsto/luminary-memory/blob/develop/docs/ROADMAP.md#target-support-matrix)
+for exact scope, lifecycle and release limitations.
 
 ## Install
 
@@ -55,7 +56,7 @@ npm run pack:plugins
 ```
 
 Keep the built directory or extract
-`artifacts/plugins/luminary-memory-opencode-0.3.2.tgz`. Configure the **`dist`
+`artifacts/plugins/luminary-memory-opencode-0.3.3.tgz`. Configure the **`dist`
 directory**, which contains `index.js`, not the package root or a single file:
 
 ```json
