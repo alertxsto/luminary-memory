@@ -195,6 +195,51 @@ def test_process_response_must_match_the_request_and_stay_bounded(companion, mon
     assert companion.call({"operation": "browse", "arguments": {}, "request_id": "r1"})["status"] == "unavailable"
 
 
+@pytest.mark.parametrize("operation,status", [("browse", "unavailable"), ("mutate", "unknown_outcome")])
+@pytest.mark.parametrize("payload", [[], "sensitive child output", None, 42, True])
+def test_non_object_process_response_is_redacted(companion, monkeypatch, operation, status, payload):
+    class Result:
+        returncode = 0
+        stdout = json.dumps(payload).encode()
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Result())
+    result = companion.call({"operation": operation, "arguments": {}, "request_id": "r1"})
+    assert result["status"] == status
+    assert result["error"]["code"] == status
+    assert result["data"] is None
+    assert result["request_id"] == "r1"
+    assert "sensitive child output" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "path,body,expected_http",
+    [
+        ("/api/request", b'{"operation":"browse","arguments":{},"request_id":"r1"}', 200),
+        ("/api/confirm", b'{"preview_id":"preview"}', 200),
+        ("/api/file?mode=write", b"", 200),
+        ("/api/download/handle", None, 403),
+    ],
+)
+def test_non_object_process_response_is_handled_over_http(
+    companion, monkeypatch, path, body, expected_http,
+):
+    class Result:
+        returncode = 0
+        stdout = b"[]"
+
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: Result())
+    headers = {"Origin": companion.origin, "Content-Type": "application/json", **sign_in(companion)}
+    request = urllib.request.Request(companion.origin + path, data=body, headers=headers)
+    if expected_http == 403:
+        with pytest.raises(urllib.error.HTTPError) as failure:
+            urllib.request.urlopen(request)
+        assert failure.value.code == 403
+    else:
+        with urllib.request.urlopen(request) as response:
+            assert response.status == 200
+            assert json.loads(response.read())["status"] == "unavailable"
+
+
 def test_request_requires_an_object(companion):
     with pytest.raises(TypeError):
         companion.call([])

@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Mapping, MutableMapping
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -13,17 +15,25 @@ CONFIG_FILE_ENV = "LUMINARY_CONFIG_FILE"
 MAX_CONFIG_FILE_BYTES = 256 * 1024
 _CONFIG_KEY = re.compile(r"LUMINARY_[A-Z0-9_]+")
 _DISABLED_CONFIG_VALUES = {"0", "false", "none", "off", "-"}
+_settings_environment: ContextVar[Mapping[str, str] | None] = ContextVar(
+    "luminary_settings_environment", default=None
+)
+
+
+def _settings_env() -> Mapping[str, str]:
+    environment = _settings_environment.get()
+    return os.environ if environment is None else environment
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
-    v = os.environ.get(name)
+    v = _settings_env().get(name)
     if v is None:
         return default
     return v.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _env_int(name: str, default: int) -> int:
-    v = os.environ.get(name)
+    v = _settings_env().get(name)
     if v is None or not v.strip():
         return default
     try:
@@ -34,7 +44,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _env_float(name: str, default: float) -> float:
-    v = os.environ.get(name)
+    v = _settings_env().get(name)
     if v is None or not v.strip():
         return default
     try:
@@ -45,7 +55,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _env_list(name: str, default: list[str] | None = None) -> list[str]:
-    v = os.environ.get(name)
+    v = _settings_env().get(name)
     if v is None or not v.strip():
         return list(default or [])
     return [p.strip() for p in v.split(",") if p.strip()]
@@ -56,10 +66,12 @@ def default_config_path() -> Path:
     return Path.home() / ".luminary" / "luminary.env"
 
 
-def _resolve_config_path(path: str | os.PathLike[str] | None) -> Path | None:
+def _resolve_config_path(
+    path: str | os.PathLike[str] | None, environment: Mapping[str, str]
+) -> Path | None:
     if path is not None:
         return Path(path).expanduser()
-    raw = os.environ.get(CONFIG_FILE_ENV, "").strip()
+    raw = environment.get(CONFIG_FILE_ENV, "").strip()
     if raw and raw.lower() in _DISABLED_CONFIG_VALUES:
         return None
     return Path(raw).expanduser() if raw else default_config_path()
@@ -69,8 +81,10 @@ def load_config_file(
     path: str | os.PathLike[str] | None = None,
     *,
     override: bool = False,
+    environment: MutableMapping[str, str] | None = None,
+    fail_on_error: bool = False,
 ) -> Path | None:
-    """Load ``LUMINARY_*`` settings from an env-style file into ``os.environ``.
+    """Load ``LUMINARY_*`` settings into the supplied environment, or ``os.environ``.
 
     Native agent integrations and the CLI call this before constructing
     :class:`Settings`, so operators can keep durable settings (including an LLM
@@ -81,13 +95,16 @@ def load_config_file(
     The default file is ``~/.luminary/luminary.env``. Set
     ``LUMINARY_CONFIG_FILE`` to another path, or to ``none``/``off`` to disable
     file loading. Only keys matching ``LUMINARY_*`` are applied; values are
-    never logged. Per-call native provenance (``LUMINARY_BRIDGE_SOURCE``) is
-    process-only and cannot be supplied by a settings file.
+    never logged. Native provenance (``LUMINARY_BRIDGE_SOURCE``) and inspector
+    control channels (``LUMINARY_INSPECTOR_*``) are process-only. If
+    ``fail_on_error`` is true, an unreadable, oversized, or explicitly missing
+    file raises instead of silently falling back.
     """
-    target = _resolve_config_path(path)
+    environment = os.environ if environment is None else environment
+    target = _resolve_config_path(path, environment)
     if target is None:
         return None
-    configured = os.environ.get(CONFIG_FILE_ENV, "").strip()
+    configured = environment.get(CONFIG_FILE_ENV, "").strip()
     explicit = path is not None or bool(configured)
     try:
         if target.stat().st_size > MAX_CONFIG_FILE_BYTES:
@@ -96,14 +113,20 @@ def load_config_file(
                 MAX_CONFIG_FILE_BYTES,
                 target,
             )
+            if fail_on_error:
+                raise RuntimeError("Luminary config file exceeds size limit")
             return None
         text = target.read_text(encoding="utf-8-sig")
     except FileNotFoundError:
         if explicit:
             logger.warning("Luminary config file not found: %s", target)
+            if fail_on_error:
+                raise RuntimeError("Luminary config file not found") from None
         return None
     except OSError as exc:
         logger.warning("Unable to read Luminary config file %s: %s", target, exc)
+        if fail_on_error:
+            raise RuntimeError("Unable to read Luminary config file") from exc
         return None
 
     applied = 0
@@ -125,12 +148,13 @@ def load_config_file(
             not _CONFIG_KEY.fullmatch(key)
             or key == CONFIG_FILE_ENV
             or key == "LUMINARY_BRIDGE_SOURCE"
+            or key.startswith("LUMINARY_INSPECTOR_")
         ):
             continue
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
-        if override or key not in os.environ:
-            os.environ[key] = value
+        if override or key not in environment:
+            environment[key] = value
             applied += 1
     logger.debug("Loaded %d Luminary setting(s) from %s", applied, target)
     return target
@@ -179,12 +203,12 @@ class Settings:
     environment-only behaviour unless they call the loader themselves.
     """
 
-    backend: str = field(default_factory=lambda: os.environ.get("LUMINARY_BACKEND", "sqlite"))  # "sqlite" | "pgvector"
-    db_path: str = field(default_factory=lambda: os.environ.get("LUMINARY_DB_PATH", "luminary_memory.db"))
+    backend: str = field(default_factory=lambda: _settings_env().get("LUMINARY_BACKEND", "sqlite"))  # "sqlite" | "pgvector"
+    db_path: str = field(default_factory=lambda: _settings_env().get("LUMINARY_DB_PATH", "luminary_memory.db"))
     # pgvector (only used when backend == "pgvector")
-    pg_dsn: str = field(default_factory=lambda: os.environ.get("LUMINARY_PG_DSN", "postgresql://localhost/luminary_memory"))
+    pg_dsn: str = field(default_factory=lambda: _settings_env().get("LUMINARY_PG_DSN", "postgresql://localhost/luminary_memory"))
     # embeddings
-    embedding_model: str = field(default_factory=lambda: os.environ.get("LUMINARY_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL))
+    embedding_model: str = field(default_factory=lambda: _settings_env().get("LUMINARY_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL))
     embedding_dim: int = field(default_factory=lambda: _env_int("LUMINARY_EMBEDDING_DIM", 384))
     # ingest
     ingest_whitelist: list[str] = field(default_factory=lambda: _env_list("LUMINARY_INGEST_WHITELIST"))
@@ -221,7 +245,7 @@ class Settings:
         default_factory=lambda: _env_bool("LUMINARY_EVIDENCE_REQUIRED", False)
     )
     # core memory (DB-backed, auto-loaded into the system prompt every session)
-    core_tag: str = field(default_factory=lambda: os.environ.get("LUMINARY_CORE_TAG", "core"))
+    core_tag: str = field(default_factory=lambda: _settings_env().get("LUMINARY_CORE_TAG", "core"))
     core_top_n: int = field(default_factory=lambda: _env_int("LUMINARY_CORE_TOP_N", 12))
     core_budget: int = field(default_factory=lambda: _env_int("LUMINARY_CORE_BUDGET", 8000))
     # lifecycle
@@ -231,14 +255,14 @@ class Settings:
     consolidate_semantic: bool = field(default_factory=lambda: _env_bool("LUMINARY_CONSOLIDATE_SEMANTIC", True))
     importance_auto: bool = field(default_factory=lambda: _env_bool("LUMINARY_IMPORTANCE_AUTO", True))
     # LLM enrichment (provider-agnostic, stdlib HTTP)
-    llm_base_url: str | None = field(default_factory=lambda: os.environ.get("LUMINARY_LLM_BASE_URL") or None)
-    llm_api_key: str | None = field(default_factory=lambda: os.environ.get("LUMINARY_LLM_API_KEY") or None)
-    llm_model: str = field(default_factory=lambda: os.environ.get("LUMINARY_LLM_MODEL", "gpt-4o-mini"))
+    llm_base_url: str | None = field(default_factory=lambda: _settings_env().get("LUMINARY_LLM_BASE_URL") or None)
+    llm_api_key: str | None = field(default_factory=lambda: _settings_env().get("LUMINARY_LLM_API_KEY") or None)
+    llm_model: str = field(default_factory=lambda: _settings_env().get("LUMINARY_LLM_MODEL", "gpt-4o-mini"))
     llm_timeout: int = field(default_factory=lambda: _env_int("LUMINARY_LLM_TIMEOUT", 10))
     llm_max_tokens: int = field(default_factory=lambda: _env_int("LUMINARY_LLM_MAX_TOKENS", 512))
     # Legacy compatibility field. Memory classification is structural and no
     # longer infers durability from language-specific keyword lists.
-    rule_keywords: str = field(default_factory=lambda: os.environ.get("LUMINARY_RULE_KEYWORDS", ""))
+    rule_keywords: str = field(default_factory=lambda: _settings_env().get("LUMINARY_RULE_KEYWORDS", ""))
     rule_importance: float = field(default_factory=lambda: _env_float("LUMINARY_RULE_IMPORTANCE", 0.9))
     rule_auto_replace: bool = field(default_factory=lambda: _env_bool("LUMINARY_RULE_AUTO_REPLACE", True))
     rule_auto_replace_threshold: float = field(default_factory=lambda: _env_float("LUMINARY_RULE_AUTO_REPLACE_THRESHOLD", 0.85))
@@ -251,6 +275,15 @@ class Settings:
     pg_hnsw_index: bool = field(default_factory=lambda: _env_bool("LUMINARY_PG_HNSW_INDEX", False))
     pg_hnsw_m: int = field(default_factory=lambda: _env_int("LUMINARY_PG_HNSW_M", 16))
     pg_hnsw_ef_construction: int = field(default_factory=lambda: _env_int("LUMINARY_PG_HNSW_EF_CONSTRUCTION", 64))
+
+    @classmethod
+    def from_environment(cls, environment: Mapping[str, str], **overrides: Any) -> Settings:
+        """Build settings from one isolated environment without changing process state."""
+        token = _settings_environment.set(environment)
+        try:
+            return cls(**overrides)
+        finally:
+            _settings_environment.reset(token)
 
     def as_dict(self) -> dict[str, Any]:
         """Return settings as a plain dict (useful for CLI `show` and config dumps)."""

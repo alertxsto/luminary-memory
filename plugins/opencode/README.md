@@ -4,14 +4,19 @@ The Luminary-maintained development package targets **`@opencode/cli` 2.2.0**
 and **`@opencode/plugin` 2.2.0**. This is an official Luminary package,
 **not** an OpenCode endorsement.
 
-**Release scope:** `0.3.3` ships this inspector for OpenCode CLI and Desktop on
-`@opencode/cli` `@opencode/plugin` **2.2.0**. The earlier published `0.3.2`
-bridge contained no inspector and was verified on OpenCode 2.1.4; `0.3.1`
-targets the separate V1 API. Native Web GUI contribution discovery remains
+**Development scope:** the `0.3.3` source includes this inspector
+for OpenCode CLI and Desktop on `@opencode/cli` and `@opencode/plugin`
+**2.2.0**. The published `0.3.2` bridge contains no inspector and was verified
+on OpenCode 2.1.4; `0.3.1` targets the separate V1 API. Native Web GUI
+contribution discovery remains
 blocked upstream. See the [target matrix](https://github.com/alertxsto/luminary-memory/blob/develop/docs/ROADMAP.md#target-support-matrix)
 for exact scope, lifecycle and release limitations.
 
 ## Install
+
+The registry commands below install `0.3.2`, which has no inspector. For the
+`0.3.3` inspector, use the matching Python bridge and native package built from
+this checkout or obtained from the GitHub release when available.
 
 Install the published Python bridge from PyPI:
 

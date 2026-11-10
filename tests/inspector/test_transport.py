@@ -68,6 +68,34 @@ def test_inspector_missing_native_context_fails_closed(tmp_path):
     assert not (tmp_path / "must-not-open.db").exists()
 
 
+def test_root_cli_does_not_accept_inspector_authority_from_config(tmp_path):
+    native = {
+        "agent_id": "pi", "workspace": str(tmp_path.resolve()), "session_id": "session",
+        "host_id": "host", "profile_id": "default",
+    }
+    store = tmp_path / "must-not-open.db"
+    config = tmp_path / "luminary.env"
+    config.write_text(
+        f"LUMINARY_INSPECTOR_CONTEXT={json.dumps(native)}\n"
+        f"LUMINARY_INSPECTOR_OPEN=1\nLUMINARY_DB_PATH={store}\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.pop("LUMINARY_INSPECTOR_CONTEXT", None)
+    env.pop("LUMINARY_INSPECTOR_OPEN", None)
+    env.pop("LUMINARY_DB_PATH", None)
+    env["LUMINARY_CONFIG_FILE"] = str(config)
+    env["LUMINARY_USER_ID"] = "owner"
+    result = subprocess.run(
+        [sys.executable, "-m", "luminary_memory.cli", "hook", "inspector"],
+        input=json.dumps({"operation": "browse", "arguments": {}, "request_id": "config-authority"}),
+        capture_output=True, text=True, env=env, cwd=tmp_path, timeout=30, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["status"] == "denied"
+    assert not store.exists()
+
+
 def test_inspector_uses_operator_config_for_owner_and_store(tmp_path):
     from luminary_memory.backends.sqlite import SQLiteBackend
     from luminary_memory.types import Memory

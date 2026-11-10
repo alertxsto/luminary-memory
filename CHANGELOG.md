@@ -1,10 +1,10 @@
 # Changelog
 
-## [0.3.3] - 2026-11-09
+## [0.3.3] - 2026-11-10
 
 Interactive memory inspection, explicit owner controls and safer native recall.
-This incremental release includes only the verified native surfaces and the
-opt-in loopback companion; it does not complete the entire interactive UI roadmap.
+This version includes only the verified native surfaces and the opt-in loopback
+companion; the interactive UI roadmap is incomplete.
 
 ### Compatibility
 
@@ -44,6 +44,13 @@ opt-in loopback companion; it does not complete the entire interactive UI roadma
 
 ### Fixed
 
+- Inspector dispatch resolves storage and other settings from the same supplied
+  launcher environment and config as the authorized context, without mutating
+  the process environment. Config files cannot provide trusted inspector channels.
+  A conflicting launcher home or unavailable selected config fails closed, and
+  `~` SQLite paths resolve before the store is opened.
+- The companion treats non-object JSON from the inspector process as a bounded,
+  redacted failure, distinguishing read failures from unknown mutation outcomes.
 - OpenCode's compact inspector shows bounded, server-reported record permissions;
   native session, policy and explicit-project changes discard stale snapshots.
   Read-only shared projects no longer display the previous project's edit rights.
