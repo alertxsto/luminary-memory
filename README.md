@@ -6,8 +6,6 @@
 [![Python](https://img.shields.io/pypi/pyversions/luminary-memory?color=8ab4e8)](https://pypi.org/project/luminary-memory)
 [![License](https://img.shields.io/github/license/alertxsto/luminary-memory?color=8ab4e8)](LICENSE)
 [![CI](https://github.com/alertxsto/luminary-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/alertxsto/luminary-memory/actions)
-[![Tests](https://img.shields.io/badge/tests-703%20passing-8ab4e8)](https://github.com/alertxsto/luminary-memory/actions)
-[![Coverage](https://img.shields.io/badge/coverage-79%25-8ab4e8)](https://github.com/alertxsto/luminary-memory)
 [![Stars](https://img.shields.io/github/stars/alertxsto/luminary-memory?color=8ab4e8)](https://github.com/alertxsto/luminary-memory)
 
 **Self-hosted · Private · Budget-aware · Self-maintaining**
@@ -68,8 +66,8 @@ luminary-memory stats
 ## Native hooks for supported harnesses
 
 The harness-neutral JSON bridge supports native adapters without coupling the
-memory engine to one runner. Shipped adapters cover OpenCode V2's
-`@opencode/plugin` 2.1.4 API, pi, and omp; Hermes keeps its provider integration.
+memory engine to one runner. The current source targets OpenCode V2's
+`@opencode/plugin` 2.2.0 API, pi, and omp; Hermes keeps its provider integration.
 
 ```bash
 luminary-memory hook install opencode  # or pi / omp; project-local by default
@@ -83,9 +81,11 @@ API or standalone desktop app is assumed. A portable OpenCode agent skill lives
 at [`opencode/SKILL.md`](opencode/SKILL.md); install it under
 `~/.config/opencode/skills/luminary-memory/` or a project's `.opencode/skills/`.
 
-Native interactive inspectors now ship in `0.3.3` for the verified surfaces:
-OpenCode CLI/Desktop, pi and omp, plus Hermes Desktop/dashboard and an explicitly
-launched loopback companion. Two native targets remain blocked on upstream
+The `0.3.3` source includes native interactive inspectors for the verified
+surfaces: OpenCode CLI/Desktop, pi and omp, Hermes Desktop/dashboard and an
+explicitly launched loopback companion. The `0.3.2` registry packages do not
+include the inspector; see the installation guide for current availability.
+Two native targets remain blocked on upstream
 contracts and are recorded in the roadmap: OpenCode Web GUI contribution
 discovery and Hermes terminal/TUI authority plus scope lifecycle. See
 [development setup and explicit companion launch](docs/agent-integrations.md#interactive-inspectors)

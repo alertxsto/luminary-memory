@@ -55,9 +55,12 @@ Precedence is:
 2. config file,
 3. built-in default.
 
-`LUMINARY_CONFIG_FILE` itself is never read from the file. Because native
-adapters spawn a fresh Python process for each operation, edits apply on the
-next tool call without restarting the host. Direct library users keep
+`LUMINARY_CONFIG_FILE`, `LUMINARY_BRIDGE_SOURCE`, and the
+`LUMINARY_INSPECTOR_*` authority/control channels are never read from the file.
+An inspector returns `unavailable` for an explicitly selected missing file or
+an unreadable or oversized file rather than opening a fallback store. Native
+adapters spawn a fresh Python process for each operation, so edits apply
+on the next tool call without restarting the host. Direct library users keep
 environment-only behaviour unless they call `load_config_file()` themselves.
 
 ```ini

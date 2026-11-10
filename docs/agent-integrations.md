@@ -140,10 +140,11 @@ proof of a live website listing.
 
 ## Interactive inspectors
 
-The inspector ships in the `0.3.3` Python wheel and the three native npm
-packages. Installing it does not enable saving, start a server on import, or
-call an AI model. Exact tested native hosts and the two remaining blocked
-surfaces are recorded in the [roadmap matrix](ROADMAP.md#target-support-matrix).
+The `0.3.3` source includes the inspector in the Python and native npm
+packages. The published `0.3.2` packages do not include it. Installing the
+inspector does not enable saving, start a server on import, or call an AI model.
+Exact tested native hosts and the two remaining blocked surfaces are recorded
+in the [roadmap matrix](ROADMAP.md#target-support-matrix).
 
 Build the complete resources before installing this checkout or building its
 wheel:
@@ -271,6 +272,17 @@ its Telegram hook is [installed separately](../hermes/hooks/luminary-activity/RE
 The bridge defaults to `~/.luminary/memory.db`. Set `LUMINARY_DB_PATH` (or the
 existing backend/pgvector environment settings) in the **agent/server process**
 to choose another store. It does not silently use a Hermes profile database.
+
+Embedded inspector callers that supply an environment mapping resolve settings
+and the config file from that mapping without changing the process environment.
+Inspector authority and one-shot control channels must come from the launcher,
+not the config file. A supplied home directory that differs from the process
+home is denied rather than resolving a default or `~` path against another
+environment; launch a child with the intended home instead.
+
+An explicitly selected missing config, or an unreadable or oversized config,
+returns `unavailable` instead of opening a fallback store. SQLite paths beginning
+with `~` are resolved against the process home before opening.
 
 Every bridge operation binds all three ownership fields:
 

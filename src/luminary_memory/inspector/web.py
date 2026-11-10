@@ -61,9 +61,9 @@ class CompanionServer(ThreadingHTTPServer):
             if result.returncode != 0 or len(result.stdout) > 192 * 1024:
                 raise ValueError("invalid process response")
             payload = json.loads(result.stdout)
-            if payload.get("request_id") != request.get("request_id"):
-                raise ValueError("mismatched request")
-            return payload
+            if isinstance(payload, dict) and payload.get("request_id") == request.get("request_id"):
+                return payload
+            raise ValueError("invalid or mismatched process response")
         except (subprocess.SubprocessError, OSError, ValueError):
             status = "unknown_outcome" if request.get("operation") in MUTATIONS else "unavailable"
             return {"status": status, "data": None, "error": {"code": status,

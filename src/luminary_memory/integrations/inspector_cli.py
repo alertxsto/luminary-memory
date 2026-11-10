@@ -65,7 +65,8 @@ def run_inspector(context, request, *, client=None, confirmation: str | None = N
 
 
 def dispatch_inspector(raw: bytes, environment: Mapping[str, str] | None = None) -> dict:
-    environment = os.environ if environment is None else environment
+    launcher_environment = dict(os.environ if environment is None else environment)
+    environment = launcher_environment.copy()
     request_id = ""
     client = None
     try:
@@ -76,9 +77,13 @@ def dispatch_inspector(raw: bytes, environment: Mapping[str, str] | None = None)
             raise TypeError("request must be an object")
         if isinstance(data.get("request_id"), str):
             request_id = data["request_id"][:128]
+        home_keys = ("USERPROFILE", "HOMEDRIVE", "HOMEPATH") if os.name == "nt" else ("HOME",)
+        if any(key in launcher_environment and launcher_environment[key] != os.environ.get(key)
+               for key in home_keys):
+            raise PermissionError("launcher home differs from process home")
         from luminary_memory.config import load_config_file
 
-        load_config_file()
+        load_config_file(environment=environment, fail_on_error=True)
         native = native_context(environment)
         from luminary_memory.api import MemoryClient
         from luminary_memory.config import Settings
@@ -87,11 +92,12 @@ def dispatch_inspector(raw: bytes, environment: Mapping[str, str] | None = None)
         from luminary_memory.inspector.service import InspectorService
 
         request = ConsoleRequest.from_dict(data)
-        settings = Settings(scope_include_global=False)
+        settings = Settings.from_environment(environment, scope_include_global=False)
         if not environment.get("LUMINARY_DB_PATH"):
             settings.db_path = str(Path.home() / ".luminary" / "memory.db")
-        if settings.backend == "sqlite":
-            Path(settings.db_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+        if (settings.backend or "sqlite").strip().lower() == "sqlite":
+            settings.db_path = str(Path(settings.db_path).expanduser())
+            Path(settings.db_path).resolve().parent.mkdir(parents=True, exist_ok=True)
         client = MemoryClient(settings=settings, scope={
             "user_id": native["user_id"], "workspace_id": native["workspace"],
             "agent_id": native["agent_id"],

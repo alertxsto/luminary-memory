@@ -6,6 +6,7 @@ real store.
 """
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -161,13 +162,7 @@ def test_sqlite_database_directory_is_created(tmp_path, monkeypatch):
     assert nested.parent.is_dir()
 
 
-def test_supplied_environment_does_not_override_storage_resolution(tmp_path, monkeypatch):
-    """Documented current behaviour: only the process environment selects the store.
-
-    ``Settings`` reads ``os.environ``, so a launcher-supplied mapping authorizes
-    the native context but does not move the database. This test pins the
-    behaviour that exists in this release rather than asserting it is correct.
-    """
+def test_supplied_environment_selects_its_own_store(tmp_path, monkeypatch):
     process_store = tmp_path / "process.db"
     mapping_store = tmp_path / "mapping.db"
     monkeypatch.setenv("LUMINARY_DB_PATH", str(process_store))
@@ -175,5 +170,173 @@ def test_supplied_environment_does_not_override_storage_resolution(tmp_path, mon
     environment["LUMINARY_DB_PATH"] = str(mapping_store)
     environment["LUMINARY_INSPECTOR_OPEN"] = "1"
     assert dispatch_inspector(request(), environment)["status"] == "empty"
-    assert process_store.exists()
-    assert not mapping_store.exists()
+    assert mapping_store.exists()
+    assert not process_store.exists()
+    assert os.environ["LUMINARY_DB_PATH"] == str(process_store)
+
+
+def test_supplied_config_file_selects_store_without_mutating_process(tmp_path, monkeypatch):
+    process_store = tmp_path / "process.db"
+    mapping_store = tmp_path / "mapping.db"
+    config = tmp_path / "launcher.env"
+    config.write_text(f"LUMINARY_DB_PATH={mapping_store}\n", encoding="utf-8")
+    monkeypatch.setenv("LUMINARY_DB_PATH", str(process_store))
+    environment = context(tmp_path)
+    del environment["LUMINARY_DB_PATH"]
+    environment["LUMINARY_CONFIG_FILE"] = str(config)
+    environment["LUMINARY_INSPECTOR_OPEN"] = "1"
+    assert dispatch_inspector(request(), environment)["status"] == "empty"
+    assert mapping_store.exists()
+    assert not process_store.exists()
+    assert os.environ["LUMINARY_CONFIG_FILE"] == "none"
+    assert os.environ["LUMINARY_DB_PATH"] == str(process_store)
+
+
+@pytest.mark.parametrize("kind", ["missing", "oversized"])
+def test_unavailable_selected_config_does_not_open_default_store(tmp_path, monkeypatch, kind):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    config = tmp_path / "unavailable.env"
+    if kind == "oversized":
+        config.write_text("#" * (256 * 1024 + 1), encoding="utf-8")
+    environment = context(tmp_path)
+    del environment["LUMINARY_DB_PATH"]
+    environment["LUMINARY_CONFIG_FILE"] = str(config)
+    environment["LUMINARY_INSPECTOR_OPEN"] = "1"
+    assert dispatch_inspector(request(), environment)["status"] == "unavailable"
+    assert not (home / ".luminary" / "memory.db").exists()
+
+
+@pytest.mark.parametrize("backend", ["sqlite", " SQLite "])
+def test_tilde_database_path_resolves_to_owner_home(tmp_path, monkeypatch, backend):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.chdir(tmp_path)
+    literal_store = tmp_path / "~" / ".luminary" / "memory.db"
+    literal_store.parent.mkdir(parents=True)
+    environment = context(tmp_path)
+    environment["LUMINARY_DB_PATH"] = "~/.luminary/memory.db"
+    environment["LUMINARY_BACKEND"] = backend
+    environment["LUMINARY_INSPECTOR_OPEN"] = "1"
+    assert dispatch_inspector(request(), environment)["status"] == "empty"
+    assert (home / ".luminary" / "memory.db").exists()
+    assert not literal_store.exists()
+
+
+def test_config_cannot_supply_the_native_launcher_context(tmp_path):
+    native = context(tmp_path)["LUMINARY_INSPECTOR_CONTEXT"]
+    config = tmp_path / "launcher.env"
+    config.write_text(
+        f"LUMINARY_INSPECTOR_CONTEXT={native}\nLUMINARY_INSPECTOR_OPEN=1\n",
+        encoding="utf-8",
+    )
+    store = tmp_path / "inspector.db"
+    environment = {
+        "LUMINARY_CONFIG_FILE": str(config),
+        "LUMINARY_DB_PATH": str(store),
+        "LUMINARY_USER_ID": "owner",
+    }
+    assert dispatch_inspector(request(), environment)["status"] == "denied"
+    assert not store.exists()
+
+
+def test_config_cannot_initialize_an_unopened_native_binding(tmp_path):
+    config = tmp_path / "launcher.env"
+    config.write_text("LUMINARY_INSPECTOR_OPEN=1\n", encoding="utf-8")
+    environment = context(tmp_path)
+    environment["LUMINARY_CONFIG_FILE"] = str(config)
+    assert dispatch_inspector(request(), environment)["status"] == "denied"
+
+
+def test_missing_mapping_store_uses_default_not_process_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    process_store = tmp_path / "process.db"
+    monkeypatch.setenv("LUMINARY_DB_PATH", str(process_store))
+    environment = context(tmp_path)
+    del environment["LUMINARY_DB_PATH"]
+    environment["LUMINARY_INSPECTOR_OPEN"] = "1"
+    assert dispatch_inspector(request(), environment)["status"] == "empty"
+    assert (tmp_path / ".luminary" / "memory.db").exists()
+    assert not process_store.exists()
+
+
+def test_different_launcher_home_does_not_open_process_default_store(tmp_path, monkeypatch):
+    home_variable = "USERPROFILE" if os.name == "nt" else "HOME"
+    process_home = tmp_path / "process-home"
+    launcher_home = tmp_path / "launcher-home"
+    process_home.mkdir()
+    launcher_home.mkdir()
+    monkeypatch.setenv(home_variable, str(process_home))
+    environment = context(tmp_path)
+    environment[home_variable] = str(launcher_home)
+    del environment["LUMINARY_DB_PATH"]
+    environment["LUMINARY_INSPECTOR_OPEN"] = "1"
+    assert dispatch_inspector(request(), environment)["status"] == "denied"
+    assert not (process_home / ".luminary" / "memory.db").exists()
+    assert not (launcher_home / ".luminary" / "memory.db").exists()
+
+
+def test_inherited_environment_loads_config_without_global_mutation(tmp_path, monkeypatch):
+    store = tmp_path / "configured.db"
+    config = tmp_path / "process.env"
+    config.write_text(f"LUMINARY_DB_PATH={store}\n", encoding="utf-8")
+    monkeypatch.delenv("LUMINARY_DB_PATH")
+    monkeypatch.setenv("LUMINARY_CONFIG_FILE", str(config))
+    for key, value in context(tmp_path).items():
+        if key not in {"LUMINARY_DB_PATH", "LUMINARY_CONFIG_FILE"}:
+            monkeypatch.setenv(key, value)
+    monkeypatch.setenv("LUMINARY_INSPECTOR_OPEN", "1")
+    assert dispatch_inspector(request())["status"] == "empty"
+    assert store.exists()
+    assert "LUMINARY_DB_PATH" not in os.environ
+
+
+def test_supplied_backend_cannot_fall_back_to_process_sqlite(tmp_path, monkeypatch):
+    process_store = tmp_path / "process.db"
+    monkeypatch.setenv("LUMINARY_BACKEND", "sqlite")
+    monkeypatch.setenv("LUMINARY_DB_PATH", str(process_store))
+    environment = context(tmp_path)
+    environment.update(
+        LUMINARY_BACKEND="pgvector",
+        LUMINARY_PG_DSN="not a valid connection string",
+        LUMINARY_INSPECTOR_OPEN="1",
+    )
+    assert dispatch_inspector(request(), environment)["status"] == "unavailable"
+    assert not process_store.exists()
+    assert not (tmp_path / "inspector.db").exists()
+
+
+def test_mapping_ignores_process_config_file(tmp_path, monkeypatch):
+    process_store = tmp_path / "from-process-config.db"
+    mapping_store = tmp_path / "mapping.db"
+    config = tmp_path / "process.env"
+    config.write_text(f"LUMINARY_DB_PATH={process_store}\n", encoding="utf-8")
+    monkeypatch.setenv("LUMINARY_CONFIG_FILE", str(config))
+    monkeypatch.delenv("LUMINARY_DB_PATH")
+    environment = context(tmp_path)
+    environment["LUMINARY_DB_PATH"] = str(mapping_store)
+    environment["LUMINARY_INSPECTOR_OPEN"] = "1"
+    assert dispatch_inspector(request(), environment)["status"] == "empty"
+    assert mapping_store.exists()
+    assert not process_store.exists()
+    assert "LUMINARY_DB_PATH" not in os.environ
+
+
+def test_concurrent_mappings_keep_stores_separate(tmp_path):
+    environments = []
+    for name in ("first", "second"):
+        environment = context(tmp_path)
+        environment["LUMINARY_DB_PATH"] = str(tmp_path / f"{name}.db")
+        environment["LUMINARY_INSPECTOR_OPEN"] = "1"
+        environments.append(environment)
+    original = dict(os.environ)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda env: dispatch_inspector(request(), env), environments))
+    assert [result["status"] for result in results] == ["empty", "empty"]
+    assert results[0]["data"]["native_context"]["store_id"] != results[1]["data"]["native_context"]["store_id"]
+    assert all((tmp_path / f"{name}.db").exists() for name in ("first", "second"))
+    assert dict(os.environ) == original

@@ -105,7 +105,8 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install test and native HTTP dependencies
-        run: python -m pip install -e ".[dev]" fastapi httpx python-multipart
+        # Hermes 0.22.5 imports hermes_yaml, which requires ruamel.yaml.
+        run: python -m pip install -e ".[dev]" fastapi httpx python-multipart "ruamel.yaml==0.18.16"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

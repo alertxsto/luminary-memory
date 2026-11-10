@@ -9,6 +9,10 @@ versions accepted by the root manifest).
 
 ## Registry installation
 
+The registry commands below install `0.3.2`, which has no inspector. For the
+`0.3.3` inspector, use the matching Python bridge and native package built from
+this checkout or obtained from the GitHub release when available.
+
 Install the published Python bridge from PyPI, then install the pi package:
 
 ```sh
