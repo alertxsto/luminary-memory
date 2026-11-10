@@ -133,24 +133,22 @@ def test_secret_entry_requires_an_interactive_owner_terminal(hermes_home, hermes
         configure(argparse.Namespace(values=[], secrets=["llm_api_key"]))
 
 
-def test_configure_persists_typed_values_and_secrets_separately(hermes_home, hermes_config_sdk, monkeypatch):
-    from luminary_memory.hermes.config import load_config
+def test_configure_persists_typed_values_and_secrets_separately(tmp_path, hermes_config_sdk, monkeypatch):
+    import hermes_constants
+    from hermes_cli import config as native_config
+    from hermes_cli import secret_prompt
 
-    saved = {}
-    secret_module = types.ModuleType("hermes_cli.secret_prompt")
-    secret_module.masked_secret_prompt = lambda prompt: "test-secret-value"
-    config_module = types.ModuleType("hermes_cli.config")
-    config_module.save_env_value = lambda key, value: saved.__setitem__(key, value)
-    monkeypatch.setitem(sys.modules, "hermes_cli.secret_prompt", secret_module)
-    monkeypatch.setitem(sys.modules, "hermes_cli.config", config_module)
-    monkeypatch.setitem(sys.modules, "hermes_cli", types.ModuleType("hermes_cli"))
+    monkeypatch.setattr(hermes_constants, "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(native_config, "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(secret_prompt, "masked_secret_prompt", lambda prompt: "test-secret-value")
+    monkeypatch.setenv("LUMINARY_LLM_API_KEY", "")
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
     assert configure(argparse.Namespace(values=["auto_retain=false", "recall_limit=7"],
                                         secrets=["llm_api_key"])) == 0
-    stored = load_config(str(hermes_home))
+    stored = json.loads((tmp_path / "luminary" / "config.json").read_text(encoding="utf-8"))
     assert (stored["auto_retain"], stored["recall_limit"]) == (False, 7)
     assert "llm_api_key" not in stored
-    assert saved == {"LUMINARY_LLM_API_KEY": "test-secret-value"}
+    assert native_config.load_env()["LUMINARY_LLM_API_KEY"] == "test-secret-value"
 
 
 def test_configure_skips_blank_secret_entries(hermes_home, hermes_config_sdk, monkeypatch):

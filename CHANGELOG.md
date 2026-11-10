@@ -51,6 +51,8 @@ companion; the interactive UI roadmap is incomplete.
   `~` SQLite paths resolve before the store is opened.
 - The companion treats non-object JSON from the inspector process as a bounded,
   redacted failure, distinguishing read failures from unknown mutation outcomes.
+- The release workflow installs the YAML dependency required to import the
+  official Hermes SDK in a clean environment.
 - OpenCode's compact inspector shows bounded, server-reported record permissions;
   native session, policy and explicit-project changes discard stale snapshots.
   Read-only shared projects no longer display the previous project's edit rights.
