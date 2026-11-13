@@ -2,7 +2,7 @@
 
 A lightweight, self-hosted memory layer for AI agents.
 
-> Released baseline: `0.3.3` — native interactive memory inspection across the
+> Release candidate: `0.3.4` — native interactive memory inspection across the
 > verified hosts, backed by the strict scoped accuracy path: scope isolation,
 > evidence/provenance, conflict history, abstention, delivery-safe Telegram
 > activity reporting, and scoped JSONL transparency events. Verification:

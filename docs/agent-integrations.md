@@ -25,9 +25,11 @@ and omp. That means ownership by this project, not endorsement or listing
 approval by the harness maintainers. All three compile the canonical adapter
 source under `src/luminary_memory/integrations/assets/`; no second memory engine
 or separate adapter fork is maintained.
-Python and all three native npm packages are published at `0.3.3`, with npm
-`latest` pointing to that version. The OpenCode adapter targets V2; the older
-npm `0.3.1` adapter is V1-only. Install the Python bridge into the environment
+Python and all three native npm packages list `0.3.3`, but the later npm
+builds differ from the tagged GitHub tarballs. Use those tagged tarballs
+with Python `0.3.3` until a coordinated replacement is published.
+The OpenCode adapter targets V2; the older npm `0.3.1` adapter is V1-only.
+Install the Python bridge into the environment
 the host will use:
 
 ```bash
@@ -119,6 +121,12 @@ All npm `latest` tags point to `0.3.3`. Verified SHA-1 shasums:
 pi `a5c613417ef20c4e178e53a5e56e5b9e4e0c121d`,
 OpenCode `ee8ffe5a4089b5441dde52af9a90d4f0ce37fe9b`,
 omp `82d18ba70ebba95d3566c1f394561000a76d34c5`.
+
+These npm shasums do not match the `v0.3.3` GitHub release tarballs. The npm
+entry points match later `develop` builds, which use the new `core` bridge
+action. Do not treat npm and PyPI `0.3.3` as one validated release. Existing
+published versions and tags are immutable; recovery uses a new coordinated
+version built and gated by the tag workflow.
 Installing all three from npm succeeded. The real V2 CLI also installed the
 OpenCode package and an actual native session stored a fact through the
 published PyPI wheel. That wheel's CLI installer and remember/recall/forget

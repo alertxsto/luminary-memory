@@ -2,8 +2,15 @@
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-11-14
+
+Coordinated Python and native-plugin release from one source revision.
+This replaces the mismatched npm `0.3.3` builds without overwriting them.
+
 ### Fixed
 
+- Isolate the inspector's default-store test from the operator's home on
+  Windows by setting `USERPROFILE` as well as `HOME`.
 - Native core memory is now a separate, query-independent DB-backed baseline
   loaded through the bridge's new `core` action, which takes no query. Query
   recall stays pure evidence: it removes rows already present in the loaded
@@ -39,9 +46,11 @@ companion; the interactive UI roadmap is incomplete.
 ### Added
 
 - Published the Python bridge and all three native npm packages at `0.3.3`.
-  npm `latest` points to `0.3.3` for `luminary-memory-pi`,
-  `luminary-memory-opencode`, and `luminary-memory-omp`; registry shasums were
-  verified after publication.
+  The npm packages were published later from `develop`, not the `v0.3.3`
+  tag, and their built entry points differ from the downloadable release
+  tarballs. Matching version numbers do not establish compatibility or
+  identical provenance. Use the tagged GitHub tarballs with Python `0.3.3`
+  until a coordinated replacement release is available.
 - Optional operator config file (`~/.luminary/luminary.env`) shared by native
   integrations and the CLI. Env-style `LUMINARY_*` settings load before
   `Settings` is constructed; process environment wins, `LUMINARY_CONFIG_FILE`
