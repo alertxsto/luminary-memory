@@ -81,9 +81,9 @@ API or standalone desktop app is assumed. A portable OpenCode agent skill lives
 at [`opencode/SKILL.md`](opencode/SKILL.md); install it under
 `~/.config/opencode/skills/luminary-memory/` or a project's `.opencode/skills/`.
 
-The `0.3.3` source includes native interactive inspectors for the verified
+The `0.3.4` source includes native interactive inspectors for the verified
 surfaces: OpenCode CLI/Desktop, pi and omp, Hermes Desktop/dashboard and an
-explicitly launched loopback companion. The `0.3.3` registry packages include
+explicitly launched loopback companion. The `0.3.4` registry packages include
 the inspector; see the installation guide for current availability.
 Two native targets remain blocked on upstream
 contracts and are recorded in the roadmap: OpenCode Web GUI contribution
@@ -111,10 +111,10 @@ The three installable tarballs are written to `artifacts/plugins/`. Set
 Choose the native package **or** the copied hook, never both.
 
 Registry names are `luminary-memory-pi`, `luminary-memory-opencode`, and
-`luminary-memory-omp`. Use version-matched Python and plugin artifacts from
-the same tagged release. The npm `0.3.3` builds were published from a later
-`develop` revision and differ from the `v0.3.3` GitHub tarballs; use those
-tagged tarballs with Python `0.3.3`, not the npm builds.
+`luminary-memory-omp`. Python and all three npm `latest` tags are `0.3.4`.
+The npm tarballs are byte-identical to the tagged GitHub release assets,
+and their built resources match the PyPI wheel. Use this coordinated release
+instead of the mismatched npm `0.3.3` builds.
 The pi manifest includes `pi-package` for eligibility in the
 [official package catalog](https://pi.dev/packages). OpenCode's existing
 Ecosystem PR targets legacy V1 docs, not a verified V2 listing; no V2 website

@@ -2,13 +2,13 @@
 
 A lightweight, self-hosted memory layer for AI agents.
 
-> Release candidate: `0.3.4` — native interactive memory inspection across the
+> Released baseline: `0.3.4` — native interactive memory inspection across the
 > verified hosts, backed by the strict scoped accuracy path: scope isolation,
 > evidence/provenance, conflict history, abstention, delivery-safe Telegram
 > activity reporting, and scoped JSONL transparency events. Verification:
-> `684 passed, 19 skipped, 1 deselected` standalone with `79%` full-source
-> coverage; `695 passed, 8 skipped, 1 deselected` against the official Hermes
-> SDK. The deselected case is the known Windows file-permission test.
+> the tagged Publish workflow passed native-package, real-model, and official
+> Hermes SDK gates. Local standalone tests passed with unavailable SDK cases
+> skipped and the known Windows POSIX-permission test deselected.
 
 ## What it does
 
