@@ -230,7 +230,7 @@ def _recall(client, text, session, agent, settings, scope):
         if selected:
             try:
                 core, _ = _core(client, settings)
-            except Exception:
+            except Exception:  # noqa: BLE001 -- dedup is best-effort; never fail recall
                 core = []
             core_ids = {memory.id for memory in core}
             core_contents = {key for memory in core if (key := _content_key(memory))}
