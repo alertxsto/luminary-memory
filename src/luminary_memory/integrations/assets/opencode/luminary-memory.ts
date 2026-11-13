@@ -27,6 +27,7 @@ type Turn = {
   user: string
   workspace: string
   controller: AbortController
+  core: Promise<Reply>
   recall: Promise<Reply>
   retention?: Promise<void>
   lastRetention?: Reply
@@ -40,6 +41,7 @@ const MAX_SESSIONS = 128
 // Installer replaces this quoted token with the installing interpreter's path.
 const INSTALLED_PYTHON: string = "__LUMINARY_PYTHON__"
 const RECALL_MESSAGE_PREFIX = "luminary:recall:"
+const CORE_MESSAGE_PREFIX = "luminary:core:"
 
 function failure(reason: string, message: string, status = "error"): Reply {
   return { ok: status === "skipped", status, reason, message, context: "", memories: [], stored: 0, deleted: 0 }
@@ -288,7 +290,8 @@ export default Plugin.define({
     })
     await ctx.session.hook("context", async (event) => {
       // Context hooks edit only this request, never persistent transcript/system authority.
-      event.messages = event.messages.filter(message => !message.id?.startsWith(RECALL_MESSAGE_PREFIX))
+      event.messages = event.messages.filter(message =>
+        !message.id?.startsWith(RECALL_MESSAGE_PREFIX) && !message.id?.startsWith(CORE_MESSAGE_PREFIX))
       if (controller.signal.aborted) return
       try {
         const signal = readSignal()
@@ -309,28 +312,35 @@ export default Plugin.define({
           if (turns.size >= MAX_SESSIONS) forgetTurn(turns.keys().next().value!)
           const owner = new AbortController()
           const bounded = user.text.length <= MAX_TEXT
+          const guard = AbortSignal.any([controller.signal, owner.signal])
           turn = {
             messageID: user.id, user: bounded ? user.text.trim() : "", workspace, controller: owner, touched: now,
+            // Core is query-independent baseline; recall is scoped to this user turn.
+            core: call("core", event.sessionID, workspace, {}, guard),
             recall: bounded
-              ? call("recall", event.sessionID, workspace, { query: user.text }, AbortSignal.any([controller.signal, owner.signal]))
+              ? call("recall", event.sessionID, workspace, { query: user.text }, guard)
               : Promise.resolve(failure("input_limit", "Automatic recall skipped: user message exceeds the input limit.", "skipped")),
           }
           turns.set(event.sessionID, turn)
         }
-        const reply = await turn.recall
-        if (turns.get(event.sessionID) !== turn || !reply.ok || reply.status !== "ok" ||
-            !reply.memories.length || !reply.context.trim()) return
-        event.messages.unshift({
-          id: RECALL_MESSAGE_PREFIX + turn.messageID,
-          role: "user",
-          content: [{ type: "text", text: reply.context }],
-        })
+        const [core, recall] = await Promise.all([turn.core, turn.recall])
+        if (turns.get(event.sessionID) !== turn) return
+        const injected: { id: string; role: "user"; content: { type: "text"; text: string }[] }[] = []
+        if (core.ok && core.context.trim()) {
+          injected.push({ id: CORE_MESSAGE_PREFIX + turn.messageID, role: "user", content: [{ type: "text", text: core.context }] })
+        }
+        if (recall.ok && recall.status === "ok" && recall.context.trim()) {
+          injected.push({ id: RECALL_MESSAGE_PREFIX + turn.messageID, role: "user", content: [{ type: "text", text: recall.context }] })
+        }
+        // Baseline first, then turn-local reference, then the live user message.
+        event.messages.unshift(...injected)
       } catch {
         if (!controller.signal.aborted) {
           forgetTurn(event.sessionID)
           if (turns.size >= MAX_SESSIONS) forgetTurn(turns.keys().next().value!)
           turns.set(event.sessionID, {
             messageID: "", user: "", workspace: "", controller: new AbortController(), touched: Date.now(),
+            core: Promise.resolve(failure("session_read", "Unable to read the admitted native turn; no memory context injected.")),
             recall: Promise.resolve(failure("session_read", "Unable to read the admitted native turn; no memory context injected.")),
           })
         }

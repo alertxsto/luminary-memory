@@ -8,9 +8,11 @@ Two maintenance layers keep the store lean: deterministic passes
 (`run_lifecycle()`) and LLM-driven curation (`run_maintenance()`).
 
 The Hermes exact-session episode ledger is not part of either semantic
-maintenance pass. Episodes are immutable continuity evidence and are read only
-for the current session fallback; they are not ranked, consolidated, or
-pruned as durable memories by `run_lifecycle()`.
+maintenance pass. Episodes are immutable continuity evidence while retained and
+are read only for the current session fallback; they are not ranked or
+consolidated as durable memories. `run_lifecycle()` applies a separate,
+scope-aware row-cap retention to episodes, audit events, and evidence so a
+long-lived store cannot grow without bound.
 
 ## `run_lifecycle()`, deterministic passes
 
@@ -64,6 +66,21 @@ size cap even if importance-based pruning never fires.
 **Rule pinning (v0.2.11+):** memories at importance ≥ 0.9 are pinned and never
 pruned — neither by importance threshold nor by the `max_memories` cap. This
 protects durable rules (e.g. "always use markdown tables") from being evicted.
+
+### ledger retention
+
+`run_lifecycle()` also bounds the append-only ledgers. It keeps the newest rows
+per exact scope and deletes the oldest excess:
+
+| Ledger | Setting | Default |
+|---|---|---:|
+| `episodes` | `LUMINARY_EPISODE_MAX_ROWS` | `10000` |
+| `memory_events` | `LUMINARY_EVENT_MAX_ROWS` | `50000` |
+| `memory_evidence` | `LUMINARY_EVIDENCE_MAX_ROWS` | `50000` |
+
+`0` disables pruning for that ledger. The newest rows are retained, so current
+session continuity and recent audit remain available. Evidence is scoped
+through its owning memory because the evidence table has no ownership columns.
 
 ### Batched passes (v0.2.12+)
 
@@ -236,13 +253,17 @@ runs in the normal suite (`tests/test_soak_behaviour.py`).
 
 Observed on the fake engine over 400 cycles (175 memories): control misses `0`,
 no-answer leaks `0`, recall p50 `3.4 ms → 4.7 ms` (`1.40x`). The file did grow
-to ~5.6 MB, which is the unbounded ledger described in the retention note below,
-not recall degradation.
+to ~5.6 MB before ledger retention was added; that growth was the append-only
+ledger described below, not recall degradation.
 
 > **Storage growth.** `episodes`, `memory_events` and `memory_evidence` are
-> append-only and are deliberately not touched by `run_lifecycle()`. A direct
-> `MemoryClient.ingest()` writes a verbatim episode copy of the content already
-> in `memories`, so a long-lived store holds two copies of every fact with no
-> retention bound. Measured write amplification per ingest: 1 memory → 1
-> episode + 1 event + 1 evidence row + up to 8 relation pairs, and a rejected
+> append-only between lifecycle passes. `run_lifecycle()` keeps the newest
+> `LUMINARY_EPISODE_MAX_ROWS` episodes (default 10,000),
+> `LUMINARY_EVENT_MAX_ROWS` events (default 50,000), and
+> `LUMINARY_EVIDENCE_MAX_ROWS` evidence rows (default 50,000) per exact scope.
+> Set any cap to `0` to disable that ledger's pruning. A direct
+> `MemoryClient.ingest()` still writes a verbatim episode copy of the content
+> already in `memories`; the cap bounds that duplication instead of removing
+> the provenance contract. Measured write amplification per ingest: 1 memory →
+> 1 episode + 1 event + 1 evidence row + up to 8 relation pairs, and a rejected
 > duplicate still records a `duplicate_suppressed` event.

@@ -526,3 +526,65 @@ def test_get_backend_pgvector_requires_positive_dim():
         assert "embedding_dim" in str(exc)
     else:
         raise AssertionError("expected ValueError when embedding_dim <= 0")
+
+
+def test_prune_episodes_and_events_keep_newest_rows(tmp_path):
+    b = _mk(tmp_path)
+    for i in range(5):
+        b.record_episode(f"episode-{i}", f"content {i}", source="test")
+        b.record_event("test_event", None, after={"i": i})
+
+    assert b.prune_episodes(2) == 3
+    assert b.prune_events(3) == 2
+
+    episodes = [row[0] for row in b.conn.execute(
+        "SELECT id FROM episodes ORDER BY created_at, rowid"
+    )]
+    events = [row[0] for row in b.conn.execute(
+        "SELECT after_json FROM memory_events ORDER BY created_at, id"
+    )]
+    assert episodes == ["episode-3", "episode-4"]
+    assert len(events) == 3
+    b.close()
+
+
+def test_prune_episodes_respects_exact_scope(tmp_path):
+    b = _mk(tmp_path)
+    b.record_episode("mine-1", "mine 1", source="test", user_id="u1")
+    b.record_episode("mine-2", "mine 2", source="test", user_id="u1")
+    b.record_episode("other", "other", source="test", user_id="u2")
+
+    assert b.prune_episodes(1, scope={"user_id": "u1"}, include_global=False) == 1
+    remaining = {row[0] for row in b.conn.execute("SELECT id FROM episodes")}
+    assert remaining == {"mine-2", "other"}
+    b.close()
+
+
+def test_prune_evidence_keeps_newest_rows(tmp_path):
+    b = _mk(tmp_path)
+    mid = b.add(Memory(content="evidence owner"))
+    for i in range(5):
+        b.add_evidence(mid, f"quote {i}", source_id=f"source-{i}")
+
+    assert b.prune_evidence(2) == 3
+    remaining = [row[0] for row in b.conn.execute(
+        "SELECT quote FROM memory_evidence ORDER BY created_at, id"
+    )]
+    assert remaining == ["quote 3", "quote 4"]
+    b.close()
+
+
+def test_prune_evidence_respects_owner_scope(tmp_path):
+    b = _mk(tmp_path)
+    mine = b.add(Memory(content="mine", user_id="u1"))
+    other = b.add(Memory(content="other", user_id="u2"))
+    b.add_evidence(mine, "mine quote")
+    b.add_evidence(other, "other quote")
+
+    assert b.prune_evidence(0, scope={"user_id": "u1"}, include_global=False) == 0
+    assert b.prune_evidence(1, scope={"user_id": "u1"}, include_global=False) == 0
+    b.add_evidence(mine, "mine quote 2")
+    assert b.prune_evidence(1, scope={"user_id": "u1"}, include_global=False) == 1
+    remaining = {row[0] for row in b.conn.execute("SELECT quote FROM memory_evidence")}
+    assert remaining == {"mine quote 2", "other quote"}
+    b.close()

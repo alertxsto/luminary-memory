@@ -253,7 +253,10 @@ def test_config_cannot_initialize_an_unopened_native_binding(tmp_path):
 
 
 def test_missing_mapping_store_uses_default_not_process_store(tmp_path, monkeypatch):
+    # Path.home() reads USERPROFILE on Windows and HOME elsewhere; setting only
+    # HOME would resolve to the operator's real home and open their store.
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     process_store = tmp_path / "process.db"
     monkeypatch.setenv("LUMINARY_DB_PATH", str(process_store))
     environment = context(tmp_path)

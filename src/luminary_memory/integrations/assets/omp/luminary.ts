@@ -6,16 +6,18 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { registerOmpInspector } from "./inspector.js";
 import { bridgeEnvironment, nativeUserSource, type RememberSource } from "../common/bridge-source.js";
 
-type Action = "recall" | "remember" | "forget" | "activity" | "turn";
+type Action = "core" | "recall" | "remember" | "forget" | "activity" | "turn";
 type Arguments = { query?: string; text?: string; evidence_quote?: string; tags?: string[]; memory_id?: number; user?: string; assistant?: string };
 type Reply = {
   ok: boolean; status: string; reason: string; message: string; context: string;
   memories: unknown[]; stored: number; deleted: number;
 };
-type PendingTurn = { session: string; workspace: string; user: string; recall?: Reply };
+type PendingTurn = { session: string; workspace: string; user: string; core?: Promise<Reply>; recall?: Promise<Reply>; reported?: boolean };
 const MAX_OUTPUT = 256 * 1024;
 const TIMEOUT_MS = 60_000;
 const HELP = "/luminary recall QUERY | remember TEXT | forget ID | activity";
+const CORE_MESSAGE_TYPE = "luminary_core";
+const RECALL_MESSAGE_TYPE = "luminary_recall";
 
 function failure(message: string): Reply {
   return { ok: false, status: "error", reason: "adapter_error", message, context: "", memories: [], stored: 0, deleted: 0 };
@@ -109,18 +111,33 @@ export default function luminary(pi: ExtensionAPI) {
     if (!event.prompt.trim()) { pending = undefined; return; }
     const turn: PendingTurn = { session: ctx.sessionManager.getSessionId(), workspace: resolve(ctx.cwd), user: event.prompt };
     pending = turn;
-    const reply = await bridge(ctx, "recall", { query: event.prompt.slice(0, 8_000) });
-    if (pending !== turn || turn.session !== ctx.sessionManager.getSessionId() || turn.workspace !== resolve(ctx.cwd)) return;
-    turn.recall = reply;
-    report(ctx, "recall", reply);
+    // Core is query-independent baseline; recall is scoped to this admitted user turn.
+    turn.core = bridge(ctx, "core", {});
+    turn.recall = bridge(ctx, "recall", { query: event.prompt.slice(0, 8_000) });
   });
-  pi.on("context", (event, ctx) => {
-    const messages = event.messages.filter(message => !(message.role === "custom" && message.customType === "luminary_recall"));
+  pi.on("context", async (event, ctx) => {
+    const messages = event.messages.filter(message => !(message.role === "custom" &&
+      (message.customType === CORE_MESSAGE_TYPE || message.customType === RECALL_MESSAGE_TYPE)));
     const turn = pending;
-    if (!turn || turn.session !== ctx.sessionManager.getSessionId() || turn.workspace !== resolve(ctx.cwd) ||
-        !turn.recall?.ok || turn.recall.status !== "ok" || !turn.recall.memories.length || !turn.recall.context.trim()) return { messages };
-    return { messages: [{ role: "custom", customType: "luminary_recall", display: false,
-      content: turn.recall.context, timestamp: Date.now() }, ...messages] };
+    if (!turn || turn.session !== ctx.sessionManager.getSessionId() || turn.workspace !== resolve(ctx.cwd)) return { messages };
+    const [core, recall] = await Promise.all([
+      turn.core ?? Promise.resolve(failure("Luminary core request was not started")),
+      turn.recall ?? Promise.resolve(failure("Luminary recall request was not started")),
+    ]);
+    if (pending !== turn || turn.session !== ctx.sessionManager.getSessionId() || turn.workspace !== resolve(ctx.cwd)) return { messages };
+    // Hosts may rebuild one request several times; status is a per-turn report.
+    if (!turn.reported) {
+      turn.reported = true;
+      report(ctx, "core", core);
+      report(ctx, "recall", recall);
+    }
+    const injected: { role: "custom"; customType: string; display: boolean; content: string; timestamp: number }[] = [];
+    // Baseline first, then the turn-local reference, then the live messages.
+    if (core.ok && core.context.trim()) injected.push({ role: "custom", customType: CORE_MESSAGE_TYPE, display: false,
+      content: core.context, timestamp: Date.now() });
+    if (recall.ok && recall.status === "ok" && recall.context.trim()) injected.push({ role: "custom", customType: RECALL_MESSAGE_TYPE, display: false,
+      content: recall.context, timestamp: Date.now() });
+    return { messages: [...injected, ...messages] };
   });
   pi.on("turn_end", async (event, ctx) => {
     const message = event.message;

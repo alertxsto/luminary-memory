@@ -8,9 +8,9 @@ continues to use its public `MemoryProvider` lifecycle.
 | Adapter | Contract | Interaction surface |
 | --- | --- | --- |
 | Hermes | Public `MemoryProvider`, existing installer | Provider tools/status in supported Hermes clients; read-only scoped Telegram activity hook |
-| OpenCode V2 | `@opencode/cli` and `@opencode/plugin` 2.1.4, `Plugin.define` server API | Native tools/progress/results in connected clients; automatic recall and curated retention |
-| pi | Extension API verified against `@earendil-works/pi-coding-agent` 1.4.0 | `/luminary`, model tool, TUI dialogs/status, serializable session messages for RPC consumers |
-| omp | Extension API verified against v18.12.6; installed **18.18.5** acceptance re-verified | `/luminary`, model tool, TUI dialogs/status, serializable session messages for RPC consumers |
+| OpenCode V2 | `@opencode/cli` and `@opencode/plugin` 2.1.4, `Plugin.define` server API | Native tools/progress/results in connected clients; core baseline, automatic recall, and curated retention |
+| pi | Extension API verified against `@earendil-works/pi-coding-agent` 1.4.0 | `/luminary`, model tool, TUI dialogs/status, core baseline and automatic recall, serializable session messages for RPC consumers |
+| omp | Extension API verified against v18.12.6; installed **18.18.5** acceptance re-verified | `/luminary`, model tool, TUI dialogs/status, core baseline and automatic recall, serializable session messages for RPC consumers |
 
 OpenCode V2 uses the plural `plugins` config, a default `Plugin.define` export,
 and Promise domain APIs. The older Luminary npm `0.3.1` adapter targets V1;
@@ -25,13 +25,15 @@ and omp. That means ownership by this project, not endorsement or listing
 approval by the harness maintainers. All three compile the canonical adapter
 source under `src/luminary_memory/integrations/assets/`; no second memory engine
 or separate adapter fork is maintained.
-Python and all three native npm packages are published at `0.3.2`, with npm
-`latest` pointing to that version. The OpenCode adapter targets V2; the older
-npm `0.3.1` adapter is V1-only. Install the Python bridge into the environment
+Python and all three native npm packages list `0.3.3`, but the later npm
+builds differ from the tagged GitHub tarballs. Use those tagged tarballs
+with Python `0.3.3` until a coordinated replacement is published.
+The OpenCode adapter targets V2; the older npm `0.3.1` adapter is V1-only.
+Install the Python bridge into the environment
 the host will use:
 
 ```bash
-python -m pip install --upgrade "luminary-memory==0.3.2"
+python -m pip install --upgrade "luminary-memory==0.3.3"
 export LUMINARY_PYTHON=/absolute/venv/bin/python
 ```
 
@@ -63,7 +65,7 @@ path. No package install hook silently installs Python dependencies.
 | --- | --- | --- |
 | pi | `pi install /absolute/repo/plugins/pi` | `pi install npm:luminary-memory-pi` |
 | omp | `omp plugin link /absolute/repo/plugins/omp` | `omp plugin install luminary-memory-omp` |
-| OpenCode V2 | `{"plugins":["/absolute/repo/plugins/opencode/dist"]}`; configured local paths must be directories | `opencode plugin add luminary-memory-opencode@0.3.2`, or `{"plugins":["luminary-memory-opencode@0.3.2"]}` |
+| OpenCode V2 | `{"plugins":["/absolute/repo/plugins/opencode/dist"]}`; configured local paths must be directories | `opencode plugin add luminary-memory-opencode@0.3.3`, or `{"plugins":["luminary-memory-opencode@0.3.3"]}` |
 
 Local pi/omp packages load in place, so keep the installed directory. An
 extracted tarball works independently of this repository. See the host READMEs
@@ -110,12 +112,21 @@ The first publication requires maintainer npm authorization. Use
 the next coordinated release; do not overwrite an already-published Python tag.
 See [contributor release instructions](../CONTRIBUTING.md).
 
-Publication verified on 2026-10-25: Python and all three npm packages are
-available at `0.3.2`:
+Publication verified on 2026-11-14: Python and all three npm packages are
+available at `0.3.3`:
 [pi](https://www.npmjs.com/package/luminary-memory-pi),
 [OpenCode](https://www.npmjs.com/package/luminary-memory-opencode), and
 [omp](https://www.npmjs.com/package/luminary-memory-omp).
-All npm `latest` tags and SHA-512 checksums match the validated release assets.
+All npm `latest` tags point to `0.3.3`. Verified SHA-1 shasums:
+pi `a5c613417ef20c4e178e53a5e56e5b9e4e0c121d`,
+OpenCode `ee8ffe5a4089b5441dde52af9a90d4f0ce37fe9b`,
+omp `82d18ba70ebba95d3566c1f394561000a76d34c5`.
+
+These npm shasums do not match the `v0.3.3` GitHub release tarballs. The npm
+entry points match later `develop` builds, which use the new `core` bridge
+action. Do not treat npm and PyPI `0.3.3` as one validated release. Existing
+published versions and tags are immutable; recovery uses a new coordinated
+version built and gated by the tag workflow.
 Installing all three from npm succeeded. The real V2 CLI also installed the
 OpenCode package and an actual native session stored a fact through the
 published PyPI wheel. That wheel's CLI installer and remember/recall/forget
@@ -141,7 +152,7 @@ proof of a live website listing.
 ## Interactive inspectors
 
 The `0.3.3` source includes the inspector in the Python and native npm
-packages. The published `0.3.2` packages do not include it. Installing the
+packages. The published `0.3.3` packages include it. Installing the
 inspector does not enable saving, start a server on import, or call an AI model.
 Exact tested native hosts and the two remaining blocked surfaces are recorded
 in the [roadmap matrix](ROADMAP.md#target-support-matrix).
@@ -241,7 +252,7 @@ This remains an alternative to native package installation. Install the
 published Python bridge, then copy only the adapter for the host you use:
 
 ```bash
-python -m pip install --upgrade "luminary-memory==0.3.2"
+python -m pip install --upgrade "luminary-memory==0.3.3"
 luminary-memory hook install opencode
 luminary-memory hook install pi
 luminary-memory hook install omp
@@ -370,16 +381,61 @@ or to a project's `.opencode/skills/luminary-memory/SKILL.md`. OpenCode
 discovers both locations automatically; no `opencode.json` entry is required.
 The skill is documentation only and does not change plugin behavior.
 
-## Automatic recall and retention
+## Core baseline
 
-Before a normal user run, adapters recall strictly relevant, evidence-bearing
-memory. Core-tagged rows must pass the same retrieval gate; unrelated core
-rows do not override abstention. This differs from Hermes's separate pinned-core
-surface. Historical data is a request-local, non-system reference before the
-live user message, not a persistent transcript entry. Empty recall injects
-nothing. Whole JSON records are serialized once within the bridge's 8000-character
-budget; adapters do not slice or double-encode that reference. Aborted/error/
-tool-only responses are not automatically retained. Compaction is not a write.
+Core memory is a separate, database-backed baseline, not part of query recall.
+Confirmed core-tagged rows load independently of the current query before the
+live user message. `core` is a bridge action with no query or text field: it
+takes the usual agent, workspace, and session binding and returns status `ok`
+with the currently valid core rows and one labeled `<luminary-core-memory>`
+context block. Empty core is `ok` with `memories: []` and `context: ""`; it is
+not an error, does not call query recall, and does not mutate access or ranking
+state.
+
+Core selection binds the exact adapter scope without global rows and keeps only
+active, currently valid rows. Rows follow their stable core-tag insertion order;
+`LUMINARY_CORE_TOP_N` (default 12, capped at 12; `0` disables baseline loading)
+limits how many rows are used and `LUMINARY_CORE_BUDGET` (default 8000)
+bounds the total content characters across the selected rows, not the rendered
+block including JSON, IDs, tags, or labels. A row that does not fit whole is
+skipped, never truncated. Adapters fetch core afresh at the start of each
+admitted user run, so an explicit remember, forget, or retraction is visible
+without restarting the host. The block is request-local, non-system reference
+data: adapters replace their own marked baseline instead of appending duplicate
+transcript entries. Its label says confirmed durable identity, preferences, and
+rules are subordinate default context; current system instructions, verified
+runtime state, and an explicit current user correction take precedence without
+silently editing stored memory. A failed core request injects no fabricated
+baseline.
+
+pi and omp prepend the core block and then a non-empty successful recall
+reference as request-only custom messages in their `context` hook; OpenCode
+unshifts the matching request-local parts before the live user message in its
+`context` hook. All three filter out their own previously injected baseline and
+recall entries so repeated turns do not grow the visible conversation. Hosts
+may resend baseline when their model API requires it, equivalent to resending
+`AGENTS.md`; the adapter does not create a duplicate transcript entry.
+
+## Query recall
+
+Before a normal user run, adapters recall only query-relevant,
+evidence-bearing memory. Recall is pure: a returned row already represented in
+the loaded core baseline by ID or normalized content is removed, so it never
+appears twice. If only core rows matched, recall returns `abstain` with
+`reason: matches_already_in_core`, empty `memories`, and empty `context`; core
+never turns abstention into success. An engine `ok` result whose rows are all
+invalid, already in core, or otherwise not deliverable becomes `abstain` with
+`reason: no_deliverable_candidate` (or `matches_already_in_core` when only core
+matched), with empty `memories` and `context`. Other results keep the engine's
+status and reason. Recall uses its own row cap and 8000-character whole-row
+serialization budget; the core budget is separate and neither expands the other.
+
+The recall result is a request-local, non-system reference before the live user
+message, not a persistent transcript entry. Empty, abstained, or failed recall
+injects nothing: pi/omp add no custom message and OpenCode adds no recall part.
+Historical data is untrusted; adapters attach the bridge's context string as-is
+without slicing or double JSON encoding. Aborted/error/tool-only responses are
+not automatically retained. Compaction is not a write.
 
 Automatic durable capture is disabled unless configured:
 
@@ -410,19 +466,29 @@ Run `python -m luminary_memory.integrations bridge` (or
 `luminary-memory hook bridge`) with **one UTF-8 JSON object on stdin**, then
 close stdin. Never interpolate user text into a shell command:
 
+Query recall:
+
 ```json
 {"agent":"another-supported-host","workspace":"/absolute/project","session_id":"native-session-42","action":"recall","query":"deploy target"}
 ```
 
+Baseline load (no query):
+
+```json
+{"agent":"another-supported-host","workspace":"/absolute/project","session_id":"native-session-42","action":"core"}
+```
+
 The stable harness identifier accepts `[a-z][a-z0-9._-]{0,63}`; it is an ownership
-key, not a dynamically loaded plugin name. Actions: `recall` (`query`), `remember`
-(`text`, `evidence_quote`, optional `tags`), `forget` (`memory_id`), `activity`, and `turn` (`user`,
-`assistant`, optional lineage `tags`). Every action requires absolute workspace,
-agent ID, and native session ID. Maximum request: 128 KiB; each text field:
-32,768 characters. A response is a UTF-8 JSON object containing `ok`, `status`,
-`reason`, `message`, `context`, `memories`, `stored`, and `deleted`; errors exit
-nonzero. Keep stdout reserved for that response and treat recalled data as
-untrusted. Native adapters bound process lifetime/output and use no shell.
+key, not a dynamically loaded plugin name. Actions: `core` (no query or text),
+`recall` (`query`), `remember` (`text`, `evidence_quote`, optional `tags`),
+`forget` (`memory_id`), `activity`, and `turn` (`user`, `assistant`, optional
+lineage `tags`). Every action requires absolute workspace, agent ID, and native
+session ID. Maximum request: 128 KiB; each text field: 32,768 characters. A
+response is a UTF-8 JSON object containing `ok`, `status`, `reason`, `message`,
+`context`, `memories`, `stored`, and `deleted`; errors exit nonzero. `core`
+returns status `ok` even when it has no valid rows, in which case `memories` and
+`context` are empty. Keep stdout reserved for that response and treat recalled
+data as untrusted. Native adapters bound process lifetime/output and use no shell.
 
 For remember, the **trusted adapter**, never model arguments, supplies a fresh
 `LUMINARY_BRIDGE_SOURCE` environment value to that one child process:

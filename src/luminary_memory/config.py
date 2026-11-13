@@ -229,6 +229,10 @@ class Settings:
     )
     token_budget: int = field(default_factory=lambda: _env_int("LUMINARY_TOKEN_BUDGET", 4096))
     max_memories: int | None = field(default_factory=lambda: _env_int("LUMINARY_MAX_MEMORIES", 1000))
+    # Append-only ledger retention. 0 disables pruning for that ledger.
+    episode_max_rows: int = field(default_factory=lambda: _env_int("LUMINARY_EPISODE_MAX_ROWS", 10000))
+    event_max_rows: int = field(default_factory=lambda: _env_int("LUMINARY_EVENT_MAX_ROWS", 50000))
+    evidence_max_rows: int = field(default_factory=lambda: _env_int("LUMINARY_EVIDENCE_MAX_ROWS", 50000))
     # Safety policy.  Legacy direct clients keep permissive recall unless
     # enabled, while Hermes/CLI accuracy paths opt into strict abstention.
     strict_recall: bool = field(default_factory=lambda: _env_bool("LUMINARY_STRICT_RECALL", False))
@@ -300,6 +304,9 @@ class Settings:
             "recall_min_score": self.recall_min_score,
             "token_budget": self.token_budget,
             "max_memories": self.max_memories,
+            "episode_max_rows": self.episode_max_rows,
+            "event_max_rows": self.event_max_rows,
+            "evidence_max_rows": self.evidence_max_rows,
             "strict_recall": self.strict_recall,
             "scope_include_global": self.scope_include_global,
             "abstention_min_confidence": self.abstention_min_confidence,

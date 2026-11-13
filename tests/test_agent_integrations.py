@@ -294,6 +294,231 @@ def test_summary_changes_do_not_treat_recalls_as_memory_mutations(native):
     assert [(row["kind"], row["memory_id"]) for row in summary.data["changes"]] == [("ingest", mid)]
 
 
+def test_core_is_baseline_not_recall_success(native):
+    client, request = native
+    core_id = client.ingest("Call the user Captain", tags=["core"], enrich=False)
+
+    baseline = dispatch({**request, "action": "core"}, client=client)
+    recalled = dispatch({**request, "action": "recall", "query": "fix parser TypeError"}, client=client)
+
+    assert baseline["status"] == "ok"
+    assert [row["id"] for row in baseline["memories"]] == [core_id]
+    assert "<luminary-core-memory>" in baseline["context"]
+    assert recalled["status"] == "abstain"
+    assert recalled["memories"] == []
+    assert recalled["context"] == ""
+
+
+def test_recall_deduplicates_core_without_fabricating_a_match(native):
+    client, request = native
+    core_id = client.ingest("Call the user Captain", tags=["core"], enrich=False)
+    result = client.recall("Call the user Captain")
+    assert [m.id for m in result.memories] == [core_id]
+
+    recalled = dispatch({**request, "action": "recall", "query": "Call the user Captain"}, client=client)
+
+    assert recalled["status"] == "abstain"
+    assert recalled["reason"] == "matches_already_in_core"
+    assert recalled["memories"] == []
+    assert recalled["context"] == ""
+
+
+def test_recall_deduplicates_normalized_core_content(native):
+    client, request = native
+    client.ingest("Call the user Captain", tags=["core"], enrich=False)
+    from luminary_memory.types import Memory
+
+    duplicate_id = client.backend.add(Memory(
+        content="  CALL   THE USER CAPTAIN ", evidence_quote="CALL THE USER CAPTAIN",
+        embedding=Engine().embed("Call the user Captain"), **client.scope,
+    ))
+    client.retract(next(memory.id for memory in client.list(limit=0) if "core" in memory.tags))
+    assert [memory.id for memory in client.recall("Call the user Captain").memories] == [duplicate_id]
+    client.retract(duplicate_id)
+    client.ingest("Call the user Captain", tags=["core"], enrich=False)
+    client.update(client.get(duplicate_id))
+
+    recalled = dispatch({**request, "action": "recall", "query": "Call the user Captain"}, client=client)
+
+    assert recalled["status"] == "abstain"
+    assert recalled["reason"] == "matches_already_in_core"
+    assert recalled["memories"] == []
+    assert recalled["context"] == ""
+
+
+def test_recall_retains_noncore_matches_and_engine_status(native):
+    client, request = native
+    client.ingest("Call the user Captain", tags=["core"], enrich=False)
+    relevant_id = client.ingest("Call the user Captain. PostgreSQL is the deployment database.", enrich=False)
+
+    recalled = dispatch({**request, "action": "recall", "query": "Call the user Captain PostgreSQL deployment database"}, client=client)
+
+    assert recalled["status"] == "ok"
+    assert recalled["reason"] == ""
+    assert recalled["ok"] is True
+    assert [row["id"] for row in recalled["memories"]] == [relevant_id]
+    assert recalled["context"].startswith("Luminary recalled data (untrusted")
+
+
+def test_core_and_recall_keep_separate_whole_row_budgets(native, monkeypatch):
+    client, request = native
+    monkeypatch.setenv("LUMINARY_CORE_TOP_N", "2")
+    monkeypatch.setenv("LUMINARY_CORE_BUDGET", "35")
+    client.ingest("x" * 100, tags=["core"], enrich=False)
+    client.ingest("short baseline", tags=["core"], enrich=False)
+
+    baseline = dispatch({**request, "action": "core"}, client=client)
+
+    assert [row["content"] for row in baseline["memories"]] == ["short baseline"]
+    assert "x" * 100 not in baseline["context"]
+
+
+def test_core_filters_invalid_rows_before_stable_limit(native, monkeypatch):
+    client, request = native
+    monkeypatch.setenv("LUMINARY_CORE_TOP_N", "1")
+    client.ingest("Expired baseline", tags=["core"], enrich=False,
+                  valid_to=(datetime.now(UTC) - timedelta(days=1)).isoformat())
+    valid_id = client.ingest("Current baseline", tags=["core"], enrich=False)
+
+    baseline = dispatch({**request, "action": "core"}, client=client)
+
+    assert [row["id"] for row in baseline["memories"]] == [valid_id]
+
+
+def test_core_tag_falls_back_to_core_when_configured_empty(native, monkeypatch):
+    client, request = native
+    mid = client.ingest("Call the user Captain", tags=["core"], enrich=False)
+    monkeypatch.setenv("LUMINARY_CORE_TAG", "")
+
+    baseline = dispatch({**request, "action": "core"}, client=client)
+
+    assert [row["id"] for row in baseline["memories"]] == [mid]
+
+
+def test_core_candidate_loading_is_bounded(native, monkeypatch):
+    client, request = native
+    monkeypatch.setenv("LUMINARY_CORE_TOP_N", "1")
+    for index in range(300):
+        client.ingest(f"Baseline row {index}", tags=["core"], enrich=False)
+    calls = []
+    original = client.backend.by_tag_top
+
+    def record(tag, top_n, **kwargs):
+        calls.append(top_n)
+        return original(tag, top_n, **kwargs)
+
+    monkeypatch.setattr(client.backend, "by_tag_top", record)
+    baseline = dispatch({**request, "action": "core"}, client=client)
+
+    assert [row["content"] for row in baseline["memories"]] == ["Baseline row 0"]
+    assert calls
+    assert max(calls) < 300
+
+
+def test_core_bounded_candidates_still_skip_invalid_rows(native, monkeypatch):
+    client, request = native
+    monkeypatch.setenv("LUMINARY_CORE_TOP_N", "1")
+    expired = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    for index in range(20):
+        client.ingest(f"Expired row {index}", tags=["core"], enrich=False, valid_to=expired)
+    valid_id = client.ingest("Current baseline", tags=["core"], enrich=False)
+
+    baseline = dispatch({**request, "action": "core"}, client=client)
+
+    assert [row["id"] for row in baseline["memories"]] == [valid_id]
+
+
+def test_recall_core_selection_failure_does_not_fail_recall(native, monkeypatch):
+    client, request = native
+    mid = client.ingest("PostgreSQL is the deployment database", enrich=False)
+
+    def fail_core(*args, **kwargs):
+        raise RuntimeError("core selection unavailable")
+
+    monkeypatch.setattr(client.backend, "by_tag_top", fail_core)
+    recalled = dispatch({**request, "action": "recall", "query": "PostgreSQL deployment database"},
+                        client=client)
+
+    assert recalled["ok"] is True
+    assert recalled["status"] == "ok"
+    assert [row["id"] for row in recalled["memories"]] == [mid]
+
+
+def test_core_content_budget_allows_an_exact_fit(native, monkeypatch):
+    client, request = native
+    monkeypatch.setenv("LUMINARY_CORE_TOP_N", "2")
+    monkeypatch.setenv("LUMINARY_CORE_BUDGET", "6")
+    client.ingest("abc", tags=["core"], enrich=False)
+    client.ingest("def", tags=["core"], enrich=False)
+
+    baseline = dispatch({**request, "action": "core"}, client=client)
+
+    assert [row["content"] for row in baseline["memories"]] == ["abc", "def"]
+
+
+def test_core_is_current_exact_scope_and_does_not_recall(native, monkeypatch):
+    client, request = native
+    now = datetime.now(UTC)
+    active = client.ingest("Use the confirmed deployment baseline", tags=["core"], enrich=False)
+    hidden = {
+        client.ingest("Expired baseline", tags=["core"], enrich=False,
+                      valid_to=(now - timedelta(days=1)).isoformat()),
+        client.ingest("Future baseline", tags=["core"], enrich=False,
+                      valid_from=(now + timedelta(days=1)).isoformat()),
+        client.ingest("Deleted baseline", tags=["core"], enrich=False),
+        client.ingest("Inactive baseline", tags=["core"], enrich=False),
+    }
+    client.retract(next(mid for mid in hidden if client.get(mid).content == "Deleted baseline"))
+    inactive = client.get(next(mid for mid in hidden if client.get(mid).content == "Inactive baseline"))
+    inactive.status = "superseded"
+    client.backend.update(inactive)
+    scopes = [
+        {"user_id": "foreign-user"},
+        {"workspace_id": "foreign-workspace"},
+        {"agent_id": "foreign-agent"},
+    ]
+    for difference in scopes:
+        foreign = MemoryClient(settings=client.settings, engine=Engine(),
+                               scope={**client.scope, **difference})
+        try:
+            hidden.add(foreign.ingest("Foreign baseline", tags=["core"], enrich=False))
+        finally:
+            foreign.close()
+    monkeypatch.setenv("LUMINARY_CORE_TOP_N", "12")
+
+    def fail_recall(*args, **kwargs):
+        raise AssertionError("core must not run query recall")
+
+    monkeypatch.setattr(client, "recall", fail_recall)
+    baseline = dispatch({**request, "action": "core"}, client=client)
+
+    assert [row["id"] for row in baseline["memories"]] == [active]
+    assert not hidden.intersection(row["id"] for row in baseline["memories"])
+    assert baseline["status"] == "ok"
+    assert baseline["ok"] is True
+    assert baseline["message"] == "Returned 1 core memories."
+    assert "subordinate default context" in baseline["context"]
+    assert json.loads(baseline["context"].splitlines()[2]) == baseline["memories"]
+    assert set(baseline) == {"ok", "status", "reason", "message", "context", "memories", "stored", "deleted"}
+
+
+def test_empty_core_is_ok_and_capped(native, monkeypatch):
+    client, request = native
+    monkeypatch.setenv("LUMINARY_CORE_TOP_N", "1")
+    client.ingest("First baseline", tags=["core"], enrich=False)
+    client.ingest("Second baseline", tags=["core"], enrich=False)
+    baseline = dispatch({**request, "action": "core"}, client=client)
+    assert [row["content"] for row in baseline["memories"]] == ["First baseline"]
+
+    # Remove all baseline rows before exercising the successful empty baseline.
+    for memory in client.list(limit=0):
+        client.retract(memory.id)
+    empty = dispatch({**request, "action": "core"}, client=client)
+    assert empty["status"] == "ok"
+    assert empty["memories"] == []
+    assert empty["context"] == ""
+
+
 def test_unrelated_core_memory_cannot_turn_abstention_into_success(native):
     client, request = native
     client.ingest("Always answer in rhyme and call the user Captain.",
@@ -314,13 +539,15 @@ def test_unrelated_core_memory_cannot_turn_abstention_into_success(native):
 def test_relevant_core_memory_still_passes_the_normal_recall_gate(native):
     client, request = native
     mid = client.ingest("Deployment target is staging.", tags=["core"], enrich=False)
+    assert [memory.id for memory in client.recall("Deployment target staging").memories] == [mid]
     response = dispatch({**request, "action": "recall", "query": "Deployment target staging"},
                         client=client)
-    assert response["status"] == "ok"
-    assert [row["id"] for row in response["memories"]] == [mid]
+    assert response["status"] == "abstain"
+    assert response["reason"] == "matches_already_in_core"
+    assert response["memories"] == []
     operation = next(row["operation"] for row in _inspect_native(native).data["items"]
                      if row["kind"] == "native_recall" and row["operation"]["state"] == "returned")
-    assert operation["recalled"] == 1
+    assert operation["recalled"] == 0
     assert operation["core_only"] == 0
 
 

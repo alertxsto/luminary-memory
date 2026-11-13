@@ -83,8 +83,8 @@ at [`opencode/SKILL.md`](opencode/SKILL.md); install it under
 
 The `0.3.3` source includes native interactive inspectors for the verified
 surfaces: OpenCode CLI/Desktop, pi and omp, Hermes Desktop/dashboard and an
-explicitly launched loopback companion. The `0.3.2` registry packages do not
-include the inspector; see the installation guide for current availability.
+explicitly launched loopback companion. The `0.3.3` registry packages include
+the inspector; see the installation guide for current availability.
 Two native targets remain blocked on upstream
 contracts and are recorded in the roadmap: OpenCode Web GUI contribution
 discovery and Hermes terminal/TUI authority plus scope lifecycle. See
@@ -111,8 +111,10 @@ The three installable tarballs are written to `artifacts/plugins/`. Set
 Choose the native package **or** the copied hook, never both.
 
 Registry names are `luminary-memory-pi`, `luminary-memory-opencode`, and
-`luminary-memory-omp`. All three npm packages and the Python bridge are
-published at `0.3.2`; npm `latest` points to that version.
+`luminary-memory-omp`. Use version-matched Python and plugin artifacts from
+the same tagged release. The npm `0.3.3` builds were published from a later
+`develop` revision and differ from the `v0.3.3` GitHub tarballs; use those
+tagged tarballs with Python `0.3.3`, not the npm builds.
 The pi manifest includes `pi-package` for eligibility in the
 [official package catalog](https://pi.dev/packages). OpenCode's existing
 Ecosystem PR targets legacy V1 docs, not a verified V2 listing; no V2 website
@@ -209,6 +211,9 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | `0.85` |
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` |
 | `max_memories` | `LUMINARY_MAX_MEMORIES` | `1000` |
+| `episode_max_rows` | `LUMINARY_EPISODE_MAX_ROWS` | `10000` |
+| `event_max_rows` | `LUMINARY_EVENT_MAX_ROWS` | `50000` |
+| `evidence_max_rows` | `LUMINARY_EVIDENCE_MAX_ROWS` | `50000` |
 | `ttl_default_seconds` | `LUMINARY_TTL_DEFAULT_SECONDS` | `null` |
 | `prune_min_importance` | `LUMINARY_PRUNE_MIN_IMPORTANCE` | `0.2` |
 | `consolidate_jaccard_threshold` | `LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD` | `0.9` |
