@@ -174,19 +174,24 @@ def _serialized_rows(candidates, budget: int) -> tuple[list[Memory], str]:
 
 def _core(client: MemoryClient, settings: Settings) -> tuple[list[Memory], str]:
     # One stable, exact-scope selection shared by core rendering and recall dedup.
+    # Invalid rows must not consume the stable current-row limit.
     candidates = client.backend.by_tag_top(
-        settings.core_tag, min(max(0, settings.core_top_n), MAX_CORE_TOP_N),
+        settings.core_tag, client.backend.count(),
         scope=client.scope, include_global=False,
     )
     # The established native core budget applies to content, not JSON or labels.
     budget = max(0, settings.core_budget)
+    limit = min(max(0, settings.core_top_n), MAX_CORE_TOP_N)
     rows: list[Memory] = []
     for memory in candidates:
         content = str(memory.content or "").strip()
-        size = len(content) + (1 if rows else 0)
-        if not _current(memory) or not content or size > budget:
+        if not _current(memory) or not content:
             continue
-        budget -= size
+        if len(rows) >= limit:
+            break
+        if len(content) > budget:
+            continue
+        budget -= len(content)
         rows.append(memory)
     serialized = json.dumps([_row(memory) for memory in rows], ensure_ascii=False) if rows else ""
     context = (

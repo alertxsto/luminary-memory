@@ -373,6 +373,30 @@ def test_core_and_recall_keep_separate_whole_row_budgets(native, monkeypatch):
     assert "x" * 100 not in baseline["context"]
 
 
+def test_core_filters_invalid_rows_before_stable_limit(native, monkeypatch):
+    client, request = native
+    monkeypatch.setenv("LUMINARY_CORE_TOP_N", "1")
+    client.ingest("Expired baseline", tags=["core"], enrich=False,
+                  valid_to=(datetime.now(UTC) - timedelta(days=1)).isoformat())
+    valid_id = client.ingest("Current baseline", tags=["core"], enrich=False)
+
+    baseline = dispatch({**request, "action": "core"}, client=client)
+
+    assert [row["id"] for row in baseline["memories"]] == [valid_id]
+
+
+def test_core_content_budget_allows_an_exact_fit(native, monkeypatch):
+    client, request = native
+    monkeypatch.setenv("LUMINARY_CORE_TOP_N", "2")
+    monkeypatch.setenv("LUMINARY_CORE_BUDGET", "6")
+    client.ingest("abc", tags=["core"], enrich=False)
+    client.ingest("def", tags=["core"], enrich=False)
+
+    baseline = dispatch({**request, "action": "core"}, client=client)
+
+    assert [row["content"] for row in baseline["memories"]] == ["abc", "def"]
+
+
 def test_core_is_current_exact_scope_and_does_not_recall(native, monkeypatch):
     client, request = native
     now = datetime.now(UTC)
