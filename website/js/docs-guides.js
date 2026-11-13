@@ -924,7 +924,7 @@
         },
         {
           title: "Current release snapshot",
-          paragraphs: ["The public package and website are aligned to v0.3.3. This release adds native interactive memory inspection across the verified hosts, on top of the strict scoped accuracy path: scope isolation, evidence/provenance, conflict history, abstention, scoped transparency events and exact-session continuity fallback."],
+          paragraphs: ["The 0.3.3 Python package and GitHub plugin tarballs come from the tagged release. The later npm 0.3.3 builds instead match develop and have different entry points; matching version numbers do not establish compatibility. Use the tagged plugin tarballs with Python 0.3.3 until the coordinated replacement release is published. The inspector remains limited to the verified hosts."],
           table: table("Release checks", ["Surface", "Current contract"], [
             ["Version", "0.3.3 / Python 3.11+"],
             ["Official Hermes SDK suite", "695 passed, 8 skipped, 1 deselected (known Windows file-permission case)"],

@@ -111,8 +111,10 @@ The three installable tarballs are written to `artifacts/plugins/`. Set
 Choose the native package **or** the copied hook, never both.
 
 Registry names are `luminary-memory-pi`, `luminary-memory-opencode`, and
-`luminary-memory-omp`. All three npm packages and the Python bridge are
-published at `0.3.3`; npm `latest` points to that version.
+`luminary-memory-omp`. Use version-matched Python and plugin artifacts from
+the same tagged release. The npm `0.3.3` builds were published from a later
+`develop` revision and differ from the `v0.3.3` GitHub tarballs; use those
+tagged tarballs with Python `0.3.3`, not the npm builds.
 The pi manifest includes `pi-package` for eligibility in the
 [official package catalog](https://pi.dev/packages). OpenCode's existing
 Ecosystem PR targets legacy V1 docs, not a verified V2 listing; no V2 website
