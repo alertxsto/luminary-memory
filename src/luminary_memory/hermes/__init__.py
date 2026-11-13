@@ -12,7 +12,7 @@ def __getattr__(name: str):
     """Load the Hermes runtime adapter only when Hermes asks for it."""
 
     if name == "LuminaryMemoryProvider":
-        from luminary_memory.hermes.provider import LuminaryMemoryProvider
+        from .provider import LuminaryMemoryProvider
 
         return LuminaryMemoryProvider
     raise AttributeError(name)

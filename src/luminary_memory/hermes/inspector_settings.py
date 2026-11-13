@@ -6,7 +6,7 @@ import json
 import threading
 from pathlib import Path
 
-from luminary_memory.hermes.config import _DEFAULTS, load_config, save_config
+from .config import _DEFAULTS, load_config, save_config
 
 # Store/identity/credentials are deliberately not user-editable through a view.
 _EDITABLE = frozenset({

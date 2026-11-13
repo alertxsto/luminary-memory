@@ -1,8 +1,10 @@
 name: luminary
 version: 0.3.4
 description: "Luminary Memory — self-hosted memory with 4-strategy recall (semantic, keyword, temporal, graph), RRF fusion, and lifecycle maintenance."
+license: Apache-2.0
+requires_hermes: ">=0.22.5"
 pip_dependencies:
-  - "luminary-memory>=0.3.4"
+  - "luminary-memory>=0.3.4,<0.4"
 requires_env: []
 hooks:
   - on_session_end

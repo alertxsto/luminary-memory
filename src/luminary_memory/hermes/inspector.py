@@ -79,8 +79,8 @@ def _service(session_ref: str, *, initialize: bool = False) -> Iterator[tuple]:
     from hermes_cli.install_identity import get_install_id
 
     from luminary_memory.api import MemoryClient
-    from luminary_memory.hermes.config import load_config
-    from luminary_memory.hermes.provider import LuminaryMemoryProvider
+    from .config import load_config
+    from .provider import LuminaryMemoryProvider
     from luminary_memory.inspector.identity import resolve_context
     from luminary_memory.inspector.service import InspectorService
 
@@ -109,7 +109,7 @@ def _service(session_ref: str, *, initialize: bool = False) -> Iterator[tuple]:
     try:
         context = resolve_context(client, native, initialize=initialize)
         service = InspectorService(client)
-        from luminary_memory.hermes.inspector_settings import HermesSettingsAdapter
+        from .inspector_settings import HermesSettingsAdapter
         service.settings_adapter = HermesSettingsAdapter(home)
         yield service, context
     finally:
