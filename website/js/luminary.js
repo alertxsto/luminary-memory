@@ -1,276 +1,149 @@
 (function () {
   "use strict";
 
-  document.documentElement.classList.add("js-enabled");
+  var root = document.documentElement;
+  var themeButtons = document.querySelectorAll("[data-theme-toggle]");
+  var theme = "dark";
+  try {
+    if (window.localStorage.getItem("luminary-theme") === "light") theme = "light";
+  } catch (_) { /* Storage is optional in private or file contexts. */ }
 
-  var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var toast = document.getElementById("toast");
-
-  function showToast(message) {
-    if (!toast) return;
-    toast.textContent = message;
-    toast.classList.add("is-visible");
-    window.clearTimeout(showToast.timer);
-    showToast.timer = window.setTimeout(function () {
-      toast.classList.remove("is-visible");
-    }, 1800);
-  }
-
-  function copyText(value) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      return navigator.clipboard.writeText(value);
-    }
-
-    return new Promise(function (resolve, reject) {
-      var area = document.createElement("textarea");
-      area.value = value;
-      area.setAttribute("readonly", "");
-      area.style.position = "fixed";
-      area.style.left = "-9999px";
-      document.body.appendChild(area);
-      area.select();
-      try {
-        if (!document.execCommand("copy")) {
-          reject(new Error("Copy command failed"));
-        } else {
-          resolve();
-        }
-      } catch (error) {
-        reject(error);
-      } finally {
-        document.body.removeChild(area);
-      }
+  function applyTheme(value) {
+    root.dataset.theme = value;
+    themeButtons.forEach(function (button) {
+      var label = value === "dark" ? "Switch to light theme" : "Switch to dark theme";
+      button.setAttribute("aria-label", label);
+      button.setAttribute("title", label);
+      button.setAttribute("aria-pressed", String(value === "light"));
     });
   }
-
-  document.addEventListener("click", function (event) {
-    var copyButton = event.target.closest("[data-copy]");
-    if (!copyButton) return;
-
-    var label = copyButton.querySelector(".copy-label");
-    var originalLabel = copyButton.getAttribute("data-default-label") || (label ? label.textContent : copyButton.textContent);
-    copyButton.setAttribute("data-default-label", originalLabel);
-    window.clearTimeout(copyButton.copyTimer);
-
-    copyText(copyButton.getAttribute("data-copy")).then(function () {
-      if (label) label.textContent = "Copied";
-      copyButton.classList.add("is-copied");
-      showToast("Copied to clipboard");
-      copyButton.copyTimer = window.setTimeout(function () {
-        if (label) label.textContent = originalLabel;
-        copyButton.classList.remove("is-copied");
-      }, 1500);
-    }).catch(function () {
-      showToast("Copy unavailable. Select the text manually.");
+  applyTheme(theme);
+  themeButtons.forEach(function (button) {
+    button.addEventListener("click", function () {
+      theme = root.dataset.theme === "dark" ? "light" : "dark";
+      applyTheme(theme);
+      try { window.localStorage.setItem("luminary-theme", theme); } catch (_) {}
     });
   });
 
+  var menu = document.querySelector(".primary-nav");
   var menuToggle = document.querySelector(".menu-toggle");
-  var primaryNav = document.querySelector(".primary-nav");
-
-  function setMenu(open, returnFocus) {
-    if (!menuToggle || !primaryNav) return;
+  var mobileMenu = window.matchMedia("(max-width: 760px)");
+  function setMenu(open, restoreFocus) {
+    if (!menu || !menuToggle) return;
+    menu.classList.toggle("is-open", open);
     menuToggle.setAttribute("aria-expanded", String(open));
     menuToggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
-    primaryNav.classList.toggle("is-open", open);
-    if (!open && returnFocus) menuToggle.focus();
+    if (restoreFocus) menuToggle.focus();
   }
-
-  if (menuToggle && primaryNav) {
+  if (menu && menuToggle) {
     menuToggle.addEventListener("click", function () {
       setMenu(menuToggle.getAttribute("aria-expanded") !== "true", false);
     });
-
-    primaryNav.addEventListener("click", function (event) {
+    menu.addEventListener("click", function (event) {
       if (event.target.closest("a")) setMenu(false, false);
     });
-
     document.addEventListener("click", function (event) {
-      if (menuToggle.getAttribute("aria-expanded") !== "true") return;
-      if (primaryNav.contains(event.target) || menuToggle.contains(event.target)) return;
-      setMenu(false, false);
+      if (!menu.contains(event.target) && !menuToggle.contains(event.target)) setMenu(false, false);
     });
-
     document.addEventListener("keydown", function (event) {
-      if (event.key !== "Escape" || menuToggle.getAttribute("aria-expanded") !== "true") return;
-      setMenu(false, true);
+      if (menuToggle.getAttribute("aria-expanded") !== "true") return;
+      if (event.key === "Escape") {
+        setMenu(false, true);
+      } else if (event.key === "Tab") {
+        var links = menu.querySelectorAll("a");
+        var first = links[0], last = links[links.length - 1];
+        if (!first) return;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault(); menuToggle.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); menuToggle.focus();
+        } else if (document.activeElement === menuToggle) {
+          event.preventDefault(); (event.shiftKey ? last : first).focus();
+        }
+      }
+    });
+    mobileMenu.addEventListener("change", function () {
+      if (!mobileMenu.matches) setMenu(false, false);
     });
   }
 
-  var proofSteps = Array.prototype.slice.call(document.querySelectorAll(".proof-step"));
-  var proofMessage = document.getElementById("proof-message");
-  var proofCount = document.getElementById("proof-count");
-  var proofState = document.getElementById("proof-state");
-  var proofNext = document.getElementById("proof-next");
-  var proofMessages = [
-    "Observation is accepted as evidence-bearing input.",
-    "Identity filters narrow the memory boundary before search.",
-    "Four ranked signals meet in one fused candidate list.",
-    "Weak, conflicting, or unsupported context is held back.",
-    "Supported context returns with provenance, or the system abstains."
-  ];
-  var proofStates = [
-    "Evidence-bearing input",
-    "Ownership boundary applied",
-    "Candidates fused by signal",
-    "Evidence gate passed",
-    "Context or abstention returned"
-  ];
-  var currentProofStep = 0;
-
-  function selectProofStep(index, focusButton) {
-    if (!proofSteps.length) return;
-    currentProofStep = (index + proofSteps.length) % proofSteps.length;
-    proofSteps.forEach(function (step, stepIndex) {
-      var button = step.querySelector("button");
-      var detail = step.querySelector(".proof-detail");
-      var active = stepIndex === currentProofStep;
-      step.classList.toggle("is-current", active);
-      button.setAttribute("aria-expanded", String(active));
-      detail.hidden = !active;
-      if (active && focusButton) button.focus();
-    });
-    if (proofMessage) proofMessage.textContent = proofMessages[currentProofStep];
-    if (proofCount) proofCount.textContent = String(currentProofStep + 1).padStart(2, "0") + " / 05";
-    if (proofState) proofState.textContent = proofStates[currentProofStep];
+  var status = document.getElementById("toast") || document.createElement("div");
+  if (!status.parentNode) {
+    status.className = "site-status";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    document.body.appendChild(status);
   }
-
-  proofSteps.forEach(function (step, index) {
-    var button = step.querySelector("button");
-    button.addEventListener("click", function () {
-      selectProofStep(index, false);
-    });
+  var statusTimer;
+  function announce(message) {
+    status.textContent = message;
+    status.classList.add("is-visible");
+    window.clearTimeout(statusTimer);
+    statusTimer = window.setTimeout(function () { status.classList.remove("is-visible"); }, 2200);
+  }
+  function fallbackCopy(value) {
+    var area = document.createElement("textarea");
+    area.value = value;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    var copied;
+    try { copied = document.execCommand("copy"); } finally { area.remove(); }
+    if (!copied) throw new Error("Clipboard unavailable");
+  }
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-site-copy]");
+    if (!button) return;
+    var value = button.getAttribute("data-site-copy") || "";
+    var label = button.querySelector(".copy-label") || button;
+    var original = button.getAttribute("data-copy-label") || label.textContent;
+    button.setAttribute("data-copy-label", original);
+    var operation = navigator.clipboard && window.isSecureContext
+      ? navigator.clipboard.writeText(value).catch(function () { fallbackCopy(value); })
+      : Promise.resolve().then(function () { fallbackCopy(value); });
+    operation.then(function () {
+      label.textContent = "Copied";
+      button.classList.add("is-copied");
+      announce("Copied to clipboard");
+      window.clearTimeout(button.copyTimer);
+      button.copyTimer = window.setTimeout(function () {
+        label.textContent = original;
+        button.classList.remove("is-copied");
+      }, 1800);
+    }).catch(function () { announce("Clipboard unavailable. Select and copy the code."); });
   });
 
-  if (proofNext) {
-    proofNext.addEventListener("click", function () {
-      selectProofStep(currentProofStep + 1, false);
-    });
-  }
-
-  var codeTabs = Array.prototype.slice.call(document.querySelectorAll("[data-code-tab]"));
-
-  function selectCodeTab(tab, moveFocus) {
-    var name = tab.getAttribute("data-code-tab");
-    codeTabs.forEach(function (item) {
-      var selected = item === tab;
-      item.classList.toggle("is-active", selected);
-      item.setAttribute("aria-selected", String(selected));
-      item.setAttribute("tabindex", selected ? "0" : "-1");
+  var tabs = Array.prototype.slice.call(document.querySelectorAll("[data-code-tab]"));
+  function selectTab(tab, focus) {
+    var selected = tab.getAttribute("data-code-tab");
+    tabs.forEach(function (item) {
+      var active = item === tab;
+      item.classList.toggle("is-active", active);
+      item.setAttribute("aria-selected", String(active));
+      item.tabIndex = active ? 0 : -1;
     });
     document.querySelectorAll(".code-panel").forEach(function (panel) {
-      var active = panel.id === "code-" + name;
-      panel.classList.toggle("is-active", active);
+      var active = panel.id === "code-" + selected;
       panel.hidden = !active;
+      panel.classList.toggle("is-active", active);
     });
-    if (moveFocus) tab.focus();
+    if (focus) tab.focus();
   }
-
-  codeTabs.forEach(function (tab, index) {
-    tab.addEventListener("click", function () {
-      selectCodeTab(tab, false);
-    });
-
+  tabs.forEach(function (tab, index) {
+    tab.addEventListener("click", function () { selectTab(tab, false); });
     tab.addEventListener("keydown", function (event) {
-      var nextIndex = index;
-      if (event.key === "ArrowRight") nextIndex = (index + 1) % codeTabs.length;
-      if (event.key === "ArrowLeft") nextIndex = (index - 1 + codeTabs.length) % codeTabs.length;
-      if (event.key === "Home") nextIndex = 0;
-      if (event.key === "End") nextIndex = codeTabs.length - 1;
-      if (nextIndex === index) return;
+      var target;
+      if (event.key === "ArrowRight") target = (index + 1) % tabs.length;
+      if (event.key === "ArrowLeft") target = (index + tabs.length - 1) % tabs.length;
+      if (event.key === "Home") target = 0;
+      if (event.key === "End") target = tabs.length - 1;
+      if (target === undefined) return;
       event.preventDefault();
-      selectCodeTab(codeTabs[nextIndex], true);
+      selectTab(tabs[target], true);
     });
   });
 
-  var docs = Array.isArray(window.LUMINARY_DOCS) ? window.LUMINARY_DOCS : [];
-  var docsGrid = document.getElementById("docs-grid");
-  var docsEmpty = document.getElementById("docs-empty");
-  var docsCount = document.getElementById("docs-count");
-  var docsSearch = document.getElementById("docs-search");
-  var activeFilter = "all";
-  var trackedReferenceCount = docs.reduce(function (total, doc) {
-    return total + 1 + (doc.related ? doc.related.length : 0);
-  }, 0);
-
-  function escapeHTML(value) {
-    return String(value).replace(/[&<>"']/g, function (character) {
-      return {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        "\"": "&quot;",
-        "'": "&#039;"
-      }[character];
-    });
-  }
-
-  function renderDocs() {
-    if (!docsGrid) return;
-    var query = docsSearch ? docsSearch.value.trim().toLowerCase() : "";
-    var visible = docs.filter(function (doc) {
-      var haystack = [doc.title, doc.label, doc.blurb, doc.source].concat(doc.facts || []).join(" ").toLowerCase();
-      var categoryMatch = activeFilter === "all" || doc.category === activeFilter;
-      return categoryMatch && (!query || haystack.indexOf(query) !== -1);
-    });
-
-    docsGrid.innerHTML = visible.map(function (doc) {
-      var facts = (doc.facts || []).map(function (fact) {
-        return "<li>" + escapeHTML(fact) + "</li>";
-      }).join("");
-      if (doc.related && doc.related.length) {
-        facts += "<li>" + doc.related.length + " related reference" + (doc.related.length === 1 ? "" : "s") + "</li>";
-      }
-      return [
-        "<article class=\"doc-row\" data-doc-id=\"" + escapeHTML(doc.id) + "\">",
-        "<span class=\"doc-label\">" + escapeHTML(doc.label) + "</span>",
-        "<div><h3>" + escapeHTML(doc.title) + "</h3><p>" + escapeHTML(doc.blurb) + "</p></div>",
-        "<ul class=\"doc-facts\">" + facts + "</ul>",
-        "<a class=\"doc-open\" href=\"" + escapeHTML(doc.href) + "\"><span>Open note</span><span aria-hidden=\"true\">↗</span></a>",
-        "</article>"
-      ].join("");
-    }).join("");
-
-    if (docsCount) {
-      var countLabel = visible.length === 1 ? "1 field note" : visible.length + " field notes";
-      var filterLabel = activeFilter === "all" ? "" : " in " + activeFilter;
-      var queryLabel = query ? " matching \"" + query + "\"" : "";
-      docsCount.textContent = countLabel + filterLabel + queryLabel + " · " + trackedReferenceCount + " tracked references";
-    }
-    if (docsEmpty) docsEmpty.hidden = visible.length !== 0;
-  }
-
-  if (docsGrid) {
-    renderDocs();
-    if (docsSearch) docsSearch.addEventListener("input", renderDocs);
-    document.querySelectorAll("[data-doc-filter]").forEach(function (filterButton) {
-      filterButton.addEventListener("click", function () {
-        activeFilter = filterButton.getAttribute("data-doc-filter") || "all";
-        document.querySelectorAll("[data-doc-filter]").forEach(function (item) {
-          var active = item === filterButton;
-          item.classList.toggle("is-active", active);
-          item.setAttribute("aria-pressed", String(active));
-        });
-        renderDocs();
-      });
-    });
-  }
-
-  var revealItems = document.querySelectorAll(".reveal");
-  if ("IntersectionObserver" in window && !reducedMotion) {
-    var revealObserver = new IntersectionObserver(function (entries, observer) {
-      entries.forEach(function (entry) {
-        if (!entry.isIntersecting) return;
-        entry.target.classList.add("is-visible");
-        observer.unobserve(entry.target);
-      });
-    }, { rootMargin: "0px 0px -8% 0px", threshold: .04 });
-    revealItems.forEach(function (item) {
-      revealObserver.observe(item);
-    });
-  } else {
-    revealItems.forEach(function (item) {
-      item.classList.add("is-visible");
-    });
-  }
 }());

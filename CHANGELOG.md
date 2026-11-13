@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Rebuilt the public website around blue three-tone lunar artwork, a
+  streamlined product introduction, usable code examples, and a full-width
+  illustrated wordmark footer.
+- Reworked documentation into a responsive navigation/article/contents layout
+  while preserving the existing guide URLs, search, code copying, and history.
+- Added a shared persistent light/dark theme and keyboard-accessible navigation;
+  documentation source links open the tracked files on GitHub.
+
 ## [0.3.4] - 2026-11-14
 
 Coordinated Python and native-plugin release from one source revision.
