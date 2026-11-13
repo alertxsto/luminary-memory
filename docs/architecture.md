@@ -24,7 +24,7 @@ sync_turn ──► exact-session episode ledger (continuity only)
 
 The episode ledger and durable-memory writer are separate by design. An
 accepted automatic turn is recorded as an immutable, exact-session source
-episode before curation. That episode can support a short follow-up in the
+episode before curation; lifecycle retention keeps the newest bounded rows. That episode can support a short follow-up in the
 same session, but it is not a semantic memory, is not returned by normal
 recall, and does not count as a durable fact. Only a grounded curated summary
 or an explicit write enters the durable memory path.

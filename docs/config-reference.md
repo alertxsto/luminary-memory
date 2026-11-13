@@ -202,6 +202,9 @@ The Luminary equivalent of Hermes `MEMORY.md`, stored in the DB.
 | Field | Env var | Default | Meaning |
 |-------|---------|---------|---------|
 | `max_memories` | `LUMINARY_MAX_MEMORIES` | `1000` | Hard cap on store size; oldest/lowest importance pruned when exceeded (pinned at ≥ 0.9 are exempt). |
+| `episode_max_rows` | `LUMINARY_EPISODE_MAX_ROWS` | `10000` | Keep the newest scoped episode rows; `0` disables ledger pruning. |
+| `event_max_rows` | `LUMINARY_EVENT_MAX_ROWS` | `50000` | Keep the newest scoped audit-event rows; `0` disables ledger pruning. |
+| `evidence_max_rows` | `LUMINARY_EVIDENCE_MAX_ROWS` | `50000` | Keep the newest scoped evidence rows; `0` disables ledger pruning. |
 | `ttl_default_seconds` | `LUMINARY_TTL_DEFAULT_SECONDS` | `0` (none) | Default TTL for memories without an explicit expiry; after this they are candidates for pruning. |
 | `prune_min_importance` | `LUMINARY_PRUNE_MIN_IMPORTANCE` | `0.2` | Memories below this importance are pruned during lifecycle cleanup. |
 | `consolidate_jaccard_threshold` | `LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD` | `0.9` | Token-overlap threshold for merging near-identical memories. |

@@ -32,10 +32,12 @@
   in backend queries where supported and defensively again in the orchestrator
   before fusion/fallback. Scope-aware indexes cover ownership, status, claim
   keys, and content hashes.
-- The backend also owns the immutable episode/provenance helpers used by the
-  provider: `record_episode()` stores source turns, `recent_episodes()` reads
-  only a requested exact scope, and event/evidence/claim methods keep the
-  durable row auditable. Episode rows are not semantic recall candidates.
+- The backend also owns the episode/provenance helpers used by the provider:
+  `record_episode()` stores source turns, `recent_episodes()` reads only a
+  requested exact scope, and event/evidence/claim methods keep the durable row
+  auditable. Episode rows are not semantic recall candidates. Lifecycle
+  retention keeps the newest bounded episode, event, and evidence rows per
+  exact scope.
 - Exact active deduplication is a database invariant, not only an API
   pre-check: `uq_memories_active_scope_hash` covers the normalized ownership
   tuple plus `content_hash`. Concurrent writers resolve the winning row and

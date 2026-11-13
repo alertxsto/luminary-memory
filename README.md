@@ -209,6 +209,9 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | `0.85` |
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` |
 | `max_memories` | `LUMINARY_MAX_MEMORIES` | `1000` |
+| `episode_max_rows` | `LUMINARY_EPISODE_MAX_ROWS` | `10000` |
+| `event_max_rows` | `LUMINARY_EVENT_MAX_ROWS` | `50000` |
+| `evidence_max_rows` | `LUMINARY_EVIDENCE_MAX_ROWS` | `50000` |
 | `ttl_default_seconds` | `LUMINARY_TTL_DEFAULT_SECONDS` | `null` |
 | `prune_min_importance` | `LUMINARY_PRUNE_MIN_IMPORTANCE` | `0.2` |
 | `consolidate_jaccard_threshold` | `LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD` | `0.9` |

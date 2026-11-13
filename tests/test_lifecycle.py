@@ -293,3 +293,44 @@ def test_max_memories_env_var_maps_to_settings(monkeypatch):
     from luminary_memory.config import Settings
     monkeypatch.setenv("LUMINARY_MAX_MEMORIES", "250")
     assert Settings().max_memories == 250
+
+
+def test_run_lifecycle_prunes_episode_and_event_ledgers(tmp_path):
+    from luminary_memory.config import Settings
+    from luminary_memory.lifecycle.runner import run_lifecycle
+
+    b = SQLiteBackend(str(tmp_path / "ledger.db"))
+    mid = b.add(Memory(content="ledger owner"))
+    for i in range(5):
+        b.record_episode(f"episode-{i}", f"content {i}", source="test")
+        b.record_event("test_event", None, after={"i": i})
+        b.add_evidence(mid, f"quote {i}", source_id=f"source-{i}")
+
+    settings = Settings(
+        episode_max_rows=2,
+        event_max_rows=3,
+        evidence_max_rows=2,
+        importance_auto=False,
+        consolidate_semantic=False,
+    )
+    result = run_lifecycle(b, settings)
+
+    assert result["episodes_pruned"] == 3
+    assert result["events_pruned"] == 2
+    assert result["evidence_pruned"] == 3
+    assert b.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == 2
+    assert b.conn.execute("SELECT COUNT(*) FROM memory_events").fetchone()[0] == 3
+    assert b.conn.execute("SELECT COUNT(*) FROM memory_evidence").fetchone()[0] == 2
+    b.close()
+
+
+def test_ledger_retention_env_vars(monkeypatch):
+    from luminary_memory.config import Settings
+
+    monkeypatch.setenv("LUMINARY_EPISODE_MAX_ROWS", "123")
+    monkeypatch.setenv("LUMINARY_EVENT_MAX_ROWS", "456")
+    monkeypatch.setenv("LUMINARY_EVIDENCE_MAX_ROWS", "789")
+    settings = Settings()
+    assert settings.episode_max_rows == 123
+    assert settings.event_max_rows == 456
+    assert settings.evidence_max_rows == 789

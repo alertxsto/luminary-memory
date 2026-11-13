@@ -120,6 +120,33 @@ class MemoryBackend(ABC):
         """Return insertion/duplicate acknowledgement, or None without a ledger."""
         return
 
+    def prune_episodes(
+        self,
+        max_rows: int,
+        scope: dict | None = None,
+        include_global: bool = True,
+    ) -> int:
+        """Delete oldest scoped episodes beyond *max_rows*; 0 disables."""
+        return 0
+
+    def prune_events(
+        self,
+        max_rows: int,
+        scope: dict | None = None,
+        include_global: bool = True,
+    ) -> int:
+        """Delete oldest scoped audit events beyond *max_rows*; 0 disables."""
+        return 0
+
+    def prune_evidence(
+        self,
+        max_rows: int,
+        scope: dict | None = None,
+        include_global: bool = True,
+    ) -> int:
+        """Delete oldest scoped evidence rows beyond *max_rows*; 0 disables."""
+        return 0
+
     def recent_episodes(
         self,
         limit: int = 10,

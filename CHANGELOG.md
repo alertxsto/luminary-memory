@@ -16,6 +16,11 @@
   rows are serialized once without adapters slicing or double-encoding them, and
   empty or failed recall injects no model-bound context or status payload.
   Baseline loading remains disabled by `LUMINARY_CORE_TOP_N=0`.
+- Long-lived stores now bound their append-only ledgers. `run_lifecycle()`
+  keeps the newest scoped rows for episodes (`LUMINARY_EPISODE_MAX_ROWS`,
+  default 10,000), audit events (`LUMINARY_EVENT_MAX_ROWS`, default 50,000),
+  and evidence (`LUMINARY_EVIDENCE_MAX_ROWS`, default 50,000); `0` disables a
+  ledger's pruning. Current-session continuity and recent audit remain intact.
 
 ## [0.3.3] - 2026-11-10
 

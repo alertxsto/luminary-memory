@@ -37,6 +37,9 @@ def run_lifecycle(
     # Pinned rules are exempt inside prune().
     max_count = int(getattr(settings, "max_memories", 0) or 0) if settings else 0
     max_count = max_count or None
+    episode_max_rows = int(getattr(settings, "episode_max_rows", 0) or 0) if settings else 0
+    event_max_rows = int(getattr(settings, "event_max_rows", 0) or 0) if settings else 0
+    evidence_max_rows = int(getattr(settings, "evidence_max_rows", 0) or 0) if settings else 0
 
     # Repair graph rows explicitly marked by a failed mutation.  A failed
     # secondary index must be observable and recoverable, never silently stale.
@@ -130,6 +133,27 @@ def run_lifecycle(
         ),
         "reestimated": reestimated,
         "reindexed": reindexed,
+        "episodes_pruned": int(
+            backend.prune_episodes(
+                episode_max_rows,
+                scope=scope,
+                include_global=include_global,
+            )
+        ),
+        "events_pruned": int(
+            backend.prune_events(
+                event_max_rows,
+                scope=scope,
+                include_global=include_global,
+            )
+        ),
+        "evidence_pruned": int(
+            backend.prune_evidence(
+                evidence_max_rows,
+                scope=scope,
+                include_global=include_global,
+            )
+        ),
     }
     logger.info("run_lifecycle %s (%.1fs)", result, time.monotonic() - start)
     return result

@@ -180,6 +180,73 @@ class InspectorSQL:
                    *(scope[field] for field in fields)))
         self._commit()
 
+    def _prune_ledger(self, table: str, max_rows: int, scope, include_global: bool) -> int:
+        """Delete oldest scoped rows beyond a hard row cap.
+
+        The cap is deterministic and keeps the newest rows, so current-session
+        continuity and recent audit remain available. 0 disables pruning.
+        """
+        from luminary_memory.scope import scope_sql
+
+        cap = max(0, int(max_rows))
+        if cap == 0:
+            return 0
+        where, params = scope_sql(
+            scope, alias="e", include_global=include_global, active_only=False
+        )
+        total = int(self._sql(
+            f"SELECT COUNT(*) FROM {table} e WHERE {where}", tuple(params)
+        ).fetchone()[0])
+        excess = total - cap
+        if excess <= 0:
+            return 0
+        order = "e.created_at ASC, e.id ASC"
+        if table == "episodes" and not hasattr(self, "_psycopg"):
+            order = "e.created_at ASC, e.rowid ASC"
+        self._sql(
+            f"DELETE FROM {table} WHERE id IN "
+            f"(SELECT e.id FROM {table} e WHERE {where} ORDER BY {order} LIMIT ?)",
+            (*params, excess),
+        )
+        self._commit()
+        return excess
+
+    def prune_episodes(self, max_rows: int, scope=None, include_global: bool = True) -> int:
+        return self._prune_ledger("episodes", max_rows, scope, include_global)
+
+    def prune_events(self, max_rows: int, scope=None, include_global: bool = True) -> int:
+        return self._prune_ledger("memory_events", max_rows, scope, include_global)
+
+    def prune_evidence(self, max_rows: int, scope=None, include_global: bool = True) -> int:
+        """Prune evidence by its owning memory's scope; evidence has no scope columns."""
+        from luminary_memory.scope import scope_sql
+
+        cap = max(0, int(max_rows))
+        if cap == 0:
+            return 0
+        memory_where, params = scope_sql(
+            scope, alias="m", include_global=include_global, active_only=False
+        )
+        where = f"e.memory_id IN (SELECT m.id FROM memories m WHERE {memory_where})"
+        if scope is None and include_global:
+            # Orphaned evidence has no owner left to scope it; only an
+            # unscoped/global lifecycle pass may reclaim it.
+            where = f"(e.memory_id IS NULL OR {where})"
+        total = int(self._sql(
+            f"SELECT COUNT(*) FROM memory_evidence e WHERE {where}", tuple(params)
+        ).fetchone()[0])
+        excess = total - cap
+        if excess <= 0:
+            return 0
+        self._sql(
+            "DELETE FROM memory_evidence WHERE id IN "
+            f"(SELECT e.id FROM memory_evidence e WHERE {where} "
+            "ORDER BY e.created_at ASC, e.id ASC LIMIT ?)",
+            (*params, excess),
+        )
+        self._commit()
+        return excess
+
     def inspector_get(self, key, default=None):
         row = self._sql("SELECT value FROM inspector_metadata WHERE key = ?", (key,)).fetchone()
         return json.loads(row[0]) if row else default
