@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Native core memory is now a separate, query-independent DB-backed baseline
+  loaded through the bridge's new `core` action, which takes no query. Query
+  recall stays pure evidence: it removes rows already present in the loaded
+  baseline and returns `abstain` with `matches_already_in_core` when only core
+  rows matched, instead of reporting them as a successful query result. The
+  OpenCode, pi, and omp adapters refresh their own marked request-local baseline
+  each admitted user run, so explicit remember/forget/retraction becomes visible
+  without a session restart and repeated turns do not append duplicate
+  transcript entries. Core and recall keep separate row and character budgets,
+  rows are serialized once without adapters slicing or double-encoding them, and
+  empty or failed recall injects no context or status message. Baseline loading
+  remains disabled by `LUMINARY_CORE_TOP_N=0`.
+
 ## [0.3.3] - 2026-11-10
 
 Interactive memory inspection, explicit owner controls and safer native recall.
