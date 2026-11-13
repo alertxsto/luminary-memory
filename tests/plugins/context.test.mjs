@@ -249,9 +249,20 @@ test('opencode: core baseline is request-local, refreshable and independent of r
     admitted = { id: 'msg_5', text: 'Current native user task' };
     replies = {
       core: { ...empty(), status: 'ok', reason: '', context: coreContext },
+      recall: { ok: false, status: 'error', reason: 'unavailable', message: 'Recall unavailable.', context: '', memories: [], stored: 0, deleted: 0 },
+    };
+    const recalledFailure = await run(fourth);
+    assert.equal(recalledFailure.filter(message => message.id?.startsWith('luminary:core:')).length, 1, 'Core still attaches when recall fails');
+    assert.equal(recalledFailure.filter(message => message.id?.startsWith('luminary:recall:')).length, 0, 'Failed recall adds no reference');
+    assert.ok(!recalledFailure.some(message => textOf(message).includes('Recall unavailable')), 'No fallback status payload reaches the model');
+    assert.ok(!recalledFailure.some(message => textOf(message).includes('"status":"error"')), 'No serialized error reply reaches the model');
+
+    admitted = { id: 'msg_6', text: 'Current native user task' };
+    replies = {
+      core: { ...empty(), status: 'ok', reason: '', context: coreContext },
       recall: { ...empty(), status: 'abstain', reason: 'no_supported_candidate', context: '' },
     };
-    const fifth = await run(fourth);
+    const fifth = await run(recalledFailure);
     assert.equal(fifth.filter(message => message.id?.startsWith('luminary:core:')).length, 1, 'Core still attaches when recall abstains');
     assert.equal(fifth.filter(message => message.id?.startsWith('luminary:recall:')).length, 0, 'Abstained recall adds no reference');
     assert.equal(luminary(fifth).length, 1, 'No duplicate Luminary request messages');
@@ -356,6 +367,7 @@ for (const agent of ['pi', 'omp']) {
       assert.equal(requests.filter(request => request.action === 'core').length, 1);
       assert.equal(requests.filter(request => request.action === 'recall').length, 1);
       assert.equal(requests.find(request => request.action === 'core').query, undefined, 'Core takes no query');
+      assert.ok(first.indexOf(firstCore[0]) < first.indexOf(firstRecall[0]), 'Core baseline precedes the recall reference');
 
       replies.core = { ...empty(), status: 'ok', reason: '',
         context: '<luminary-core-memory>\nCall the user Commander\n</luminary-core-memory>' };
@@ -369,8 +381,17 @@ for (const agent of ['pi', 'omp']) {
       assert.equal(second.at(-1).id, 'live-user');
       assert.equal(luminary(second).length, 2, 'No duplicate Luminary request messages');
 
+      replies = {
+        core: { ok: false, status: 'error', reason: 'unavailable', message: 'Core unavailable.', context: '', memories: [], stored: 0, deleted: 0 },
+        recall: empty(),
+      };
+      const failedCore = await run(second);
+      assert.equal(failedCore.filter(message => message.customType === 'luminary_core').length, 0, 'A failed core fetch adds no baseline');
+      assert.ok(!failedCore.some(message => textOf(message).includes('Commander')), 'A failed core fetch removes the previous baseline');
+      assert.deepEqual(failedCore, [host, live()], 'A failed core fetch leaves no Luminary baseline behind');
+
       replies = { core: { ...empty(), status: 'ok', reason: '', context: '' }, recall: empty() };
-      const third = await run(second);
+      const third = await run(failedCore);
       assert.deepEqual(third, [host, live()], 'Empty core and abstained recall remove all Luminary messages');
 
       replies = {
@@ -413,6 +434,20 @@ for (const agent of ['pi', 'omp']) {
       await fire('turn_end', { message: { role: 'assistant', stopReason: 'aborted', content: [] } }, context);
       const cancelled = await fire('context', { type: 'context', sessionID: 'native-context-session', system, messages: sixth }, context);
       assert.deepEqual(cancelled?.messages ?? sixth, [host, live()], 'Cancellation produces no memory payload');
+
+      replies = {
+        core: { ...empty(), status: 'ok', reason: '', context: coreContext },
+        recall: { ...empty(), status: 'ok', reason: '', context: recallContext, memories: [{ id: 2, content: 'staging' }] },
+      };
+      const statuses = [];
+      context.hasUI = true;
+      context.ui = { setStatus(_key, value) { statuses.push(value); }, notify() {} };
+      await fire('before_agent_start', { prompt: 'Current native user task', systemPrompt: 'Real system authority' }, context);
+      await fire('context', { type: 'context', sessionID: 'native-context-session', system, messages: sixth }, context);
+      await fire('context', { type: 'context', sessionID: 'native-context-session', system, messages: sixth }, context);
+      assert.deepEqual(statuses, ['Luminary core: ok', 'Luminary recall: ok'], 'Core and recall report once per turn');
+      context.hasUI = false;
+      delete context.ui;
     } finally {
       await cleanup?.();
       delete globalThis[spawnKey];

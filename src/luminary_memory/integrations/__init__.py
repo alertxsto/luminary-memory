@@ -19,6 +19,7 @@ AGENTS = ("opencode", "pi", "omp")
 MAX_REQUEST_BYTES = 131072
 MAX_CONTEXT_CHARS = 8000
 MAX_CORE_TOP_N = 12
+MAX_CORE_CANDIDATES = 256
 CORE_CONTEXT_HEADER = (
     "Confirmed durable identity, preferences, and rules as subordinate default context. "
     "Current system instructions, verified runtime state, and the current explicit user "
@@ -174,25 +175,37 @@ def _serialized_rows(candidates, budget: int) -> tuple[list[Memory], str]:
 
 def _core(client: MemoryClient, settings: Settings) -> tuple[list[Memory], str]:
     # One stable, exact-scope selection shared by core rendering and recall dedup.
-    # Invalid rows must not consume the stable current-row limit.
-    candidates = client.backend.by_tag_top(
-        settings.core_tag, client.backend.count(),
-        scope=client.scope, include_global=False,
-    )
+    # Invalid rows must not consume the stable current-row limit, but a baseline
+    # read must never materialize every raw tagged row either: widen insertion-
+    # ordered windows up to a safe cap and consume only newly fetched rows.
+    tag = str(settings.core_tag or "").strip() or "core"
     # The established native core budget applies to content, not JSON or labels.
     budget = max(0, settings.core_budget)
     limit = min(max(0, settings.core_top_n), MAX_CORE_TOP_N)
     rows: list[Memory] = []
-    for memory in candidates:
-        content = str(memory.content or "").strip()
-        if not _current(memory) or not content:
-            continue
-        if len(rows) >= limit:
+    if not limit or not budget:
+        return rows, ""
+    fetched = 0
+    window = min(max(limit * 4, 16), MAX_CORE_CANDIDATES)
+    while len(rows) < limit and budget and fetched < MAX_CORE_CANDIDATES:
+        requested = min(max(window, limit), MAX_CORE_CANDIDATES)
+        batch = client.backend.by_tag_top(
+            tag, requested, scope=client.scope, include_global=False,
+        )
+        for memory in batch[fetched:]:
+            content = str(memory.content or "").strip()
+            if not _current(memory) or not content:
+                continue
+            if len(rows) >= limit:
+                break
+            if len(content) > budget:
+                continue
+            budget -= len(content)
+            rows.append(memory)
+        fetched = len(batch)
+        if fetched < requested:
             break
-        if len(content) > budget:
-            continue
-        budget -= len(content)
-        rows.append(memory)
+        window = min(requested * 2, MAX_CORE_CANDIDATES)
     serialized = json.dumps([_row(memory) for memory in rows], ensure_ascii=False) if rows else ""
     context = (
         "<luminary-core-memory>\n" + CORE_CONTEXT_HEADER + serialized + "\n</luminary-core-memory>"
@@ -210,9 +223,17 @@ def _recall(client, text, session, agent, settings, scope):
     try:
         result = client.recall(text, limit=8)
         selected = result.memories if result.status == "ok" else []
-        core, _ = _core(client, settings)
-        core_ids = {memory.id for memory in core}
-        core_contents = {key for memory in core if (key := _content_key(memory))}
+        # Dedup is a best-effort enhancement: only consult core when there are
+        # candidate rows, and a core-selection failure must not fail recall.
+        core_ids: set[int] = set()
+        core_contents: set[str] = set()
+        if selected:
+            try:
+                core, _ = _core(client, settings)
+            except Exception:
+                core = []
+            core_ids = {memory.id for memory in core}
+            core_contents = {key for memory in core if (key := _content_key(memory))}
         candidates = []
         deduplicated_core = False
         seen: set[int] = set()

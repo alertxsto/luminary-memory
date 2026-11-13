@@ -13,7 +13,7 @@ type Reply = {
   ok: boolean; status: string; reason: string; message: string; context: string;
   memories: unknown[]; stored: number; deleted: number;
 };
-type PendingTurn = { session: string; workspace: string; user: string; core?: Promise<Reply>; recall?: Promise<Reply> };
+type PendingTurn = { session: string; workspace: string; user: string; core?: Promise<Reply>; recall?: Promise<Reply>; reported?: boolean };
 const MAX_OUTPUT = 256 * 1024;
 const TIMEOUT_MS = 60_000;
 const HELP = "/luminary recall QUERY | remember TEXT | forget ID | activity";
@@ -128,8 +128,12 @@ export default function luminary(pi: ExtensionAPI) {
       turn.recall ?? Promise.resolve(failure("Luminary recall request was not started")),
     ]);
     if (pending !== turn || turn.session !== ctx.sessionManager.getSessionId() || turn.workspace !== resolve(ctx.cwd)) return { messages };
-    report(ctx, "core", core);
-    report(ctx, "recall", recall);
+    // Hosts may rebuild one request several times; status is a per-turn report.
+    if (!turn.reported) {
+      turn.reported = true;
+      report(ctx, "core", core);
+      report(ctx, "recall", recall);
+    }
     const injected: { role: "custom"; customType: string; display: boolean; content: string; timestamp: number }[] = [];
     // Baseline first, then the turn-local reference, then the live messages.
     if (core.ok && core.context.trim()) injected.push({ role: "custom", customType: CORE_MESSAGE_TYPE, display: false,

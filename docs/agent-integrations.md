@@ -384,9 +384,10 @@ state.
 Core selection binds the exact adapter scope without global rows and keeps only
 active, currently valid rows. Rows follow their stable core-tag insertion order;
 `LUMINARY_CORE_TOP_N` (default 12, capped at 12; `0` disables baseline loading)
-limits how many rows are used and `LUMINARY_CORE_BUDGET` (default 8000
-characters of content) bounds the rendered block. A row that does not fit whole
-is skipped, never truncated. Adapters fetch core afresh at the start of each
+limits how many rows are used and `LUMINARY_CORE_BUDGET` (default 8000)
+bounds the total content characters across the selected rows, not the rendered
+block including JSON, IDs, tags, or labels. A row that does not fit whole is
+skipped, never truncated. Adapters fetch core afresh at the start of each
 admitted user run, so an explicit remember, forget, or retraction is visible
 without restarting the host. The block is request-local, non-system reference
 data: adapters replace their own marked baseline instead of appending duplicate
@@ -411,9 +412,12 @@ evidence-bearing memory. Recall is pure: a returned row already represented in
 the loaded core baseline by ID or normalized content is removed, so it never
 appears twice. If only core rows matched, recall returns `abstain` with
 `reason: matches_already_in_core`, empty `memories`, and empty `context`; core
-never turns abstention into success. Other results keep the engine's status and
-reason. Recall uses its own row cap and 8000-character whole-row serialization
-budget; the core budget is separate and neither expands the other.
+never turns abstention into success. An engine `ok` result whose rows are all
+invalid, already in core, or otherwise not deliverable becomes `abstain` with
+`reason: no_deliverable_candidate` (or `matches_already_in_core` when only core
+matched), with empty `memories` and `context`. Other results keep the engine's
+status and reason. Recall uses its own row cap and 8000-character whole-row
+serialization budget; the core budget is separate and neither expands the other.
 
 The recall result is a request-local, non-system reference before the live user
 message, not a persistent transcript entry. Empty, abstained, or failed recall

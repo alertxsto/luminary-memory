@@ -14,8 +14,8 @@
   without a session restart and repeated turns do not append duplicate
   transcript entries. Core and recall keep separate row and character budgets,
   rows are serialized once without adapters slicing or double-encoding them, and
-  empty or failed recall injects no context or status message. Baseline loading
-  remains disabled by `LUMINARY_CORE_TOP_N=0`.
+  empty or failed recall injects no model-bound context or status payload.
+  Baseline loading remains disabled by `LUMINARY_CORE_TOP_N=0`.
 
 ## [0.3.3] - 2026-11-10
 

@@ -385,6 +385,65 @@ def test_core_filters_invalid_rows_before_stable_limit(native, monkeypatch):
     assert [row["id"] for row in baseline["memories"]] == [valid_id]
 
 
+def test_core_tag_falls_back_to_core_when_configured_empty(native, monkeypatch):
+    client, request = native
+    mid = client.ingest("Call the user Captain", tags=["core"], enrich=False)
+    monkeypatch.setenv("LUMINARY_CORE_TAG", "")
+
+    baseline = dispatch({**request, "action": "core"}, client=client)
+
+    assert [row["id"] for row in baseline["memories"]] == [mid]
+
+
+def test_core_candidate_loading_is_bounded(native, monkeypatch):
+    client, request = native
+    monkeypatch.setenv("LUMINARY_CORE_TOP_N", "1")
+    for index in range(300):
+        client.ingest(f"Baseline row {index}", tags=["core"], enrich=False)
+    calls = []
+    original = client.backend.by_tag_top
+
+    def record(tag, top_n, **kwargs):
+        calls.append(top_n)
+        return original(tag, top_n, **kwargs)
+
+    monkeypatch.setattr(client.backend, "by_tag_top", record)
+    baseline = dispatch({**request, "action": "core"}, client=client)
+
+    assert [row["content"] for row in baseline["memories"]] == ["Baseline row 0"]
+    assert calls
+    assert max(calls) < 300
+
+
+def test_core_bounded_candidates_still_skip_invalid_rows(native, monkeypatch):
+    client, request = native
+    monkeypatch.setenv("LUMINARY_CORE_TOP_N", "1")
+    expired = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    for index in range(20):
+        client.ingest(f"Expired row {index}", tags=["core"], enrich=False, valid_to=expired)
+    valid_id = client.ingest("Current baseline", tags=["core"], enrich=False)
+
+    baseline = dispatch({**request, "action": "core"}, client=client)
+
+    assert [row["id"] for row in baseline["memories"]] == [valid_id]
+
+
+def test_recall_core_selection_failure_does_not_fail_recall(native, monkeypatch):
+    client, request = native
+    mid = client.ingest("PostgreSQL is the deployment database", enrich=False)
+
+    def fail_core(*args, **kwargs):
+        raise RuntimeError("core selection unavailable")
+
+    monkeypatch.setattr(client.backend, "by_tag_top", fail_core)
+    recalled = dispatch({**request, "action": "recall", "query": "PostgreSQL deployment database"},
+                        client=client)
+
+    assert recalled["ok"] is True
+    assert recalled["status"] == "ok"
+    assert [row["id"] for row in recalled["memories"]] == [mid]
+
+
 def test_core_content_budget_allows_an_exact_fit(native, monkeypatch):
     client, request = native
     monkeypatch.setenv("LUMINARY_CORE_TOP_N", "2")
