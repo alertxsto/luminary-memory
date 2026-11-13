@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- Submitted the Hermes provider to the official plugin catalog
+  (`plugin-catalog/luminary.yaml`, pinned at `8c8aec9`): the adapter directory
+  is now loadable as a standalone plugin, declares a truthful
+  `requires_hermes` floor and SPDX license, and ships its own disclosure README.
+
 ### Changed
 
 - Rebuilt the public website around blue three-tone lunar artwork, a

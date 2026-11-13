@@ -21,6 +21,6 @@ def __getattr__(name: str):
 def register(ctx) -> None:
     """Register the provider with a Hermes plugin context."""
 
-    from luminary_memory.hermes.provider import LuminaryMemoryProvider
+    from .provider import LuminaryMemoryProvider
 
     ctx.register_memory_provider(LuminaryMemoryProvider())
