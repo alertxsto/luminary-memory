@@ -10,22 +10,41 @@
   var copyStatus = document.getElementById("docs-copy-status");
   var docsIndex = document.getElementById("docs-index");
   var menuToggle = document.getElementById("docs-menu-toggle");
-  var closeButton = document.getElementById("docs-index-close");
   var backdrop = document.getElementById("docs-drawer-backdrop");
   var selectedLabel = document.getElementById("docs-selected-label");
-  var activeFilter = "all";
+  var tocRail = document.getElementById("docs-toc");
+  var drawerBackground = document.querySelectorAll(".site-header, .skip-link, .docs-mobile-bar, .docs-reader, .docs-toc, .site-footer");
   var requestedId = new URLSearchParams(window.location.search).get("doc");
   var selectedId = docs.some(function (doc) { return doc.id === requestedId; }) ? requestedId : (docs[0] && docs[0].id);
   var drawerOpen = false;
   var drawerReturnFocus = null;
-  var copyResetTimer = null;
+  var tocObserver = null;
 
   function isMobile() {
-    return window.matchMedia("(max-width: 680px)").matches;
+    return window.matchMedia("(max-width: 860px)").matches;
   }
 
   function reducedMotion() {
     return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  function syncDrawerAccessibility() {
+    if (!docsIndex) return;
+    var mobile = isMobile();
+    drawerBackground.forEach(function (element) { element.inert = mobile && drawerOpen; });
+    if (mobile && !drawerOpen && docsIndex.contains(document.activeElement) && menuToggle) {
+      menuToggle.focus({ preventScroll: true });
+    }
+    docsIndex.inert = mobile && !drawerOpen;
+    if (mobile && !drawerOpen) docsIndex.setAttribute("aria-hidden", "true");
+    else docsIndex.removeAttribute("aria-hidden");
+    if (mobile && drawerOpen) {
+      docsIndex.setAttribute("role", "dialog");
+      docsIndex.setAttribute("aria-modal", "true");
+    } else {
+      docsIndex.removeAttribute("role");
+      docsIndex.removeAttribute("aria-modal");
+    }
   }
 
   function setDrawerState(open, restoreFocus) {
@@ -35,18 +54,14 @@
     document.body.classList.toggle("docs-drawer-open", open);
     if (menuToggle) {
       menuToggle.setAttribute("aria-expanded", String(open));
-      menuToggle.setAttribute("aria-label", open ? "Close source index" : "Open source index");
+      menuToggle.setAttribute("aria-label", open ? "Close documentation navigation" : "Open documentation navigation");
     }
-    if (backdrop) {
-      backdrop.classList.toggle("is-visible", open);
-      backdrop.setAttribute("aria-hidden", String(!open));
-    }
-    if (restoreFocus && drawerReturnFocus && typeof drawerReturnFocus.focus === "function") {
-      drawerReturnFocus.focus();
-    }
-    if (open) {
-      var firstItem = nav && nav.querySelector("[data-doc-page-id]");
-      if (firstItem) firstItem.focus({ preventScroll: true });
+    if (backdrop) backdrop.classList.toggle("is-visible", open);
+    syncDrawerAccessibility();
+    if (open && search) search.focus({ preventScroll: true });
+    if (restoreFocus && drawerReturnFocus && drawerReturnFocus.isConnected) {
+      var returnTarget = docsIndex.contains(drawerReturnFocus) ? menuToggle : drawerReturnFocus;
+      if (returnTarget) returnTarget.focus({ preventScroll: true });
     }
   }
 
@@ -64,13 +79,7 @@
 
   function escapeHTML(value) {
     return String(value).replace(/[&<>"']/g, function (character) {
-      return {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        "\"": "&quot;",
-        "'": "&#039;"
-      }[character];
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;" }[character];
     });
   }
 
@@ -91,51 +100,33 @@
     return docs.filter(function (doc) {
       var guide = guides[doc.id] || {};
       var haystack = [doc.title, doc.label, doc.blurb, doc.source].concat(doc.facts || [], doc.keywords || [], [JSON.stringify(guide)]).join(" ").toLowerCase();
-      var categoryMatch = activeFilter === "all" || doc.category === activeFilter;
-      return categoryMatch && (!query || haystack.indexOf(query) !== -1);
+      return !query || haystack.indexOf(query) !== -1;
     });
   }
 
-  function updateInventory() {
-    var categories = { build: 0, operate: 0, integrate: 0 };
-    docs.forEach(function (doc) {
-      if (Object.prototype.hasOwnProperty.call(categories, doc.category)) categories[doc.category] += 1;
-    });
-    var totals = {
-      "docs-total-count": docs.length + " notes",
-      "docs-build-count": categories.build,
-      "docs-operate-count": categories.operate,
-      "docs-integrate-count": categories.integrate
-    };
-    Object.keys(totals).forEach(function (id) {
-      var element = document.getElementById(id);
-      if (element) element.textContent = String(totals[id]);
-    });
-  }
-
-  function updateSelectedLabel(doc) {
-    if (selectedLabel) selectedLabel.textContent = doc ? doc.title : "Select a note";
+  function sourceURL(path) {
+    return "https://github.com/alertxsto/luminary-memory/blob/main/" + String(path || "").split("/").map(encodeURIComponent).join("/");
   }
 
   function sourceLink(path, className) {
-    var safePath = String(path || "");
-    return "<a class=\"" + (className || "reader-source-link") + "\" href=\"../" + escapeHTML(safePath) + "\" target=\"_blank\" rel=\"noopener\"><strong>" + escapeHTML(safePath) + "</strong></a>";
+    return "<a class=\"" + (className || "reader-source-link") + "\" href=\"" + escapeHTML(sourceURL(path)) + "\" target=\"_blank\" rel=\"noopener\"><strong>" + escapeHTML(path) + "</strong></a>";
   }
 
   function renderNav() {
-    var visible = visibleDocs();
     if (!nav) return;
-    nav.innerHTML = visible.length ? visible.map(function (doc) {
-      var active = doc.id === selectedId;
-      var docIndex = docs.findIndex(function (item) { return item.id === doc.id; });
-      return "<button class=\"docs-nav-item" + (active ? " is-active" : "") + "\" type=\"button\" data-doc-page-id=\"" + escapeHTML(doc.id) + "\"" + (active ? " aria-current=\"page\"" : "") + ">" +
-        "<span class=\"docs-nav-index\">" + ordinal(docIndex) + "</span>" +
-        "<span class=\"docs-nav-copy\"><span class=\"docs-nav-label\">" + escapeHTML(doc.label) + "</span><span class=\"docs-nav-title\">" + escapeHTML(doc.title) + "</span><span class=\"docs-nav-source\">" + escapeHTML(doc.source) + "</span></span>" +
-        "<span class=\"docs-nav-category\">" + escapeHTML(doc.category) + "</span></button>";
-    }).join("") : "<p class=\"docs-empty-page\">No notes match this filter.</p>";
+    var visible = visibleDocs();
+    nav.innerHTML = visible.length ? ["build", "operate", "integrate"].map(function (category) {
+      var group = visible.filter(function (doc) { return doc.category === category; });
+      if (!group.length) return "";
+      return "<section class=\"docs-nav-group\"><h2>" + category.charAt(0).toUpperCase() + category.slice(1) + "</h2>" +
+        group.map(function (doc) {
+          var active = doc.id === selectedId;
+          return "<a class=\"docs-nav-item" + (active ? " is-active" : "") + "\" href=\"docs.html?doc=" + encodeURIComponent(doc.id) + "\" data-doc-page-id=\"" + escapeHTML(doc.id) + "\"" + (active ? " aria-current=\"page\"" : "") + ">" + escapeHTML(doc.title) + "</a>";
+        }).join("") + "</section>";
+    }).join("") : "<p class=\"docs-empty-page\"><strong>No matching guides.</strong>Try another term, command, or setting.</p>";
     if (count) {
       var query = search ? search.value.trim() : "";
-      count.textContent = visible.length + " of " + docs.length + " source notes" + (query ? " / matching \"" + query + "\"" : "");
+      count.textContent = visible.length + " of " + docs.length + " guides" + (query ? " matching “" + query + "”" : "");
     }
   }
 
@@ -164,7 +155,7 @@
       }).join("") + "</tr>";
     }).join("") + "</tbody>";
     var tableClass = "reader-table" + (table.className ? " " + escapeHTML(table.className) : "");
-    return "<div class=\"reader-table-wrap\"><table class=\"" + tableClass + "\">" + caption + head + body + "</table></div>";
+    return "<div class=\"reader-table-wrap\" tabindex=\"0\" role=\"region\" aria-label=\"" + escapeHTML(table.caption || "Reference table") + "\"><table class=\"" + tableClass + "\">" + caption + head + body + "</table></div>";
   }
 
   function renderParameters(parameters) {
@@ -187,7 +178,7 @@
   function renderCode(value, kind, label) {
     if (!value) return "";
     var code = String(value);
-    return "<div class=\"reader-code" + (kind === "output" ? " reader-output" : "") + "\"><div class=\"reader-code-head\"><span class=\"reader-code-label\">" + escapeHTML(label) + "</span><button class=\"reader-code-copy\" type=\"button\" data-copy=\"" + escapeHTML(code) + "\">Copy</button></div><pre><code>" + escapeHTML(code) + "</code></pre></div>";
+    return "<div class=\"reader-code" + (kind === "output" ? " reader-output" : "") + "\"><div class=\"reader-code-head\"><span class=\"reader-code-label\">" + escapeHTML(label) + "</span><button class=\"reader-code-copy\" type=\"button\" data-copy=\"" + escapeHTML(code) + "\" aria-label=\"Copy " + escapeHTML(label.toLowerCase()) + "\">Copy</button></div><pre tabindex=\"0\" aria-label=\"" + escapeHTML(label) + "\"><code>" + escapeHTML(code) + "</code></pre></div>";
   }
 
   function renderCallout(kind, title, content) {
@@ -198,50 +189,37 @@
 
   function renderSection(section, index) {
     var sectionId = "reader-section-" + (index + 1);
-    var bullets = renderList(section.bullets);
-    var parameters = renderParameters(section.parameters);
-    var table = renderTable(section.table);
-    var output = renderCode(section.output, "output", "Observed output");
-    var code = renderCode(section.code, "code", "Example");
-    var returns = renderCallout("returns", "Returns", section.returns);
-    var tips = renderCallout("tip", "Tip", section.tips);
-    var warnings = renderCallout("warning", "Boundary", section.warnings);
-    var notes = renderCallout("note", "Note", section.notes);
-    return "<section class=\"reader-section\" id=\"" + sectionId + "\" data-toc-index=\"" + index + "\"><div class=\"reader-section-heading\"><span class=\"reader-section-number\">" + ordinal(index) + "</span><h3>" + escapeHTML(section.title) + "</h3></div>" + renderParagraphs(section) + bullets + parameters + table + output + code + returns + tips + warnings + notes + "</section>";
+    return "<section class=\"reader-section\" id=\"" + sectionId + "\" data-toc-index=\"" + index + "\" tabindex=\"-1\"><div class=\"reader-section-heading\"><span class=\"reader-section-number\" aria-hidden=\"true\">" + ordinal(index) + "</span><h2>" + escapeHTML(section.title) + "</h2></div>" +
+      renderParagraphs(section) + renderList(section.bullets) + renderParameters(section.parameters) + renderTable(section.table) +
+      renderCode(section.output, "output", "Observed output") + renderCode(section.code, "code", "Example") +
+      renderCallout("returns", "Returns", section.returns) + renderCallout("tip", "Tip", section.tips) +
+      renderCallout("warning", "Boundary", section.warnings) + renderCallout("note", "Note", section.notes) + "</section>";
   }
 
   function buildTOC() {
-    if (!reader) return;
+    if (!reader || !tocRail) return;
+    if (tocObserver) tocObserver.disconnect();
     var sections = reader.querySelectorAll(".reader-section");
-    if (sections.length < 2) return;
-    var items = [];
-    sections.forEach(function (section, index) {
-      var heading = section.querySelector("h3");
-      if (heading) items.push({ index: index, text: heading.textContent });
-    });
-    if (!items.length) return;
-    var toc = document.createElement("nav");
-    toc.className = "reader-toc";
-    toc.setAttribute("aria-label", "On this page");
-    var title = document.createElement("p");
-    title.className = "reader-toc-heading";
-    title.textContent = "On this page";
-    toc.appendChild(title);
-    var list = document.createElement("ol");
-    list.className = "reader-toc-list";
-    items.forEach(function (item) {
-      var listItem = document.createElement("li");
-      var button = document.createElement("button");
-      button.type = "button";
-      button.className = "reader-toc-link";
-      button.setAttribute("data-toc-target", String(item.index));
-      button.textContent = item.text;
-      listItem.appendChild(button);
-      list.appendChild(listItem);
-    });
-    toc.appendChild(list);
+    var links = Array.from(sections).map(function (section, index) {
+      var heading = section.querySelector("h2");
+      return "<li><a class=\"reader-toc-link\" href=\"#" + section.id + "\" data-toc-target=\"" + index + "\">" + escapeHTML(heading.textContent) + "</a></li>";
+    }).join("");
+    var outline = "<nav class=\"reader-toc\" aria-label=\"On this page\"><p class=\"reader-toc-heading\">On this page</p><ol class=\"reader-toc-list\">" + links + "</ol></nav>";
+    tocRail.innerHTML = outline + "<a class=\"reader-toc-source\" href=\"" + escapeHTML(sourceURL(getDoc(selectedId).source)) + "\" target=\"_blank\" rel=\"noopener\">View source <span aria-hidden=\"true\">↗</span></a>";
     var header = reader.querySelector(".reader-header");
-    if (header) header.insertAdjacentElement("afterend", toc);
+    if (header) header.insertAdjacentHTML("afterend", "<details class=\"reader-toc-inline\"><summary>On this page</summary>" + outline + "</details>");
+    if ("IntersectionObserver" in window) {
+      tocObserver = new IntersectionObserver(function (entries) {
+        var visible = entries.filter(function (entry) { return entry.isIntersecting; });
+        if (!visible.length) return;
+        var active = visible[0].target.dataset.tocIndex;
+        document.querySelectorAll("[data-toc-target]").forEach(function (link) {
+          if (link.dataset.tocTarget === active) link.setAttribute("aria-current", "location");
+          else link.removeAttribute("aria-current");
+        });
+      }, { rootMargin: "-100px 0px -65% 0px" });
+      sections.forEach(function (section) { tocObserver.observe(section); });
+    }
   }
 
   function renderReader() {
@@ -258,19 +236,19 @@
     var previous = docIndex > 0 ? docs[docIndex - 1] : null;
     var next = docIndex < docs.length - 1 ? docs[docIndex + 1] : null;
     var navigation = "<footer class=\"reader-footer\">" +
-      (previous ? "<a class=\"reader-nav-link\" href=\"docs.html?doc=" + encodeURIComponent(previous.id) + "\" data-doc-page-id=\"" + escapeHTML(previous.id) + "\"><span class=\"reader-nav-label\">Previous note</span>" + escapeHTML(previous.title) + "</a>" : "<span></span>") +
-      (next ? "<a class=\"reader-nav-link\" href=\"docs.html?doc=" + encodeURIComponent(next.id) + "\" data-doc-page-id=\"" + escapeHTML(next.id) + "\"><span class=\"reader-nav-label\">Next note</span>" + escapeHTML(next.title) + "</a>" : "<span></span>") +
+      (previous ? "<a class=\"reader-nav-link\" href=\"docs.html?doc=" + encodeURIComponent(previous.id) + "\" data-doc-page-id=\"" + escapeHTML(previous.id) + "\"><span class=\"reader-nav-label\">← Previous</span>" + escapeHTML(previous.title) + "</a>" : "<span></span>") +
+      (next ? "<a class=\"reader-nav-link\" href=\"docs.html?doc=" + encodeURIComponent(next.id) + "\" data-doc-page-id=\"" + escapeHTML(next.id) + "\"><span class=\"reader-nav-label\">Next →</span>" + escapeHTML(next.title) + "</a>" : "<span></span>") +
       "</footer>";
     reader.dataset.docId = doc.id;
-    reader.innerHTML = "<header class=\"reader-header\"><div class=\"reader-header-top\"><p class=\"reader-kicker\">" + escapeHTML(guide.kicker) + "</p><span class=\"reader-sequence\">" + ordinal(docIndex) + " / " + String(docs.length).padStart(2, "0") + " note</span></div><h2>" + escapeHTML(doc.title) + "</h2><p class=\"reader-lead\">" + escapeHTML(guide.lead) + "</p>" + facts + "<div class=\"reader-meta\"><span>source of record " + sourceLink(doc.source) + "</span><span>job <strong>" + escapeHTML(doc.category) + "</strong></span><span>sections <strong>" + String((guide.sections || []).length) + "</strong></span></div></header><div class=\"reader-body\">" + guideSections + related + navigation + "</div>";
+    reader.innerHTML = "<figure class=\"reader-banner\"><img class=\"raster-art art-dark\" src=\"assets/art/lunar-docs-dark.png\" width=\"1080\" height=\"300\" alt=\"\"><img class=\"raster-art art-light\" src=\"assets/art/lunar-docs-light.png\" width=\"1080\" height=\"300\" alt=\"\"><figcaption class=\"reader-banner-label\">Knowledge, kept in orbit</figcaption></figure><header class=\"reader-header\"><div class=\"reader-header-top\"><p class=\"reader-kicker\">" + escapeHTML(guide.kicker) + "</p><span class=\"reader-sequence\">" + ordinal(docIndex) + " / " + String(docs.length).padStart(2, "0") + "</span></div><h1>" + escapeHTML(doc.title) + "</h1><p class=\"reader-lead\">" + escapeHTML(guide.lead) + "</p>" + facts + "<div class=\"reader-meta\"><span>Source " + sourceLink(doc.source) + "</span><span>" + escapeHTML(doc.category) + " / " + String((guide.sections || []).length) + " sections</span></div></header><div class=\"reader-body\">" + guideSections + related + navigation + "</div>";
     document.title = doc.title + " | Luminary Memory";
-    updateSelectedLabel(doc);
+    if (selectedLabel) selectedLabel.textContent = doc.title;
     buildTOC();
   }
 
   function scrollToReader() {
     if (!reader) return;
-    var top = reader.getBoundingClientRect().top + window.scrollY - (isMobile() ? 78 : 110);
+    var top = reader.getBoundingClientRect().top + window.scrollY - 100;
     window.scrollTo({ top: Math.max(0, top), behavior: reducedMotion() ? "auto" : "smooth" });
   }
 
@@ -278,41 +256,34 @@
     var doc = getDoc(id);
     if (!doc) return;
     selectedId = doc.id;
-    if (updateUrl) window.history.pushState({}, "", "docs.html?doc=" + encodeURIComponent(selectedId));
+    if (updateUrl && new URLSearchParams(window.location.search).get("doc") !== selectedId) {
+      var url = new URL(window.location.href);
+      url.searchParams.set("doc", selectedId);
+      url.hash = "";
+      window.history.pushState({}, "", url);
+    }
+    if (drawerOpen) closeDrawer(false);
     renderNav();
     renderReader();
-    if (isMobile() && drawerOpen) closeDrawer(false);
     if (moveToArticle) scrollToReader();
     if (reader) reader.focus({ preventScroll: true });
   }
 
   function showCopyStatus(message, button) {
     if (copyStatus) copyStatus.textContent = message;
-    if (button) {
-      button.textContent = "Copied";
-      button.classList.add("is-copied");
-    }
-    window.clearTimeout(copyResetTimer);
-    copyResetTimer = window.setTimeout(function () {
-      if (copyStatus) copyStatus.textContent = "";
-      if (button) {
-        button.textContent = "Copy";
-        button.classList.remove("is-copied");
-      }
+    if (!button) return;
+    button.textContent = "Copied";
+    button.classList.add("is-copied");
+    window.clearTimeout(button.copyResetTimer);
+    button.copyResetTimer = window.setTimeout(function () {
+      button.textContent = "Copy";
+      button.classList.remove("is-copied");
     }, 2200);
-  }
-
-  function copyText(value, button) {
-    var done = function () { showCopyStatus("Copied to clipboard", button); };
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(value).then(done).catch(function () { copyTextFallback(value, button); });
-      return;
-    }
-    copyTextFallback(value, button);
   }
 
   function copyTextFallback(value, button) {
     var textarea = document.createElement("textarea");
+    var previousFocus = document.activeElement;
     textarea.value = value;
     textarea.setAttribute("readonly", "");
     textarea.style.position = "fixed";
@@ -322,62 +293,102 @@
     var copied = false;
     try { copied = document.execCommand("copy"); } catch (error) { copied = false; }
     textarea.remove();
+    if (previousFocus && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
     showCopyStatus(copied ? "Copied to clipboard" : "Select and copy the code", copied ? button : null);
+  }
+
+  function copyText(value, button) {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(value).then(function () {
+        showCopyStatus("Copied to clipboard", button);
+      }).catch(function () { copyTextFallback(value, button); });
+    } else {
+      copyTextFallback(value, button);
+    }
+  }
+
+  function scrollToHash() {
+    if (!window.location.hash || !reader) return;
+    var target = document.getElementById(window.location.hash.slice(1));
+    if (target && reader.contains(target)) target.scrollIntoView({ block: "start" });
   }
 
   document.addEventListener("click", function (event) {
     var copyControl = event.target.closest("[data-copy]");
-    if (copyControl) {
+    if (copyControl && reader.contains(copyControl)) {
       copyText(copyControl.getAttribute("data-copy") || "", copyControl);
       return;
     }
     var tocTarget = event.target.closest("[data-toc-target]");
     if (tocTarget) {
-      var section = reader && reader.querySelector("[data-toc-index=\"" + tocTarget.getAttribute("data-toc-target") + "\"]");
-      if (section) section.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      var section = reader.querySelector("[data-toc-index=\"" + tocTarget.dataset.tocTarget + "\"]");
+      if (section) {
+        section.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
+        section.focus({ preventScroll: true });
+        var url = new URL(window.location.href);
+        url.hash = section.id;
+        window.history.replaceState({}, "", url);
+      }
       return;
     }
     var docControl = event.target.closest("[data-doc-page-id]");
     if (docControl) {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       event.preventDefault();
       selectDoc(docControl.getAttribute("data-doc-page-id"), true, true);
-      return;
-    }
-    var filterControl = event.target.closest("[data-doc-page-filter]");
-    if (filterControl) {
-      activeFilter = filterControl.getAttribute("data-doc-page-filter");
-      document.querySelectorAll("[data-doc-page-filter]").forEach(function (button) {
-        var active = button === filterControl;
-        button.classList.toggle("is-active", active);
-        button.setAttribute("aria-pressed", String(active));
-      });
-      renderNav();
       return;
     }
     if (event.target.closest("#docs-menu-toggle")) {
       if (drawerOpen) closeDrawer(true); else openDrawer();
       return;
     }
-    if (event.target.closest("#docs-index-close") || event.target.closest("#docs-drawer-backdrop")) {
-      closeDrawer(true);
-    }
+    if (event.target.closest("#docs-index-close") || event.target.closest("#docs-drawer-backdrop")) closeDrawer(true);
   });
 
   if (search) search.addEventListener("input", renderNav);
 
   window.addEventListener("popstate", function () {
     selectedId = new URLSearchParams(window.location.search).get("doc") || (docs[0] && docs[0].id);
-    if (!getDoc(selectedId)) selectedId = docs[0] && docs[0].id;
-    renderNav();
+    if (drawerOpen) closeDrawer(false);
     renderReader();
+    renderNav();
+    scrollToHash();
   });
 
   window.addEventListener("resize", function () {
     if (!isMobile() && drawerOpen) closeDrawer(false);
+    syncDrawerAccessibility();
   });
 
   document.addEventListener("keydown", function (event) {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      if (isMobile()) openDrawer();
+      if (search) {
+        search.focus({ preventScroll: true });
+        search.select();
+      }
+      return;
+    }
+    if (event.key === "Tab" && drawerOpen && docsIndex) {
+      var controls = Array.from(docsIndex.querySelectorAll("a[href], button, input, [tabindex]:not([tabindex='-1'])")).filter(function (element) {
+        return !element.disabled && element.getClientRects().length > 0;
+      });
+      var first = controls[0];
+      var last = controls[controls.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !docsIndex.contains(document.activeElement))) {
+        event.preventDefault();
+        if (last) last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !docsIndex.contains(document.activeElement))) {
+        event.preventDefault();
+        if (first) first.focus();
+      }
+    }
     if (event.key === "Escape" && drawerOpen) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
       closeDrawer(true);
       return;
     }
@@ -385,9 +396,10 @@
       search.value = "";
       renderNav();
     }
-  });
+  }, true);
 
-  updateInventory();
+  syncDrawerAccessibility();
   renderNav();
   renderReader();
+  scrollToHash();
 }());
