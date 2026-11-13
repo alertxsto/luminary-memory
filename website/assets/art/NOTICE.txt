@@ -27,3 +27,14 @@ python scripts/build-website-art.py --fern-source path/to/Haeckel_Filicinae_92.w
 The moon source is already tracked at website/assets/full-moon.jpg.
 GutsAI artwork was studied as a visual reference; none of its image assets is
 redistributed by this website.
+
+HOST LOGOS
+website/assets/logos/ contains unmodified brand marks fetched from each
+project's official repository or site. They identify the hosts Luminary
+integrates with; they do not imply endorsement of Luminary.
+- hermes.png: NousResearch/hermes-agent, apps/desktop/assets/appx/Square150x150Logo.scale-400.png
+- opencode-dark.svg, opencode-light.svg: anomalyco/opencode, .github/assets/logo-ornate-{dark,light}.svg
+- pi.svg: badlogic/pi-mono, apps/p2/public/icons/favicon.svg
+- omp.svg: can1357/oh-my-pi, packages/collab-web/public/favicon.svg
+Each mark remains the property of its project and is subject to that
+project's own license and trademark terms.
