@@ -924,11 +924,11 @@
         },
         {
           title: "Current release snapshot",
-          paragraphs: ["The 0.3.3 Python package and GitHub plugin tarballs come from the tagged release. The later npm 0.3.3 builds instead match develop and have different entry points; matching version numbers do not establish compatibility. Use the tagged plugin tarballs with Python 0.3.3 until the coordinated replacement release is published. The inspector remains limited to the verified hosts."],
+          paragraphs: ["Python and all three npm latest tags are 0.3.4. The npm tarballs are byte-identical to the tagged GitHub assets, and all their built resources match the PyPI wheel. GitHub Actions published through OIDC with signed npm provenance. This coordinated release replaces the mismatched npm 0.3.3 builds without overwriting them. Native inspection remains limited to the verified hosts."],
           table: table("Release checks", ["Surface", "Current contract"], [
-            ["Version", "0.3.3 / Python 3.11+"],
-            ["Official Hermes SDK suite", "695 passed, 8 skipped, 1 deselected (known Windows file-permission case)"],
-            ["Standalone workspace check", "684 passed, 19 skipped (SDK cases), 1 deselected; 79% full-source coverage"],
+            ["Version", "0.3.4 / Python 3.11+"],
+            ["Official Hermes SDK suite", "Passed in the tagged 0.3.4 Publish workflow against the official SDK"],
+            ["Standalone workspace check", "Passed locally; unavailable SDK cases skipped and the known Windows POSIX-permission case deselected"],
             ["Inspector scope", "OpenCode CLI/Desktop, pi, omp, Hermes Desktop/dashboard and the explicit loopback companion"],
             ["Blocked targets", "OpenCode Web GUI contribution discovery; Hermes terminal/TUI authority and scope lifecycle"],
             ["Accuracy boundary", "Controlled gold fixture is a regression signal, not a competitor ranking"],
@@ -940,6 +940,7 @@
           title: "Recent release history",
           paragraphs: ["The release baseline comes from CHANGELOG.md."],
           table: table("Recent shipped changes", ["Release", "Date", "Scope"], [
+            ["0.3.4", "2026-11-14", "Coordinated Python/native artifacts, request-local core baseline separate from recall, bounded ledger retention, and Windows test isolation."],
             ["0.3.3", "2026-11-09", "Native interactive inspectors on verified hosts, owner-scoped sharing and permissions, offline Summary, and an opt-in loopback companion."],
             ["0.3.2", "2026-10-25", "Harness-neutral JSON bridge, native OpenCode V2/pi/omp adapters and Luminary-maintained npm packages."],
             ["0.3.0", "2026-08-24", "Scoped, evidenced, auditable CLI/Hermes path with session continuity and post-turn reconciliation."],
