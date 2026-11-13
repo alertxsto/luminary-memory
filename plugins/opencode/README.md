@@ -6,35 +6,33 @@ and **`@opencode/plugin` 2.2.0**. This is an official Luminary package,
 
 **Development scope:** the `0.3.3` source includes this inspector
 for OpenCode CLI and Desktop on `@opencode/cli` and `@opencode/plugin`
-**2.2.0**. The published `0.3.2` bridge contains no inspector and was verified
-on OpenCode 2.1.4; `0.3.1` targets the separate V1 API. Native Web GUI
+**2.2.0**. The published `0.3.3` bridge includes the inspector; `0.3.2` was
+verified on OpenCode 2.1.4, and `0.3.1` targets the separate V1 API. Native Web GUI
 contribution discovery remains
 blocked upstream. See the [target matrix](https://github.com/alertxsto/luminary-memory/blob/develop/docs/ROADMAP.md#target-support-matrix)
 for exact scope, lifecycle and release limitations.
 
 ## Install
 
-The registry commands below install `0.3.2`, which has no inspector. For the
-`0.3.3` inspector, use the matching Python bridge and native package built from
-this checkout or obtained from the GitHub release when available.
+The registry commands below install `0.3.3`, which includes the inspector.
 
 Install the published Python bridge from PyPI:
 
 ```sh
-python -m pip install --upgrade "luminary-memory==0.3.2"
+python -m pip install --upgrade "luminary-memory==0.3.3"
 export LUMINARY_PYTHON=/absolute/path/to/venv/bin/python
 ```
 
 Install the V2 npm package through OpenCode:
 
 ```sh
-opencode plugin add luminary-memory-opencode@0.3.2
+opencode plugin add luminary-memory-opencode@0.3.3
 ```
 
 Alternatively, add it to your existing `opencode.json` or `opencode.jsonc`:
 
 ```json
-{"plugins": ["luminary-memory-opencode@0.3.2"]}
+{"plugins": ["luminary-memory-opencode@0.3.3"]}
 ```
 
 V2 uses **`plugins`**, not V1's singular `plugin`. The host provides the SDK and
@@ -150,7 +148,7 @@ Compatible clients consume the server's native tools/results. This package does
 not add a universal client toolbar or a standalone desktop app. Before enabling
 it, remove only the old copied Luminary adapter and its explicit config entry;
 do not run both installation forms. To remove the package, use
-`opencode plugin remove luminary-memory-opencode@0.3.2` or remove its config
+`opencode plugin remove luminary-memory-opencode@0.3.3` or remove its config
 entry. Reload/restart the server as needed. Stored memory is not deleted.
 
 ## Compatibility evidence
@@ -176,7 +174,7 @@ review. This is not a verified V2 catalog or a live website listing.
 The obsolete local listing patch is no longer shipped.
 
 [Source PR #17](https://github.com/alertxsto/luminary-memory/pull/17) has merged.
-Python and all three native npm packages are published at `0.3.2`.
+Python and all three native npm packages are published at `0.3.3`.
 
 [Configuration and ownership](https://github.com/alertxsto/luminary-memory/blob/main/docs/agent-integrations.md)
 · [OpenCode V2 plugin contract](https://opencode.ai/v2/docs/plugins/)

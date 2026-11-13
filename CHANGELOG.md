@@ -33,6 +33,10 @@ companion; the interactive UI roadmap is incomplete.
 
 ### Added
 
+- Published the Python bridge and all three native npm packages at `0.3.3`.
+  npm `latest` points to `0.3.3` for `luminary-memory-pi`,
+  `luminary-memory-opencode`, and `luminary-memory-omp`; registry shasums were
+  verified after publication.
 - Optional operator config file (`~/.luminary/luminary.env`) shared by native
   integrations and the CLI. Env-style `LUMINARY_*` settings load before
   `Settings` is constructed; process environment wins, `LUMINARY_CONFIG_FILE`

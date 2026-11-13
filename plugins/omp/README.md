@@ -9,16 +9,14 @@ embedded Bun runtime to load extensions.
 
 ## Registry installation
 
-The registry commands below install `0.3.2`, which has no inspector. For the
-`0.3.3` inspector, use the matching Python bridge and native package built from
-this checkout or obtained from the GitHub release when available.
+The registry commands below install `0.3.3`, which includes the inspector.
 
 Install the published Python bridge from PyPI, then install the omp package:
 
 ```sh
-python -m pip install --upgrade "luminary-memory==0.3.2"
+python -m pip install --upgrade "luminary-memory==0.3.3"
 export LUMINARY_PYTHON=/absolute/path/to/venv/bin/python
-omp plugin install luminary-memory-omp@0.3.2
+omp plugin install luminary-memory-omp@0.3.3
 ```
 
 No npm install script installs Python for you. Set `LUMINARY_PYTHON` to the

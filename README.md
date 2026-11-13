@@ -83,8 +83,8 @@ at [`opencode/SKILL.md`](opencode/SKILL.md); install it under
 
 The `0.3.3` source includes native interactive inspectors for the verified
 surfaces: OpenCode CLI/Desktop, pi and omp, Hermes Desktop/dashboard and an
-explicitly launched loopback companion. The `0.3.2` registry packages do not
-include the inspector; see the installation guide for current availability.
+explicitly launched loopback companion. The `0.3.3` registry packages include
+the inspector; see the installation guide for current availability.
 Two native targets remain blocked on upstream
 contracts and are recorded in the roadmap: OpenCode Web GUI contribution
 discovery and Hermes terminal/TUI authority plus scope lifecycle. See
@@ -112,7 +112,7 @@ Choose the native package **or** the copied hook, never both.
 
 Registry names are `luminary-memory-pi`, `luminary-memory-opencode`, and
 `luminary-memory-omp`. All three npm packages and the Python bridge are
-published at `0.3.2`; npm `latest` points to that version.
+published at `0.3.3`; npm `latest` points to that version.
 The pi manifest includes `pi-package` for eligibility in the
 [official package catalog](https://pi.dev/packages). OpenCode's existing
 Ecosystem PR targets legacy V1 docs, not a verified V2 listing; no V2 website
