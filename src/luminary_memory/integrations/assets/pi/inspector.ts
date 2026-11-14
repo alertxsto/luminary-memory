@@ -5,7 +5,8 @@ import { TABS } from '../common/console-contract.js';
 import { InspectorController } from '../common/console-controller.js';
 import { createInspectorTransport } from '../common/inspector-transport.js';
 import { inspectorActions, inspectorRows, inspectorRowContent, inspectorContextLine, confirmTerminalText, runInspectorAction, type NativeDialogs } from '../common/console-actions.js';
-import { TerminalInspectorView, type InspectorIntent } from '../common/terminal-view.js';
+import { ZentuiInspectorView } from './zentui-view.js';
+import type { InspectorIntent } from '../common/terminal-view.js';
 
 export function registerPiInspector(pi: ExtensionAPI) {
   let controller: InspectorController | undefined;
@@ -66,7 +67,7 @@ export function registerPiInspector(pi: ExtensionAPI) {
     while (live()) {
       const intent = await ctx.ui.custom<InspectorIntent>((tui, theme, _keys, done) => {
         close = () => done({ type: 'close' });
-        const component = new TerminalInspectorView(view, matchesKey, truncateToWidth, (role, text) => theme.fg(role as 'accent' | 'muted' | 'warning', text), done, () => tui.requestRender(), () => tui.terminal.rows);
+        const component = new ZentuiInspectorView(view, matchesKey, truncateToWidth, (role, text) => theme.fg(role, text), done, () => tui.requestRender(), () => tui.terminal.rows);
         const unsubscribe = view.subscribe(() => tui.requestRender());
         return { render: width => component.render(width), handleInput: data => component.handleInput(data), handleMouse: event => component.handleMouse(event), invalidate: () => component.invalidate(), dispose: unsubscribe };
       });
