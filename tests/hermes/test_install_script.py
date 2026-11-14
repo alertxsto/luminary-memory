@@ -42,9 +42,15 @@ class MemoryProvider:
 '''
 
 
-def _run(script: Path, *, env: dict[str, str], flags: tuple[str, ...] = ("-I",)):
+def _run(
+    script: Path,
+    *,
+    env: dict[str, str],
+    flags: tuple[str, ...] = ("-I",),
+    args: tuple[str, ...] = (),
+):
     return subprocess.run(
-        [sys.executable, *flags, str(script)],
+        [sys.executable, *flags, str(script), *args],
         check=False,
         capture_output=True,
         text=True,
@@ -76,14 +82,19 @@ def _make_checkout(root: Path, *, with_agent: bool = True) -> Path:
     return checkout
 
 
-def _make_venv(root: Path, *, site_packages: Path | None = None) -> Path:
+def _venv_site_packages(venv: Path) -> Path:
+    """The site-packages path this interpreter version would use inside ``venv``."""
+    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    return venv / "lib" / version / "site-packages"
+
+
+def _make_venv(root: Path) -> Path:
     """Build a venv-shaped directory whose python is this interpreter."""
     venv = root / "venv"
     (venv / "bin").mkdir(parents=True)
     (venv / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
     (venv / "bin" / "python").symlink_to(sys.executable)
-    target = site_packages or (venv / "lib" / "python3" / "site-packages")
-    target.mkdir(parents=True, exist_ok=True)
+    _venv_site_packages(venv).mkdir(parents=True, exist_ok=True)
     return venv
 
 
@@ -100,7 +111,7 @@ def test_runtime_python_resolves_the_activated_environment(tmp_path):
     """A managed environment is found through the checkout's bootstrap."""
     checkout = _make_checkout(tmp_path)
     venv = _make_venv(tmp_path)
-    site_packages = venv / "lib" / "python3" / "site-packages"
+    site_packages = _venv_site_packages(venv)
     _bootstrap_adding(checkout, site_packages)
 
     result = _run(RUNTIME_PY, env=_base_env(HERMES_HOME=str(tmp_path)))
@@ -187,6 +198,52 @@ def test_capability_probe_rejects_a_user_site_only_install(tmp_path):
     assert "entry point is not visible" in result.stderr
 
 
+def test_runtime_python_reports_the_site_packages(tmp_path):
+    """The installer needs the directory for its last-resort install path."""
+    checkout = _make_checkout(tmp_path)
+    venv = _make_venv(tmp_path)
+    site_packages = _venv_site_packages(venv)
+    _bootstrap_adding(checkout, site_packages)
+
+    result = _run(
+        RUNTIME_PY, env=_base_env(HERMES_HOME=str(tmp_path)), args=("--site-packages",)
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(site_packages)
+
+
+def test_capability_probe_accepts_a_pip_installed_hermes(tmp_path):
+    """A pip-installed Hermes has ``agent`` in site-packages, with no checkout to find."""
+    venv = _make_venv(tmp_path)
+    site_packages = _venv_site_packages(venv)
+    agent = site_packages / "agent"
+    agent.mkdir(parents=True)
+    (agent / "__init__.py").write_text("", encoding="utf-8")
+    (agent / "memory_provider.py").write_text(CONTRACT_STUB, encoding="utf-8")
+
+    # Make the luminary entry point visible the way a real install would.
+    source_site = Path(sys.prefix).resolve() / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+    dist_info = next(source_site.glob("luminary_memory-*.dist-info"), None)
+    if dist_info is None:
+        pytest.skip("the test environment has no luminary dist-info to mirror")
+    (site_packages / dist_info.name).symlink_to(dist_info)
+    (site_packages / "_luminary_src.pth").write_text(
+        str(REPO_ROOT / "src") + "\n", encoding="utf-8"
+    )
+
+    result = subprocess.run(
+        [str(venv / "bin" / "python"), "-I", str(PROBE_PY)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_base_env(HERMES_HOME=str(tmp_path)),
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_install_script_uses_the_extracted_probes():
     """The installer must call the probes instead of inlining a bare import."""
     script = INSTALL_SH.read_text(encoding="utf-8")
@@ -197,6 +254,54 @@ def test_install_script_uses_the_extracted_probes():
     assert "from agent.memory_provider import" not in script
     # The install must target the resolved environment, never the bare one.
     assert 'pip --python "$HERMES_RUNTIME_PYTHON"' in script
+
+
+def test_install_script_has_install_fallbacks():
+    """A host whose pip predates ``--python`` must still get a working install."""
+    script = INSTALL_SH.read_text(encoding="utf-8")
+
+    assert '--target "$HERMES_RUNTIME_SITE"' in script
+    assert '"$HERMES_RUNTIME_PYTHON" -m pip install' in script
+
+
+def test_install_script_backs_up_the_config_before_activation():
+    """Activation rewrites an operator-owned file, so it must be recoverable."""
+    script = INSTALL_SH.read_text(encoding="utf-8")
+
+    assert "CONFIG_BACKUP=" in script
+    assert 'cp "$CONFIG" "$CONFIG_BACKUP"' in script
+    # The backup has to happen before the activation call, not after it.
+    assert script.index("CONFIG_BACKUP=") < script.index("-m luminary_memory.hermes.activation")
+
+
+def test_install_script_refuses_activation_without_the_module():
+    """A bridge too old to activate must fail before the config is touched."""
+    script = INSTALL_SH.read_text(encoding="utf-8")
+
+    assert "import luminary_memory.hermes.activation" in script
+
+
+def test_install_script_fails_cleanly_without_a_hermes_install(tmp_path):
+    """No Hermes means one actionable line, not a traceback and not a half-config."""
+    config = tmp_path / "config.yaml"
+    original = "memory:\n  memory_enabled: true\n  user_profile_enabled: true\n  provider: ''\n"
+    config.write_text(original, encoding="utf-8")
+
+    env = _base_env(HERMES_HOME=str(tmp_path), HERMES_PYTHON=sys.executable)
+    result = subprocess.run(
+        ["bash", str(INSTALL_SH), "--no-hook", "--no-skill"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=300,
+    )
+
+    assert result.returncode == 1
+    assert "ERROR:" in result.stderr
+    assert "Traceback" not in result.stderr
+    # A failed install must leave the operator's config exactly as it was.
+    assert config.read_text(encoding="utf-8") == original
 
 
 def test_install_script_is_syntactically_valid():

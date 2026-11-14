@@ -56,6 +56,7 @@ if [ "$DO_PROVIDER" -eq 1 ]; then
   # the user site is invisible to the host. Resolve the interpreter Hermes
   # actually runs with before touching pip.
   HERMES_RUNTIME_PYTHON="$("$LUMINARY_PYTHON" -I "$RUNTIME_PY" 2>/dev/null || true)"
+  HERMES_RUNTIME_SITE="$("$LUMINARY_PYTHON" -I "$RUNTIME_PY" --site-packages 2>/dev/null || true)"
 
   if [ -z "$HERMES_RUNTIME_PYTHON" ]; then
     HERMES_RUNTIME_PYTHON="$LUMINARY_PYTHON"
@@ -65,13 +66,27 @@ if [ "$DO_PROVIDER" -eq 1 ]; then
   fi
 
   log "installing luminary-memory[hermes] ..."
-  # ``pip --python`` targets the resolved environment even when it has no pip of
-  # its own, which is the normal shape of a Hermes managed environment.
-  if ! "$LUMINARY_PYTHON" -m pip --python "$HERMES_RUNTIME_PYTHON" install -q \
-      "luminary-memory[hermes]"; then
-    "$HERMES_RUNTIME_PYTHON" -m pip install -q "luminary-memory[hermes]" \
-      || fail "pip install failed"
-  fi
+  install_bridge() {
+    # 1. ``pip --python`` targets the resolved environment even when it has no pip
+    #    of its own, which is the normal shape of a Hermes managed environment.
+    if "$LUMINARY_PYTHON" -m pip --python "$HERMES_RUNTIME_PYTHON" install -q \
+        "luminary-memory[hermes]" 2>/dev/null; then
+      return 0
+    fi
+    # 2. The environment may carry its own pip.
+    if "$HERMES_RUNTIME_PYTHON" -m pip install -q "luminary-memory[hermes]" 2>/dev/null; then
+      return 0
+    fi
+    # 3. Last resort for a pip too old for ``--python``: install straight into the
+    #    resolved site-packages. The dist-info lands there too, so the entry point
+    #    stays discoverable to the host.
+    if [ -n "$HERMES_RUNTIME_SITE" ]; then
+      "$LUMINARY_PYTHON" -m pip install -q --upgrade --target "$HERMES_RUNTIME_SITE" \
+        "luminary-memory[hermes]" 2>/dev/null && return 0
+    fi
+    return 1
+  }
+  install_bridge || fail "pip install failed"
 
   # Check capabilities, never a Hermes release number. This keeps an unsupported
   # host from silently falling back to native memory or leaving two persistent
@@ -81,7 +96,18 @@ if [ "$DO_PROVIDER" -eq 1 ]; then
     fail "Hermes does not expose the public memory-provider capabilities required by Luminary"
   fi
 
+  # Activation is the only step that edits a file the operator owns, so refuse
+  # before touching it when the installed bridge cannot do the job.
+  if ! "$HERMES_RUNTIME_PYTHON" -c "import luminary_memory.hermes.activation" 2>/dev/null; then
+    fail "the installed bridge has no Hermes activation module; install luminary-memory>=0.3.3"
+  fi
+
   CONFIG="$HERMES_HOME/config.yaml"
+  if [ -f "$CONFIG" ]; then
+    CONFIG_BACKUP="$CONFIG.bak-$(date +%Y%m%dT%H%M%S)"
+    cp "$CONFIG" "$CONFIG_BACKUP"
+    log "config backed up to $CONFIG_BACKUP"
+  fi
   log "activating Luminary through Hermes config.yaml ..."
   "$HERMES_RUNTIME_PYTHON" -m luminary_memory.hermes.activation "$CONFIG" \
     || fail "could not update selected Hermes memory config"

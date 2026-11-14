@@ -8,11 +8,13 @@ guessing, and this module is how it finds out.
 
 Run it with ``-I`` so the answer reflects the isolation Hermes itself uses::
 
-    python3 -I hermes/lib/runtime_python.py
+    python3 -I hermes/probes/runtime_python.py
+    python3 -I hermes/probes/runtime_python.py --site-packages
 
-Prints the absolute path of the runtime interpreter on success and nothing when
-no Hermes installation can be located. It never fails the caller, because the
-installer falls back to the interpreter it was given.
+Prints the absolute path of the runtime interpreter (or its ``site-packages``
+directory) on success and nothing when no Hermes installation can be located. It
+never fails the caller, because the installer falls back to the interpreter it
+was given.
 """
 
 from __future__ import annotations
@@ -44,8 +46,8 @@ def _roots():
                     break
 
 
-def runtime_python() -> Path | None:
-    """Return the interpreter of the environment Hermes activates, if any."""
+def runtime_environment() -> tuple[Path, Path] | None:
+    """Return ``(interpreter, site-packages)`` for the environment Hermes activates."""
     # The base interpreter, the interpreter running this probe, and the user site
     # are exactly the places Hermes cannot see, so none of them can be the answer.
     skip = {Path(sys.base_prefix).resolve(), Path(sys.prefix).resolve()}
@@ -74,15 +76,24 @@ def runtime_python() -> Path | None:
                     "Scripts/python.exe" if os.name == "nt" else "bin/python"
                 )
                 if candidate.exists():
-                    return candidate
+                    return candidate, path
                 break
     return None
 
 
-def main() -> int:
-    found = runtime_python()
-    if found is not None:
-        print(found)
+def runtime_python() -> Path | None:
+    """Return the interpreter of the environment Hermes activates, if any."""
+    found = runtime_environment()
+    return found[0] if found else None
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    found = runtime_environment()
+    if found is None:
+        return 0
+    interpreter, site_packages = found
+    print(site_packages if "--site-packages" in args else interpreter)
     return 0
 
 
