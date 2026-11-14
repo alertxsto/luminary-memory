@@ -339,7 +339,7 @@ export default Plugin.define({
             id: SETUP_MESSAGE_PREFIX + turn.messageID, role: "user",
             content: [{ type: "text", text:
               `Luminary memory is unavailable (${detail}). ` +
-              "Run `npx luminary-memory-opencode setup` and restart OpenCode." }],
+              "Run the Luminary installer for OpenCode and restart the host. Setup instructions: https://github.com/alertxsto/luminary-memory/blob/main/docs/install.md" }],
           })
         }
         if (core.ok && core.context.trim()) {

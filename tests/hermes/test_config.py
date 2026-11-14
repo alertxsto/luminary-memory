@@ -13,8 +13,10 @@ def test_save_config_writes_0600_and_roundtrips(tmp_path):
 
     cfg_path = tmp_path / "luminary" / "config.json"
     assert cfg_path.exists(), "config.json was not written"
-    mode = stat.S_IMODE(os.stat(cfg_path).st_mode)
-    assert mode == 0o600, f"expected 0600, got {oct(mode)}"
+    if os.name != "nt":
+        # Windows has no POSIX mode bits; chmod only toggles read-only there.
+        mode = stat.S_IMODE(os.stat(cfg_path).st_mode)
+        assert mode == 0o600, f"expected 0600, got {oct(mode)}"
 
     loaded = load_config(str(tmp_path))
     assert loaded["backend"] == "pgvector"

@@ -212,7 +212,9 @@ class MemoryClient:
 
         self.backend = backend or get_backend(self.settings)
         self.whitelist = WhitelistFilter(self.settings.ingest_whitelist)
-        self.engine = engine or FastembedEngine(model_name=self.settings.embedding_model)
+        self.engine = engine or FastembedEngine(
+            model_name=self.settings.embedding_model, cache_dir=self.settings.model_cache_dir,
+        )
         requested_scope = dict(scope or {})
         requested_scope.update(
             {

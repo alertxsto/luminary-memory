@@ -7,12 +7,16 @@ handshake lives here so the same behaviour is testable without a shell.
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -116,7 +120,11 @@ def _strip_jsonc(text: str) -> str:
                 continue
         out.append(char)
         index += 1
-    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+    return re.sub(
+        r'"(?:\\.|[^"\\])*"|,(\s*[}\]])',
+        lambda match: match.group(1) if match.group(1) is not None else match.group(0),
+        "".join(out),
+    )
 
 
 def _opencode_config(root: Path) -> Path:
@@ -137,22 +145,99 @@ def _read_opencode(root: Path) -> tuple[Path, dict]:
     return path, data
 
 
+def _is_native(value: object, agent: str) -> bool:
+    if isinstance(value, dict):
+        value = value.get("source")
+    if not isinstance(value, str):
+        return False
+    value = value.removeprefix("npm:")
+    name = PLUGIN_PREFIX + agent
+    return value == name or value.startswith(name + "@")
+
+
+def _read_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    value = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(value, dict):
+        raise TypeError(f"{path} must contain a JSON object")
+    return value
+
+
 def _plugin_pin(agent: str, root: Path) -> str | None:
-    if agent != "opencode":
-        return None
-    try:
+    if agent == "opencode":
         _, data = _read_opencode(root)
-    except (OSError, ValueError, json.JSONDecodeError):
-        return None
-    plugins = data.get("plugins")
-    if not isinstance(plugins, list):
-        return None
-    for entry in plugins:
-        if not isinstance(entry, str) or not entry.startswith(PLUGIN_PREFIX + agent):
-            continue
-        _, _, version = entry.partition("@")
-        return version or None
-    return None
+        values = data.get("plugins", [])
+    elif agent == "pi":
+        values = _read_json(root / "settings.json").get("packages", [])
+    else:
+        value = _read_json(root.parent / "plugins" / "package.json").get("dependencies", {}).get(PLUGIN_PREFIX + agent)
+        return value if isinstance(value, str) else None
+    if not isinstance(values, list):
+        raise TypeError(f"{agent} package registrations must be a list")
+    pins = []
+    for value in values:
+        if _is_native(value, agent):
+            source = value.get("source") if isinstance(value, dict) else value
+            pins.append(source.partition("@")[2] or "")
+    if len(pins) > 1:
+        raise ValueError(f"Multiple native {agent} registrations; resolve the conflict before setup")
+    return pins[0] if pins else None
+
+
+def _native_registered(agent: str, root: Path, version: str) -> bool:
+    if _plugin_pin(agent, root) != version:
+        return False
+    if agent == "opencode":
+        return True  # The supported host config is the registration surface.
+    package = (root / "npm" if agent == "pi" else root.parent / "plugins") / "node_modules" / (PLUGIN_PREFIX + agent)
+    manifest = _read_json(package / "package.json")
+    if manifest.get("name") != PLUGIN_PREFIX + agent or manifest.get("version") != version:
+        return False
+    if agent == "omp":
+        state = _read_json(root.parent / "plugins" / "omp-plugins.lock.json")
+        if state.get("plugins", {}).get(PLUGIN_PREFIX + agent, {}).get("enabled") is not True:
+            return False
+    return True
+
+
+def _host_command(agent: str, args: list[str], home: Path) -> None:
+    executable = shutil.which(agent)
+    if not executable:
+        raise RuntimeError(f"{agent} CLI not found; install the host first")
+    environment = dict(os.environ, HOME=str(home), USERPROFILE=str(home),
+                       PI_CODING_AGENT_DIR=str(config_root(agent, home)))
+    # A named omp profile is a different installation target, not a user-default.
+    environment.pop("OMP_PROFILE", None)
+    subprocess.run([executable, *args], check=True, timeout=900, env=environment)
+
+
+def _native_install(agent: str, root: Path, home: Path, version: str, *, project: bool) -> None:
+    if agent == "opencode":
+        _patch_opencode(root, version, dry_run=False)
+    elif not _native_registered(agent, root, version):
+        if agent == "pi":
+            _host_command(agent, ["install", f"npm:{PLUGIN_PREFIX}{agent}@{version}", *(["--local"] if project else [])], home)
+        else:
+            _host_command(agent, ["plugin", "install", f"{PLUGIN_PREFIX}{agent}@{version}"], home)
+    if not _native_registered(agent, root, version):
+        raise RuntimeError(f"{agent} did not register the requested native package {version}")
+
+
+def _native_remove(agent: str, root: Path, home: Path, *, project: bool, dry_run: bool) -> bool:
+    pin = _plugin_pin(agent, root)
+    if pin is None:
+        return False
+    if not dry_run:
+        if agent == "opencode":
+            _remove_opencode(root, dry_run=False)
+        elif agent == "pi":
+            _host_command(agent, ["remove", f"npm:{PLUGIN_PREFIX}{agent}", *(["--local"] if project else [])], home)
+        else:
+            _host_command(agent, ["plugin", "uninstall", PLUGIN_PREFIX + agent], home)
+        if _plugin_pin(agent, root) is not None:
+            raise RuntimeError(f"{agent} still registers Luminary after removal")
+    return True
 
 
 def _patch_opencode(root: Path, version: str, *, dry_run: bool) -> Path:
@@ -162,7 +247,7 @@ def _patch_opencode(root: Path, version: str, *, dry_run: bool) -> Path:
         plugins = []
     plugins = [
         entry for entry in plugins
-        if not (isinstance(entry, str) and entry.startswith(PLUGIN_PREFIX + "opencode"))
+        if not _is_native(entry, "opencode")
     ]
     plugins.append(f"{PLUGIN_PREFIX}opencode@{version}")
     data["plugins"] = plugins
@@ -183,7 +268,7 @@ def _remove_opencode(root: Path, *, dry_run: bool) -> Path | None:
         return None
     kept = [
         entry for entry in plugins
-        if not (isinstance(entry, str) and entry.startswith(PLUGIN_PREFIX + "opencode"))
+        if not _is_native(entry, "opencode")
     ]
     if kept == plugins:
         return None
@@ -233,15 +318,60 @@ def _ensure_model_cache(home: Path, *, dry_run: bool) -> Path:
 
 
 def _probe_version(python: Path) -> str | None:
+    """Import and probe capabilities without constructing a client or opening a DB."""
+    script = (
+        "import importlib.metadata as m; "
+        "from luminary_memory.integrations import dispatch; "
+        "from luminary_memory.integrations.setup import run_setup; "
+        "v=m.version('luminary-memory'); "
+        "r=dispatch({'agent':'pi','action':'version'}); "
+        "assert r.get('ok') is True and r.get('version')==v and 'core' in r.get('actions',[]); "
+        "print(v)"
+    )
     try:
         result = subprocess.run(
-            [str(python), "-c",
-             "import importlib.metadata as m; print(m.version('luminary-memory'))"],
+            [str(python), "-I", "-c", script],
             check=False, capture_output=True, text=True, timeout=30,
+            stdin=subprocess.DEVNULL,
         )
     except (OSError, subprocess.SubprocessError):
         return None
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+@contextlib.contextmanager
+def _lock(home: Path, name: str):
+    """An OS-owned lock survives process interruption without a stale PID lease."""
+    path = _luminary_home(home) / "locks" / f"{name}.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as handle:
+        handle.write(b"\0")
+        handle.flush()
+        deadline = time.monotonic() + 120
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Another setup owns {path}; try again after it finishes") from None
+                time.sleep(0.1)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _uv(home: Path) -> str | None:
@@ -253,27 +383,30 @@ def _uv(home: Path) -> str | None:
 
 
 def ensure_venv(version: str, home: Path, *, current: Path | None = None) -> Path:
-    """Return an interpreter that imports *version*, creating a venv if needed."""
+    """Reuse a verified interpreter, repairing only a private managed environment."""
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise ValueError("version must have the form X.Y.Z")
     if current is not None and _probe_version(current) == version:
         return Path(current)
     target = _venv_python(home, version)
-    if target.exists() and _probe_version(target) == version:
+    with _lock(home, f"runtime-{version}"):
+        if target.is_file() and _probe_version(target) == version:
+            return target
+        uv = _uv(home)
+        if not uv:
+            raise RuntimeError("uv not found; run the platform installer to provision the managed runtime")
+        if not target.is_file():
+            subprocess.run(
+                [uv, "venv", str(target.parent.parent), "--python", "3.12"],
+                check=True, timeout=300,
+            )
+        subprocess.run(
+            [uv, "pip", "install", "--python", str(target), "--reinstall", f"luminary-memory=={version}"],
+            check=True, timeout=900,
+        )
+        if _probe_version(target) != version:
+            raise RuntimeError(f"Managed bridge {version} failed its version/capability probe; rerun setup to repair")
         return target
-    root = _venv_root(home) / version
-    uv = _uv(home)
-    if uv:
-        subprocess.run([uv, "venv", str(root), "--python", "3.12"], check=True, timeout=300)
-        subprocess.run(
-            [uv, "pip", "install", "--python", str(target), f"luminary-memory=={version}"],
-            check=True, timeout=900,
-        )
-    else:
-        subprocess.run([sys.executable, "-m", "venv", str(root)], check=True, timeout=300)
-        subprocess.run(
-            [str(target), "-m", "pip", "install", f"luminary-memory=={version}"],
-            check=True, timeout=900,
-        )
-    return target
 
 
 def _bridge_call(python: Path, agent: str, workspace: Path, action: str) -> dict:
@@ -283,7 +416,7 @@ def _bridge_call(python: Path, agent: str, workspace: Path, action: str) -> dict
     }
     try:
         result = subprocess.run(
-            [str(python), "-m", "luminary_memory.integrations", "bridge"],
+            [str(python), "-I", "-m", "luminary_memory.integrations", "bridge"],
             check=False,
             input=json.dumps(request).encode("utf-8"),
             capture_output=True, timeout=60,
@@ -305,22 +438,9 @@ def _bridge_call(python: Path, agent: str, workspace: Path, action: str) -> dict
 
 def handshake(python: Path, agent: str, workspace: Path) -> dict:
     version = _bridge_call(python, agent, workspace, "version")
-    if version.get("ok"):
-        core = _bridge_call(python, agent, workspace, "core")
-        return {"version": version, "core": core, "legacy": False}
-    # Published bridges before the version action still support core. A
-    # working core load is a valid bridge, so probe it before failing an
-    # install that would otherwise leave the host without memory.
+    if not version.get("ok"):
+        return {"version": version, "core": {"ok": False, "reason": "version_unavailable"}, "legacy": False}
     core = _bridge_call(python, agent, workspace, "core")
-    if core.get("ok"):
-        return {
-            "version": {
-                "ok": True, "status": "ok", "legacy": True,
-                "version": _probe_version(python) or "",
-            },
-            "core": core,
-            "legacy": True,
-        }
     return {"version": version, "core": core, "legacy": False}
 
 
@@ -336,45 +456,168 @@ def _selected(agents: str, home: Path, *, project: bool) -> list[str]:
     return selected
 
 
-def _install_copy(agent: str, root: Path, python: Path, *, dry_run: bool) -> None:
-    if dry_run:
-        return
-    from luminary_memory.integrations.cli import install_adapter
-
-    try:
-        install_adapter(agent, root, python=python)
-    except TypeError:
-        # Published bridges predate the explicit interpreter argument; they
-        # embed the running interpreter, which is this venv.
-        install_adapter(agent, root)
+def _is_link(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    return os.name == "nt" and path.exists() and bool(
+        path.lstat().st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    )
 
 
-def _remove_copy(agent: str, root: Path, *, dry_run: bool) -> bool:
-    folder = "plugins" if agent == "opencode" else "extensions"
-    target = root / folder / "luminary-memory"
+def _owned_copies(agent: str, root: Path) -> list[Path]:
+    """Only hashed, unchanged copy-installer resources may be cut over."""
+    folder = root / ("plugins" if agent == "opencode" else "extensions")
+    legacy = folder / ("luminary-memory.ts" if agent == "opencode" else "luminary.ts")
+    if legacy.exists():
+        raise ValueError(f"Unverified legacy hook at {legacy}; inspect/remove it explicitly before native setup")
+    target = folder / "luminary-memory"
     if not target.exists():
-        return False
-    if not dry_run:
-        shutil.rmtree(target)
-    return True
+        return []
+    marker = target / ".luminary-install.json"
+    if _is_link(target) or not marker.is_file():
+        raise ValueError(f"Unrecognized copy at {target}; resolve duplicate loading manually")
+    hashes = _read_json(marker).get("files")
+    if not isinstance(hashes, dict) or not hashes:
+        raise ValueError(f"Invalid ownership record at {marker}")
+    expected = set(hashes) | {marker.name}
+    for path in target.rglob("*"):
+        if _is_link(path):
+            raise ValueError(f"Symlinked copy resource at {path}; refusing cutover")
+        if not path.is_file():
+            continue
+        name = path.relative_to(target).as_posix()
+        if name not in expected:
+            raise ValueError(f"User-added copy resource at {path}; refusing cutover")
+        if name in hashes and hashlib.sha256(path.read_bytes()).hexdigest() != hashes[name]:
+            raise ValueError(f"User-modified copy resource at {path}; refusing cutover")
+    for name in hashes:
+        relative = Path(name)
+        if relative.is_absolute() or ".." in relative.parts or not (target / relative).is_file():
+            raise ValueError(f"Invalid or incomplete owned copy at {target}")
+    return [target]
+
+
 
 
 def _prune(home: Path, bridge: dict, *, dry_run: bool) -> list[str]:
-    referenced = {
-        entry.get("version") for entry in bridge.get("agents", {}).values()
-        if isinstance(entry, dict) and entry.get("version")
-    }
+    entries = [entry for entry in bridge.get("agents", {}).values() if isinstance(entry, dict)]
+    versions = {entry.get("version") for entry in entries}
+    interpreters = [Path(entry["python"]) for entry in entries if entry.get("python")]
     removed: list[str] = []
     root = _venv_root(home)
     if not root.exists():
         return removed
-    for child in root.iterdir():
-        if not child.is_dir() or child.name in referenced:
+    for child in sorted(root.iterdir()):
+        if (not child.is_dir() or _is_link(child)
+                or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", child.name)
+                or not (child / "pyvenv.cfg").is_file()
+                or child.name in versions
+                # POSIX venv interpreters are symlinks, so keep both the
+                # lexical and the resolved containment check.
+                or any(python.is_relative_to(child) or python.resolve().is_relative_to(child.resolve())
+                       for python in interpreters)):
             continue
         removed.append(child.name)
         if not dry_run:
             shutil.rmtree(child)
     return removed
+
+
+@contextlib.contextmanager
+def _park_copies(copies: list[Path]):
+    moved: list[tuple[Path, Path]] = []
+    try:
+        for copy in copies:
+            parked = copy.parent.parent / f".luminary-disabled-{time.time_ns()}"
+            copy.rename(parked)
+            moved.append((copy, parked))
+        yield
+    except BaseException:
+        for original, parked in reversed(moved):
+            parked.rename(original)
+        raise
+    else:
+        # The record is already committed; a cleanup failure must not report a
+        # failed setup that actually succeeded. Leftovers are pruned next run.
+        for _, parked in moved:
+            try:
+                shutil.rmtree(parked)
+            except OSError:
+                pass
+
+
+def _sweep_parked(root: Path) -> None:
+    for parked in root.glob(".luminary-disabled-*"):
+        try:
+            shutil.rmtree(parked)
+        except OSError:
+            pass
+
+
+@contextlib.contextmanager
+def _host_transaction(agent: str, root: Path):
+    """Rollback Luminary registration/resources without reverting unrelated settings."""
+    from luminary_memory.integrations.cli import _atomic_write
+
+    if agent == "opencode":
+        paths, package = [_opencode_config(root)], None
+    elif agent == "pi":
+        paths = [root / "settings.json"]
+        package = root / "npm" / "node_modules" / (PLUGIN_PREFIX + agent)
+    else:
+        paths = [root.parent / "plugins" / name for name in ("package.json", "omp-plugins.lock.json")]
+        package = root.parent / "plugins" / "node_modules" / (PLUGIN_PREFIX + agent)
+    originals = {path: path.read_text(encoding="utf-8-sig") if path.exists() else None for path in paths}
+    if package is not None and _is_link(package):
+        raise ValueError(f"Linked package at {package}; remove the local registration explicitly before native setup")
+    with tempfile.TemporaryDirectory(prefix="luminary-host-") as temporary:
+        backup = Path(temporary) / "package"
+        if package is not None and package.exists():
+            shutil.copytree(package, backup, symlinks=True)
+        try:
+            yield
+        except Exception:
+            for path, original in originals.items():
+                current_text = path.read_text(encoding="utf-8-sig") if path.exists() else None
+                if current_text == original:
+                    continue
+                previous = json.loads(_strip_jsonc(original)) if original else {}
+                current = json.loads(_strip_jsonc(current_text)) if current_text else {}
+                if agent in {"opencode", "pi"}:
+                    key = "plugins" if agent == "opencode" else "packages"
+                    kept = [item for item in current.get(key, []) if not _is_native(item, agent)]
+                    old = [item for item in previous.get(key, []) if _is_native(item, agent)]
+                    if key in previous or kept or old:
+                        current[key] = kept + old
+                    else:
+                        current.pop(key, None)
+                else:
+                    keys = ["dependencies"] if path.name == "package.json" else ["plugins", "settings"]
+                    for key in keys:
+                        values = current.get(key, {})
+                        old = previous.get(key, {})
+                        name = PLUGIN_PREFIX + agent
+                        if name in old:
+                            values[name] = old[name]
+                        else:
+                            values.pop(name, None)
+                        if key in current or key in previous:
+                            current[key] = values
+                if current == previous:
+                    if original is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        _atomic_write(path, original)
+                else:
+                    _atomic_write(path, json.dumps(current, indent=2) + "\n")
+            if package is not None:
+                if _is_link(package):
+                    package.unlink()
+                elif package.exists():
+                    shutil.rmtree(package)
+                if backup.exists():
+                    shutil.copytree(backup, package, symlinks=True)
+            raise
 
 
 def run_setup(
@@ -394,139 +637,168 @@ def run_setup(
     python: Path | None = None,
 ) -> int:
     home = _home(home)
+    if sum((check, upgrade, uninstall)) > 1:
+        raise ValueError("choose only one of check, upgrade, or uninstall")
+    if version is not None and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise ValueError("version must have the form X.Y.Z")
+    selected = _selected(agents, home, project=project)
     if list_only:
         for agent in AGENTS:
-            root = config_root(agent, home, project=project)
             state = "detected" if detect(agent, home, project=project) else "absent"
-            print(f"{agent:<9} {state:<9} {root}")
+            print(f"{agent:<9} {state:<9} {config_root(agent, home, project=project)}")
         return 0
-    selected = _selected(agents, home, project=project)
     if not selected:
-        message = "No supported agent detected. Use --agents opencode,pi,omp or --all."
-        if json_output:
-            print(json.dumps({"ok": False, "error": message}))
-        else:
-            print(f"Luminary setup: {message}", file=sys.stderr)
+        print("No supported agent detected; use --agents opencode,pi,omp.", file=sys.stderr)
         return 2
+    if project and "omp" in selected and not no_config and not (check or uninstall):
+        print("omp native project install is unsupported; use explicit project copy installation.", file=sys.stderr)
+        return 2
+    # Serialize record read/merge and host cutover, not read-only operations.
+    with contextlib.ExitStack() as stack:
+        if not check and not dry_run:
+            stack.enter_context(_lock(home, "setup"))
+        return _run_setup(
+            selected, home=home, version=version, project=project,
+            no_config=no_config, check=check, upgrade=upgrade, uninstall=uninstall,
+            prune=prune, dry_run=dry_run, json_output=json_output, python=python,
+        )
+
+
+def _run_setup(
+    selected: list[str], *, home: Path, version: str | None, project: bool,
+    no_config: bool, check: bool, upgrade: bool, uninstall: bool, prune: bool,
+    dry_run: bool, json_output: bool, python: Path | None,
+) -> int:
     bridge = _read_bridge(home)
-    entries = bridge.setdefault("agents", {})
+    entries = bridge["agents"]
     reports: list[AgentReport] = []
-    workspace = Path.cwd()
     exit_code = 0
     for agent in selected:
         root = config_root(agent, home, project=project)
-        report = AgentReport(agent=agent, detected=detect(agent, home, project=project), config_root=root)
-        report.pin = _plugin_pin(agent, root)
+        report = AgentReport(agent, detect(agent, home, project=project), root)
+        reports.append(report)
         existing = entries.get(agent) if isinstance(entries.get(agent), dict) else {}
         report.bridge = existing.get("version")
-        if upgrade:
-            target = version or __version__
-        else:
-            target = version or report.pin or report.bridge or __version__
-        if uninstall:
-            removed = False
-            if agent == "opencode":
-                removed = _remove_opencode(root, dry_run=dry_run) is not None
-            else:
-                removed = _remove_copy(agent, root, dry_run=dry_run)
-            entries.pop(agent, None)
-            report.status = "removed" if removed or existing else "absent"
-            reports.append(report)
-            continue
-        if check:
-            entry = entries.get(agent) if isinstance(entries.get(agent), dict) else {}
-            interpreter = Path(str(entry.get("python", "")))
-            if not report.bridge:
-                report.status = "missing"
-                exit_code = 1
-            elif not interpreter.is_file():
-                report.status = "missing"
-                report.detail = f"interpreter not found: {interpreter}"
-                exit_code = 1
-            elif report.pin and report.pin != report.bridge:
-                report.status = "drift"
-                report.detail = f"pin {report.pin} != bridge {report.bridge}"
-                exit_code = 1
-            else:
-                report.status = "ok"
-            reports.append(report)
-            continue
-        if dry_run:
-            report.status = "planned"
-            report.bridge = target
-            reports.append(report)
-            continue
         try:
-            interpreter = ensure_venv(target, home, current=python)
-        except (OSError, subprocess.SubprocessError) as exc:
-            report.status = "error"
-            report.detail = f"bridge install failed: {exc}"
-            exit_code = 1
-            reports.append(report)
-            continue
-        # Verify before committing: a failed handshake must not leave a config
-        # pin or bridge record pointing at an unusable interpreter.
-        result = handshake(interpreter, agent, workspace)
-        report.handshake = result
-        if not result["version"].get("ok"):
-            report.status = "error"
-            report.detail = result["version"].get("message") or result["version"].get("reason", "")
-            exit_code = 1
-            reports.append(report)
-            continue
-        if not result["core"].get("ok"):
-            report.status = "degraded"
-            report.detail = result["core"].get("reason", "")
-            exit_code = 1
-            reports.append(report)
-            continue
-        report.bridge = target
-        entries[agent] = {
-            "python": str(interpreter), "version": target,
-            "mode": "npm" if agent == "opencode" and not result.get("legacy") else "copy",
-        }
-        if not no_config:
-            if agent == "opencode" and not result.get("legacy"):
-                _patch_opencode(root, target, dry_run=dry_run)
+            report.pin = _plugin_pin(agent, root)
+            target = version or (__version__ if upgrade else report.pin or report.bridge or __version__)
+            if not (check or uninstall) and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", target):
+                raise ValueError(f"unsupported release pin {target!r}; select --version X.Y.Z")
+            if check:
+                override = os.environ.get("LUMINARY_PYTHON")
+                interpreter = Path(override or existing.get("python") or "")
+                actual = _probe_version(interpreter) if interpreter.is_file() else None
+                if not report.bridge:
+                    report.status = "missing"
+                elif not interpreter.is_file():
+                    report.status, report.detail = "missing", f"interpreter not found: {interpreter}"
+                elif actual is None:
+                    report.status, report.detail = "broken", "package import or bridge capability probe failed"
+                elif actual != report.bridge or (report.pin and report.pin != report.bridge):
+                    report.status, report.detail = "drift", f"package={actual}, record={report.bridge}, pin={report.pin or '-'}"
+                elif not no_config and existing.get("mode") == "npm" and not _native_registered(agent, root, report.bridge):
+                    report.status, report.detail = "missing", "native package registration is missing or disabled"
+                elif not no_config and existing.get("mode") == "copy":
+                    try:
+                        if not _owned_copies(agent, root):
+                            raise ValueError("copied adapter is missing")
+                    except ValueError as exc:
+                        report.status, report.detail = "broken", str(exc)
+                    else:
+                        report.status = "ok"
+                else:
+                    report.status = "ok"
+                if report.status != "ok":
+                    exit_code = 1
+                continue
+            if dry_run:
+                if not no_config:
+                    _owned_copies(agent, root)
+                report.status = "planned"
+                report.detail = "remove selected registration" if uninstall else f"native setup {target}"
+                continue
+            if uninstall:
+                copies = _owned_copies(agent, root) if not no_config else []
+                # A project registration shares the user-wide per-agent runtime
+                # record; removing the global entry must not revoke it.
+                project_pin = _plugin_pin(agent, config_root(agent, home, project=True)) if not project else None
+                try:
+                    transaction = contextlib.nullcontext() if no_config else _host_transaction(agent, root)
+                    with transaction, _park_copies(copies):
+                        if not no_config:
+                            _native_remove(agent, root, home, project=project, dry_run=False)
+                        if not project and project_pin is None:
+                            entries.pop(agent, None)
+                            if existing:
+                                _write_bridge(home, bridge, dry_run=False)
+                        elif not project:
+                            report.detail = "runtime record retained for the current project registration"
+                except Exception:
+                    if existing:
+                        entries[agent] = existing
+                    raise
+                report.status = "removed" if existing or report.pin is not None or copies else "absent"
+                continue
+            if existing.get("mode") == "copy" and not upgrade and not no_config:
+                raise ValueError("copied/pre-managed installation requires explicit --upgrade for native migration")
+            copies = _owned_copies(agent, root) if not no_config else []
+            if not no_config:
+                other = config_root(agent, home, project=not project)
+                if other != root and _owned_copies(agent, other):
+                    raise ValueError(
+                        f"Luminary copy adapter is also installed at {other}; "
+                        "remove that scope explicitly before native migration"
+                    )
+                _sweep_parked(root)
+            override = os.environ.get("LUMINARY_PYTHON")
+            if override:
+                interpreter = Path(override)
+                if _probe_version(interpreter) != target:
+                    raise ValueError(f"invalid LUMINARY_PYTHON or package version mismatch: {override}; no fallback used")
             else:
-                # A bridge without the version action predates the npm
-                # resolver. Use the copy adapter, which embeds this
-                # interpreter, and remove any npm pin that would double-load.
-                if agent == "opencode":
-                    _remove_opencode(root, dry_run=dry_run)
-                _install_copy(agent, root, interpreter, dry_run=dry_run)
-        report.status = "ok"
-        if result.get("legacy"):
-            report.detail = "copy adapter (bridge predates setup)"
-        reports.append(report)
-    if not check:
-        _write_bridge(home, bridge, dry_run=dry_run)
-        if not uninstall:
-            _ensure_model_cache(home, dry_run=dry_run)
+                current = python or (Path(existing["python"]) if existing.get("python") else None)
+                interpreter = ensure_venv(target, home, current=current)
+            result = handshake(interpreter, agent, Path.cwd())
+            report.handshake = result
+            if not result["version"].get("ok") or result["version"].get("version") != target:
+                raise RuntimeError("bridge version handshake failed or mismatched the selected release")
+            if not result["core"].get("ok"):
+                raise RuntimeError(f"bridge core handshake failed: {result['core'].get('reason', 'unavailable')}")
+            _ensure_model_cache(home, dry_run=False)
+            try:
+                transaction = contextlib.nullcontext() if no_config else _host_transaction(agent, root)
+                with transaction, _park_copies(copies):
+                    if not no_config:
+                        _native_install(agent, root, home, target, project=project)
+                    entries[agent] = {
+                        "python": str(interpreter), "version": target,
+                        "mode": existing.get("mode", "bridge") if no_config else "npm",
+                    }
+                    _write_bridge(home, bridge, dry_run=False)
+            except Exception:
+                if existing:
+                    entries[agent] = existing
+                else:
+                    entries.pop(agent, None)
+                raise
+            report.bridge, report.pin, report.status = target, _plugin_pin(agent, root), "ok"
+        except (OSError, ValueError, TypeError, RuntimeError, subprocess.SubprocessError) as exc:
+            report.status, report.detail = "error", str(exc)
+            exit_code = 1
     pruned = _prune(home, bridge, dry_run=dry_run) if prune and not check else []
     if json_output:
         print(json.dumps({
-            "ok": exit_code == 0,
-            "bridge_file": str(_bridge_file(home)),
+            "ok": exit_code == 0, "bridge_file": str(_bridge_file(home)),
             "agents": [
-                {
-                    "agent": report.agent, "detected": report.detected,
-                    "config_root": str(report.config_root), "pin": report.pin,
-                    "bridge": report.bridge, "status": report.status,
-                    "detail": report.detail,
-                }
+                {"agent": report.agent, "detected": report.detected,
+                 "config_root": str(report.config_root), "pin": report.pin,
+                 "bridge": report.bridge, "status": report.status, "detail": report.detail}
                 for report in reports
-            ],
-            "pruned": pruned,
+            ], "pruned": pruned,
         }, indent=2))
     else:
         for report in reports:
-            line = f"{report.agent:<9} {report.status:<9} bridge={report.bridge or '-':<8} pin={report.pin or '-'}"
-            if report.detail:
-                line += f"  {report.detail}"
-            print(line)
-        if pruned:
-            print(f"pruned: {', '.join(pruned)}")
+            print(f"{report.agent:<9} {report.status:<9} bridge={report.bridge or '-'} pin={report.pin or '-'}  {report.detail}")
         if exit_code == 0 and not check and not uninstall and not dry_run:
             print("Restart the configured agent(s) to load the bridge.")
     return exit_code

@@ -4,51 +4,70 @@ The Luminary-maintained development package targets **`@opencode/cli` 2.2.0**
 and **`@opencode/plugin` 2.2.0**. This is an official Luminary package,
 **not** an OpenCode endorsement.
 
-**Development scope:** the `0.3.3` source includes this inspector
-for OpenCode CLI and Desktop on `@opencode/cli` and `@opencode/plugin`
-**2.2.0**. The published `0.3.3` bridge includes the inspector; `0.3.2` was
-verified on OpenCode 2.1.4, and `0.3.1` targets the separate V1 API. Native Web GUI
+**Source/release boundary:** managed native setup is UNRELEASED; the next
+release is not selected or staged; the proposed 0.3.5 bump is deferred.
+Published 0.3.4 includes the inspector. The 0.3.2 adapter was verified on
+OpenCode 2.1.4; 0.3.1 targets the separate V1 API. Native Web GUI
 contribution discovery remains
 blocked upstream. See the [target matrix](https://github.com/alertxsto/luminary-memory/blob/develop/docs/ROADMAP.md#target-support-matrix)
 for exact scope, lifecycle and release limitations.
 
-## Install
+## Recommended installer (unreleased source)
 
-The registry commands below install `0.3.3`, which includes the inspector.
+**Registry current: 0.3.4.** The following source contract is not completed
+platform acceptance, registry proof, or release readiness. Install OpenCode
+first. Public entry points (`main` may differ from this unreleased checkout):
 
-Install the published Python bridge from PyPI:
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/alertxsto/luminary-memory/main/install.ps1 | iex
+```
+
+Linux / macOS:
 
 ```sh
-python -m pip install --upgrade "luminary-memory==0.3.3"
+curl -fsSL https://raw.githubusercontent.com/alertxsto/luminary-memory/main/install.sh | sh
+```
+
+The **installer**, not native package installation, provisions a uv-managed
+Python 3.12 bridge and registers a matching available native package in user
+config by default. `--project` uses the project's OpenCode config instead.
+No manual interpreter export is needed for managed setup.
+See the [full install guide](https://github.com/alertxsto/luminary-memory/blob/main/docs/install.md)
+for options and the unreleased/public-artifact boundary.
+
+## Advanced: manual published 0.3.4 installation
+
+Manage the Python bridge yourself:
+
+```sh
+python -m pip install "luminary-memory==0.3.4"
 export LUMINARY_PYTHON=/absolute/path/to/venv/bin/python
 ```
 
-Install the V2 npm package through OpenCode:
-
-```sh
-opencode plugin add luminary-memory-opencode@0.3.3
-```
-
-Alternatively, add it to your existing `opencode.json` or `opencode.jsonc`:
+Merge the matching package into existing user `opencode.json`/`opencode.jsonc`:
 
 ```json
-{"plugins": ["luminary-memory-opencode@0.3.3"]}
+{"plugins": ["luminary-memory-opencode@0.3.4"]}
 ```
 
-V2 uses **`plugins`**, not V1's singular `plugin`. The host provides the SDK and
-Effect runtime; the bundle keeps them external. No npm install hook installs
-Python, downloads memory models, or changes your Python environment. Set
-`LUMINARY_PYTHON` in the **OpenCode server's environment**, including when a
-terminal, desktop, or web client connects to a separate server.
+V2 uses plural **`plugins`**, not V1's singular `plugin`. The host provides the
+SDK and Effect runtime; the bundle keeps them external. Native packages have
+no Python downloader or npm postinstall bootstrap. There is no
+`npx luminary-memory-opencode setup` CLI.
+For manual installation set `LUMINARY_PYTHON` in the **server's environment**,
+including for clients connected to a remote server.
+PowerShell: `$env:LUMINARY_PYTHON = 'C:\venv\Scripts\python.exe'`.
 
-PowerShell:
-
-```powershell
-$env:LUMINARY_PYTHON = 'C:\venv\Scripts\python.exe'
-```
-
-Otherwise the bridge runs `python` from PATH. A missing interpreter or bridge
-produces an explicit error, not a successful storage claim.
+Current source memory tools and inspector share discovery:
+**explicit `LUMINARY_PYTHON` > selected OpenCode schema-1 bridge.json record
+> embedded interpreter > PATH**. A bad explicit override fails visibly without
+fallback. `~/.luminary/bridge.json` records per-agent `python`, `version`, `mode`;
+tooling lives under `~/.luminary/bin`, bridges under
+`~/.luminary/venvs/<version>`, and model cache settings in
+`~/.luminary/luminary.env` (default `~/.luminary/models`). Discovery and ordinary
+turns never install runtimes or packages.
 
 ## Build or install a local artifact
 
@@ -59,7 +78,7 @@ npm run pack:plugins
 ```
 
 Keep the built directory or extract
-`artifacts/plugins/luminary-memory-opencode-0.3.3.tgz`. Configure the **`dist`
+`artifacts/plugins/luminary-memory-opencode-<version>.tgz`. Configure the **`dist`
 directory**, which contains `index.js`, not the package root or a single file:
 
 ```json
@@ -71,7 +90,7 @@ configured single-file paths. Published npm packages instead resolve their
 `./dist/index.js` export normally. Neither form needs this repository's source
 files at runtime.
 
-For copy installation, install the checkpoint's Python package, then run:
+Explicit advanced copied-adapter alternative (not the managed default):
 
 ```sh
 python -m luminary_memory.integrations install opencode --global
@@ -145,11 +164,23 @@ OpenCode discovers both locations automatically; no `opencode.json` entry is
 required. The skill is documentation only and does not change plugin behavior.
 
 Compatible clients consume the server's native tools/results. This package does
-not add a universal client toolbar or a standalone desktop app. Before enabling
-it, remove only the old copied Luminary adapter and its explicit config entry;
-do not run both installation forms. To remove the package, use
-`opencode plugin remove luminary-memory-opencode@0.3.3` or remove its config
-entry. Reload/restart the server as needed. Stored memory is not deleted.
+not add a universal client toolbar or a standalone desktop app.
+Choose native or copied installation, never both. Source setup cuts over owned
+copies; modified/unrecognized copies cause a conflict and are preserved, not
+silently deleted. Native install failures never fall back to copying.
+
+Repeat managed setup repairs/reuses the selected release; migrating from
+0.3.4 uses the **new installer** with explicit `--upgrade --version X` for an
+available target, updating native registration as well as bridge.json.
+`--check`, `--dry-run`, and `setup --list` never provision or change config/stores.
+Selected-agent `--uninstall --agents opencode` preserves other hosts and memories;
+separate `--prune` removes unreferenced managed environments.
+For manual native removal, remove only Luminary's entry from `plugins`.
+Restart the server. Stored memory is not deleted.
+
+Offline use requires a healthy cached runtime and configured embedding model;
+an uncached model may still require network access. Hermes remains a separate
+provider/catalog integration, not this managed bridge environment.
 
 ## Compatibility evidence
 
@@ -174,7 +205,7 @@ review. This is not a verified V2 catalog or a live website listing.
 The obsolete local listing patch is no longer shipped.
 
 [Source PR #17](https://github.com/alertxsto/luminary-memory/pull/17) has merged.
-Python and all three native npm packages are published at `0.3.3`.
+Python and all three native npm packages are published at `0.3.4`.
 
 [Configuration and ownership](https://github.com/alertxsto/luminary-memory/blob/main/docs/agent-integrations.md)
 · [OpenCode V2 plugin contract](https://opencode.ai/v2/docs/plugins/)

@@ -7,20 +7,44 @@ second memory engine. Its native extension contract targets
 Building this repository uses Node.js 22.22.2+ in the 22.x LTS line (or the other
 versions accepted by the root manifest).
 
-## Registry installation
+## Recommended installer (unreleased source)
 
-The registry commands below install `0.3.3`, which includes the inspector.
+**Registry current: 0.3.4. Managed native setup: UNRELEASED.** The next release
+version bump is deferred; 0.3.5 has not been staged. These source
+instructions are not platform acceptance, registry proof, or release readiness.
+Install pi first. Public entry points (`main` may differ from this checkout):
 
-Install the published Python bridge from PyPI, then install the pi package:
+Windows (PowerShell):
 
-```sh
-python -m pip install --upgrade "luminary-memory==0.3.3"
-export LUMINARY_PYTHON=/absolute/path/to/venv/bin/python
-pi install npm:luminary-memory-pi@0.3.3
+```powershell
+irm https://raw.githubusercontent.com/alertxsto/luminary-memory/main/install.ps1 | iex
 ```
 
-No npm install script installs Python for you. Set `LUMINARY_PYTHON` to the
-environment containing the bridge.
+Linux / macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/alertxsto/luminary-memory/main/install.sh | sh
+```
+
+The installer provisions a uv-managed Python 3.12 bridge and uses native
+`pi install npm:luminary-memory-pi@X` user-wide by default, with a matching
+available release `X`. Native package installation alone never provisions
+Python. See the [full install guide](https://github.com/alertxsto/luminary-memory/blob/main/docs/install.md)
+for selected-agent options and the unreleased/public-artifact boundary.
+
+## Advanced: manual published 0.3.4 installation
+
+Manage the Python bridge yourself, then register the matching native package:
+
+```sh
+python -m pip install "luminary-memory==0.3.4"
+export LUMINARY_PYTHON=/absolute/path/to/venv/bin/python
+pi install npm:luminary-memory-pi@0.3.4
+```
+
+No npm install script installs Python. The explicit copied adapter,
+`luminary-memory hook install pi` (project) or with `--global` (user), is an
+advanced alternative, never the managed installer's silent fallback.
 
 ## Install from this checkout now
 
@@ -42,16 +66,20 @@ On PowerShell, set the interpreter before starting pi:
 $env:LUMINARY_PYTHON = 'C:\absolute\path\to\venv\Scripts\python.exe'
 ```
 
-The interpreter must be executable and able to import `luminary_memory.integrations`.
-The package runs `python -m luminary_memory.integrations bridge` in that interpreter;
-without `LUMINARY_PYTHON` it uses `python` on the host process's `PATH`. There is
-no embedded machine-specific Python path, bundled Python, automatic pip install,
-or postinstall download. Set this environment in the process launching pi.
+The interpreter must be executable and import `luminary_memory.integrations`.
+Current source uses the same discovery for memory and inspector:
+**explicit `LUMINARY_PYTHON` > schema-1 `~/.luminary/bridge.json` pi record
+> embedded interpreter > PATH**. An invalid explicit interpreter fails visibly
+without fallback. Native package installation embeds no machine-specific Python
+path, and discovery/ordinary turns never install Python or dependencies.
+Managed tooling lives under `~/.luminary/bin`, versioned bridges under
+`~/.luminary/venvs/<version>`, and the existing model cache under
+`~/.luminary/models` via `~/.luminary/luminary.env`.
 
-**Do not also load the file-copy adapter** installed by
-`luminary-memory hook install pi`. Remove its `luminary.ts` from the project or
-user extension directory, and remove any explicit settings entry for that copy,
-before enabling this package. Keep unrelated extensions.
+**Do not also load the copied adapter.** Source setup cuts over installer-owned
+copies without duplicate registration; modified/unrecognized copies produce a
+conflict and are preserved. Manual switching must remove only Luminary's old
+owned copy and its explicit settings entry, keeping unrelated extensions.
 
 Restart pi after installation. `pi list` shows the configured package. For a
 project-scoped install add `--local`; pi requires project trust before loading it.
@@ -66,13 +94,8 @@ For a portable local artifact, run `npm run pack:plugins`, extract
 packages load in place. The extracted package needs no repository TypeScript
 files, but still needs the separately installed Python bridge.
 
-Only **after actual npm publication**, the registry installation is:
-
-```sh
-pi install npm:luminary-memory-pi
-```
-
-Do not use that command as evidence that the package currently exists on npm.
+The current registry release is 0.3.4; next-release source instructions are not
+proof of publication or catalog indexing.
 
 ### Official package catalog
 
@@ -132,14 +155,22 @@ an unknown client-side outcome; inspect activity before retrying.
 
 ## Update and remove
 
-For a local package, rebuild it in the same directory and restart pi. Remove it
-with `pi remove /absolute/path/to/luminary-memory/plugins/pi`, using the installed
-source (or the extracted directory's path), plus `--local` if installed locally.
-For a published registry install, use `pi update --extensions` to update packages
-and `pi remove npm:luminary-memory-pi` to remove this one. Pinned versions stay
-pinned; install a different version explicitly to change the pin. Bare
-`pi update` updates pi itself, not just extensions. Update the Python bridge
-separately to the matching coordinated Luminary version.
+For managed source setup, repeat installation repairs/reuses the selected
+release; explicit `--upgrade --version X` through the **new installer** migrates
+0.3.4 to an available target and updates native pins, not just bridge.json.
+`--check`, `--dry-run`, and `setup --list` never provision or modify stores/config.
+Selected-agent `--uninstall --agents pi` preserves other hosts and memories;
+`--prune` separately removes unreferenced managed environments.
+Offline operation requires a healthy cached runtime and the configured embedding
+model in cache; an uncached model can still need network access.
+
+For a local package, rebuild in place and restart pi. Remove it with
+`pi remove /absolute/path/to/luminary-memory/plugins/pi`, adding `--local` if
+installed locally. For manual registry removal use
+`pi remove npm:luminary-memory-pi`. Pinned versions require explicit replacement;
+keep the Python bridge matched when upgrading manually. Bare `pi update`
+updates pi itself, not just extensions. None of these plugin removals deletes
+the memory store.
 
 See the [Luminary integration guide](https://github.com/alertxsto/luminary-memory/blob/main/docs/agent-integrations.md),
 [pi package contract](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/packages.md),

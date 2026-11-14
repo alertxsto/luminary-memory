@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { hostname } from "node:os";
 import { resolve } from "node:path";
+import { resolveBridgePython } from "./bridge-launch";
 import type { ConsoleRequest, ConsoleResult, ConsoleTransport, NativeInspectorContext } from "./console-contract";
 
 const MAX_REQUEST = 128 * 1024;
@@ -38,8 +39,7 @@ function launch(
   delete environment.LUMINARY_INSPECTOR_DOWNLOAD;
   if (preview) environment.LUMINARY_INSPECTOR_CONFIRM = preview;
   if (file) environment.LUMINARY_INSPECTOR_FILE = JSON.stringify(file);
-  const configured = process.env.LUMINARY_PYTHON || "__LUMINARY_PYTHON__";
-  const executable = configured.startsWith("__LUMINARY_") ? "python" : configured;
+  const executable = resolveBridgePython(context.agent, "__LUMINARY_PYTHON__");
   const { promise, resolve: done } = Promise.withResolvers<ConsoleResult>();
     const chunks: Buffer[] = [];
     let bytes = 0;

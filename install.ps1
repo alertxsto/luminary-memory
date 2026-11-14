@@ -2,9 +2,7 @@
 #
 #   irm https://raw.githubusercontent.com/alertxsto/luminary-memory/main/install.ps1 | iex
 #
-# Provisions a private Python runtime with uv, installs the version-matched
-# bridge, writes ~/.luminary/bridge.json, configures every detected agent, and
-# verifies the bridge. No Python, Node, or venv setup is required.
+# Provision only the bridge; Python setup owns host installation and records.
 param(
   [string]$Agents = "auto",
   [string]$Version = $env:LUMINARY_VERSION,
@@ -16,69 +14,65 @@ param(
   [switch]$NoConfig,
   [switch]$Project,
   [switch]$DryRun,
+  [switch]$List,
   [switch]$Verbose
 )
-
 $ErrorActionPreference = "Stop"
+$explicitVersion = [bool]$Version
 if (-not $Version) { $Version = "0.3.4" }
 if ($All) { $Agents = "all" }
-
-function Write-Log([string]$Message) {
-  Write-Host "[luminary] $Message" -ForegroundColor Cyan
+if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "Version must have the form X.Y.Z" }
+if (@($Check, $Upgrade, $Uninstall | Where-Object { $_ }).Count -gt 1) {
+  throw "Choose only one of -Check, -Upgrade, or -Uninstall"
 }
-
+if ($Agents -notin @("auto", "all")) {
+  foreach ($agent in $Agents.Split(",")) {
+    if ($agent -notin @("opencode", "pi", "omp")) { throw "Unknown agent: $agent" }
+  }
+}
 $homeDir = $env:USERPROFILE
 $binDir = Join-Path $homeDir ".luminary\bin"
 $venv = Join-Path $homeDir ".luminary\venvs\$Version"
 $python = Join-Path $venv "Scripts\python.exe"
-
-function Select-Agents {
-  if ($Agents -eq "all") { return @("opencode", "pi", "omp") }
-  if ($Agents -ne "auto") { return $Agents.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ } }
-  $found = @()
-  if (Test-Path (Join-Path $homeDir ".config\opencode")) { $found += "opencode" }
-  if ($env:LOCALAPPDATA -and (Test-Path (Join-Path $env:LOCALAPPDATA "Programs\ai.opencode.desktop"))) { $found += "opencode" }
-  if (Test-Path (Join-Path $homeDir ".pi")) { $found += "pi" }
-  if (Test-Path (Join-Path $homeDir ".omp")) { $found += "omp" }
-  return $found | Select-Object -Unique
-}
-
-# 1. A bridge interpreter. Status-only modes reuse an existing venv.
-if (($Check -or $Uninstall) -and -not (Test-Path $python)) {
-  $candidate = Get-ChildItem (Join-Path $homeDir ".luminary\venvs\*\Scripts\python.exe") -ErrorAction SilentlyContinue |
-    Select-Object -First 1
-  if ($candidate) { $python = $candidate.FullName }
-  if (-not (Test-Path $python)) {
-    throw "No Luminary bridge found; run the installer without -Check/-Uninstall first."
-  }
-}
-
-# 2. uv: a single static binary that can provision Python itself. Only needed
-#    when the target interpreter does not exist yet.
-if (-not (Test-Path $python)) {
-  if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-    $uv = Join-Path $binDir "uv.exe"
-    if (-not (Test-Path $uv)) {
-      Write-Log "installing uv"
-      New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-      $env:UV_INSTALL_DIR = $binDir
-      $env:UV_NO_MODIFY_PATH = "1"
-      Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
+$lockDir = Join-Path $homeDir ".luminary\locks\bootstrap.lock.d"
+function Enter-BootstrapLock {
+  New-Item -ItemType Directory -Force (Split-Path $lockDir) | Out-Null
+  $deadline = (Get-Date).AddSeconds(120)
+  while ($true) {
+    try { New-Item -ItemType Directory -Path $lockDir -ErrorAction Stop | Out-Null; break }
+    catch {
+      $owner = Get-Content (Join-Path $lockDir "pid") -ErrorAction SilentlyContinue
+      if ($owner -and -not (Get-Process -Id $owner -ErrorAction SilentlyContinue)) {
+        Remove-Item -Recurse -Force $lockDir -ErrorAction SilentlyContinue
+        continue
+      }
+      if ((Get-Date) -gt $deadline) { throw "Another Luminary bootstrap is running; retry after it finishes." }
+      Start-Sleep -Milliseconds 100
     }
-    $env:Path = "$binDir;$env:Path"
   }
-  Write-Log "python 3.12 -> $venv"
-  if ($Verbose) { Write-Host "+ uv venv $venv --python 3.12" }
-  & uv venv $venv --python 3.12
-  if ($LASTEXITCODE -ne 0) { throw "uv venv failed" }
-  Write-Log "bridge $Version"
-  if ($Verbose) { Write-Host "+ uv pip install --python $python luminary-memory==$Version" }
-  & uv pip install --python $python "luminary-memory==$Version"
-  if ($LASTEXITCODE -ne 0) { throw "uv pip install failed" }
+  Set-Content -Path (Join-Path $lockDir "pid") -Value $PID
 }
-
-# 3. Preferred path: the bridge ships the setup command.
-$arguments = @("--agents", $Agents, "--version", $Version)
+function Exit-BootstrapLock { Remove-Item -Recurse -Force $lockDir -ErrorAction SilentlyContinue }
+$selected = @($Agents.Split(","))
+if ($Agents -eq "auto") {
+  $selected = @()
+  foreach ($agent in @("opencode", "pi", "omp")) {
+    $root = Join-Path $homeDir ".$agent\agent"
+    if ($Project) { $root = Join-Path (Get-Location) ".$agent" }
+    elseif ($agent -eq "opencode") {
+      $base = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $homeDir ".config" }
+      $root = Join-Path $base "opencode"
+    }
+    if ((Test-Path $root) -or (Get-Command $agent -ErrorAction SilentlyContinue)) { $selected += $agent }
+  }
+}
+if ($List) { Write-Host "Detected agents: $($selected -join ' ')"; exit 0 }
+if (-not $selected) { throw "No supported agent detected; use -Agents opencode,pi,omp." }
+if ($Project -and -not $NoConfig -and -not ($Check -or $Uninstall -or $DryRun) -and ($selected -contains "omp" -or $Agents -eq "all")) {
+  throw "omp native packages are user-wide; use explicit project copy installation instead."
+}
+$arguments = @("--agents", $Agents)
+if ($explicitVersion) { $arguments += @("--version", $Version) }
 if ($NoConfig) { $arguments += "--no-config" }
 if ($Project) { $arguments += "--project" }
 if ($Prune) { $arguments += "--prune" }
@@ -87,96 +81,64 @@ if ($Check) { $arguments += "--check" }
 if ($Upgrade) { $arguments += "--upgrade" }
 if ($Uninstall) { $arguments += "--uninstall" }
 
-$previous = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-& $python -m luminary_memory.integrations setup --list *> $null
-$hasSetup = $LASTEXITCODE -eq 0
-$ErrorActionPreference = $previous
-if ($hasSetup) {
-  & $python -m luminary_memory.integrations setup @arguments
-  exit $LASTEXITCODE
+function Test-Bridge([string]$Executable, [switch]$MatchVersion) {
+  if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) { return $false }
+  $probe = "from luminary_memory.integrations.setup import run_setup"
+  if ($MatchVersion) { $probe += "; import importlib.metadata as m; assert m.version('luminary-memory') == '$Version'" }
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try { & $Executable -I -c $probe *> $null; return $LASTEXITCODE -eq 0 }
+  finally { $ErrorActionPreference = $previous }
 }
 
-# ------------------------------------------------------------------------
-# Compatibility path for a published bridge that predates `setup`.
-#
-# It uses only commands and actions the older bridge already has:
-#   - `luminary_memory.integrations install <agent> --global` writes a copy
-#     adapter that embeds this interpreter, so no env var is required;
-#   - the `core` action proves the bridge can read its store.
-# Nothing is downloaded, so a stale remote copy cannot masquerade as success.
-# ------------------------------------------------------------------------
-$selected = @(Select-Agents | Where-Object { $_ })
-if (-not $selected) {
-  throw "No supported agent detected; use -Agents opencode,pi,omp or -All."
-}
-
-if ($Uninstall) {
-  Remove-Item -Recurse -Force (Join-Path $homeDir ".config\opencode\plugins\luminary-memory") -ErrorAction SilentlyContinue
-  Remove-Item -Recurse -Force (Join-Path $homeDir ".pi\agent\extensions\luminary-memory") -ErrorAction SilentlyContinue
-  Remove-Item -Recurse -Force (Join-Path $homeDir ".omp\agent\extensions\luminary-memory") -ErrorAction SilentlyContinue
-  Remove-Item -Force (Join-Path $homeDir ".luminary\bridge.json") -ErrorAction SilentlyContinue
-  Write-Log "removed Luminary adapters and bridge record"
-  exit 0
-}
-
-if ($Check) {
-  $bridge = Join-Path $homeDir ".luminary\bridge.json"
-  if (-not (Test-Path $bridge)) { Write-Host "no bridge record; run the installer first"; exit 1 }
-  $data = Get-Content -Raw $bridge | ConvertFrom-Json
-  $ok = $true
-  foreach ($entry in $data.agents.PSObject.Properties) {
-    $alive = Test-Path $entry.Value.python
-    if (-not $alive) { $ok = $false }
-    $state = if ($alive) { "ok" } else { "missing" }
-    Write-Host ("{0,-9} {1,-9} bridge={2}  python={3}" -f $entry.Name, $state, $entry.Value.version, $entry.Value.python)
-  }
-  if (-not $ok) { exit 1 }
-  exit 0
-}
-
-if ($DryRun) { Write-Log "would install: $($selected -join ' ')"; exit 0 }
-
-# The copy adapter and the npm plugin must not load together. Remove any
-# Luminary npm pin before installing the copy adapter.
-if ($selected -contains "opencode") {
-  $configBase = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $homeDir ".config" }
-  $config = Join-Path $configBase "opencode\opencode.jsonc"
-  if (Test-Path $config) {
-    $text = Get-Content -Raw $config
-    $updated = [regex]::Replace($text, '\s*"luminary-memory-opencode@[^"]*"\s*,?', '')
-    $updated = [regex]::Replace($updated, ',(\s*\])', '$1')
-    if ($updated -ne $text) {
-      [System.IO.File]::WriteAllText($config, $updated, (New-Object System.Text.UTF8Encoding($false)))
+if ($env:LUMINARY_PYTHON) {
+  $python = $env:LUMINARY_PYTHON
+  if (-not (Test-Bridge $python)) { throw "Invalid LUMINARY_PYTHON; fix or unset the explicit override." }
+} elseif ($Check -or $Uninstall -or $DryRun) {
+  if (-not (Test-Bridge $python)) {
+    $candidates = Get-ChildItem (Join-Path $homeDir ".luminary\venvs\*\Scripts\python.exe") -ErrorAction SilentlyContinue
+    foreach ($candidate in $candidates) {
+      if (Test-Bridge $candidate.FullName) { $python = $candidate.FullName; break }
     }
   }
+  if (-not (Test-Bridge $python)) {
+    if ($DryRun) { Write-Host "Planned bridge $Version for $($selected -join ',') (no provisioning)"; exit 0 }
+    throw "No healthy Luminary setup bridge found; run setup with a supported release first."
+  }
+} else {
+  $env:PYTHONPATH = $null
+  $env:PYTHONHOME = $null
+  $env:VIRTUAL_ENV = $null
+  $env:CONDA_PREFIX = $null
+  Enter-BootstrapLock
+  try {
+    # Recheck readiness under the lock: a concurrent bootstrap may have finished.
+    if (-not (Test-Bridge $python -MatchVersion)) {
+      $uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+      $uv = if ($uvCommand) { $uvCommand.Source } else { Join-Path $binDir "uv.exe" }
+      if (-not (Test-Path $uv)) {
+        New-Item -ItemType Directory -Force $binDir | Out-Null
+        $env:UV_INSTALL_DIR = $binDir
+        $env:UV_NO_MODIFY_PATH = "1"
+        Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
+        if (-not (Test-Path $uv)) { throw "uv provisioning failed" }
+      }
+      if (-not (Test-Path $python)) {
+        & $uv venv $venv --python 3.12
+        if ($LASTEXITCODE -ne 0) { throw "uv venv failed" }
+      }
+      & $uv pip install --python $python --reinstall "luminary-memory==$Version"
+      if ($LASTEXITCODE -ne 0) { throw "uv pip install failed" }
+    }
+    if (-not (Test-Bridge $python)) {
+      throw "Release $Version predates managed setup; choose a setup-capable release. Host configuration was not changed."
+    }
+    & $python -I -m luminary_memory.integrations setup @arguments
+    exit $LASTEXITCODE
+  } finally { Exit-BootstrapLock }
 }
-
-foreach ($agent in $selected) {
-  if ($Verbose) { Write-Host "+ install $agent --global" }
-  & $python -m luminary_memory.integrations install $agent --global
-  if ($LASTEXITCODE -ne 0) { throw "installing the $agent adapter failed" }
+if (-not (Test-Bridge $python)) {
+  throw "Release $Version predates managed setup; choose a setup-capable release. Host configuration was not changed."
 }
-
-$record = @{ schema = 1; agents = @{} }
-foreach ($agent in $selected) {
-  $record.agents[$agent] = @{ python = $python; version = $Version; mode = "copy" }
-}
-$path = Join-Path $homeDir ".luminary\bridge.json"
-New-Item -ItemType Directory -Force -Path (Split-Path $path) | Out-Null
-$json = $record | ConvertTo-Json -Depth 5
-[System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding($false)))
-
-$failed = $false
-foreach ($agent in $selected) {
-  $request = @{ agent = $agent; workspace = (Get-Location).Path; session_id = "setup-check"; action = "core" } | ConvertTo-Json -Compress
-  $reply = $request | & $python -m luminary_memory.integrations bridge 2>$null
-  try { $parsed = $reply | ConvertFrom-Json } catch { $parsed = $null }
-  $ok = $parsed -and $parsed.ok -eq $true
-  if (-not $ok) { $failed = $true }
-  $state = if ($ok) { "ok" } else { "error" }
-  $detail = if ($ok) { "" } elseif ($parsed.message) { "  " + $parsed.message } elseif ($parsed.reason) { "  " + $parsed.reason } else { "  bridge error" }
-  Write-Host ("{0,-9} {1,-9} bridge={2}{3}" -f $agent, $state, $Version, $detail)
-}
-if ($failed) { exit 1 }
-exit 0
+& $python -I -m luminary_memory.integrations setup @arguments
+exit $LASTEXITCODE

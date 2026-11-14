@@ -117,6 +117,20 @@ The private root `package.json` has no version. Review the generated changelog
 entry, then run the Python checks, native package commands and real-model gate
 before committing the release changes and creating the matching `vX.Y.Z` tag.
 
+Run `bash scripts/bump-version.sh --check` for the read-only source-version
+gate (set `PYTHON` when needed). It checks Python runtime/project metadata,
+native manifests and lockfile workspaces, Hermes metadata, installer defaults,
+and an optional `RELEASE_TAG`. It does not authorize publication.
+
+Setup CI runs the real platform wrapper on Windows, Linux and macOS against an
+installed wheel, plus isolated managed-discovery consumers. The
+`scripts/smoke-setup-bootstrap.py` gate provisions real uv and managed Python
+from the built wheel in a throwaway home, covering cold install, repeat, repair,
+check, upgrade and selected removal. Local artifacts and fixture tooling are
+pre-publication evidence, not proof of registry downloads. Actual cold bootstrap
+from the public installer and supported native-host acceptance must also pass
+before describing a candidate release as one-command-ready.
+
 The publish workflow builds, tests and packs native plugins, checks that every
 manifest matches `pyproject.toml`, and verifies the exact three nonempty
 tarballs contain a built entry point, README and license. Tag releases must

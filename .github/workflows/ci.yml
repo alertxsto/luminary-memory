@@ -43,15 +43,69 @@ jobs:
           check-latest: true
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm run build:plugins
-      - run: npm run test:plugins
+      - name: Check coordinated source versions
+        run: PYTHON=python bash scripts/bump-version.sh --check
+      - run: npm run build
+      - run: LUMINARY_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')" npm run test:plugins
       - run: npm run pack:plugins
+      - name: Build the consumer wheel from these resources
+        run: python -m build --wheel --outdir artifacts/wheels
+      - name: Upload the exact consumer wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-wheel
+          path: artifacts/wheels/*.whl
+          if-no-files-found: error
       - name: Upload installable plugin tarballs
         uses: actions/upload-artifact@v4
         with:
           name: native-plugin-packages
           path: artifacts/plugins/*.tgz
           if-no-files-found: error
+
+  setup-contracts:
+    name: Installed setup contracts (${{ matrix.os }})
+    needs: [native-packages]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          check-latest: true
+          cache: npm
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: setup-wheel
+          path: artifacts/wheels
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-plugin-packages
+          path: artifacts/plugins
+      - name: Install the built wheel, never an editable checkout
+        run: python -m pip install artifacts/wheels/*.whl pytest
+      - run: npm ci --ignore-scripts
+      - name: Require setup from the installed artifact
+        run: |
+          python -I -c "from luminary_memory.integrations.setup import run_setup; from luminary_memory.integrations import dispatch; assert dispatch({'agent':'pi','action':'version'})['ok']"
+          python -m pytest tests/test_setup_bootstrap.py tests/test_setup.py tests/test_agent_integrations.py tests/test_embeddings.py tests/test_release_versions.py tests/hermes/test_install_script.py -q
+      - name: Native memory and inspector without Python on PATH
+        run: node scripts/test-installed-inspector.mjs "$(python -c 'import sys; print(sys.executable)')"
+      - name: Execute the exact npm tarball consumers
+        run: LUMINARY_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')" npm run test:plugin-artifacts
+      - name: Cold managed bootstrap with real uv and the built wheel
+        run: python scripts/smoke-setup-bootstrap.py artifacts/wheels/*.whl
 
   pgvector-integration:
     name: PostgreSQL pgvector integration

@@ -50,3 +50,16 @@ def test_embed_batch_empty_returns_empty(fake_model):
     """An empty batch returns an empty list without touching the model."""
     e = FastembedEngine()
     assert e.embed_batch([]) == []
+
+
+def test_client_uses_explicit_settings_model_cache(tmp_path, fake_model):
+    from luminary_memory import MemoryClient
+    from luminary_memory.config import Settings
+
+    cache = str(tmp_path / "persistent models")
+    client = MemoryClient(settings=Settings(db_path=str(tmp_path / "memory.db"), model_cache_dir=cache))
+    try:
+        client.engine.embed("fixture fact")
+        assert client.engine._model.kwargs["cache_dir"] == cache
+    finally:
+        client.close()

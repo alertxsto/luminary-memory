@@ -21,23 +21,7 @@ jobs:
       - name: Check Python, plugin and tag versions
         env:
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          import tomllib
-
-          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
-          for agent in ("pi", "opencode", "omp"):
-              path = Path("plugins") / agent / "package.json"
-              manifest = json.loads(path.read_text())
-              if manifest["name"] != f"luminary-memory-{agent}" or manifest["version"] != version:
-                  raise SystemExit(f"{path}: package name/version does not match Python {version}")
-          tag = os.environ["RELEASE_TAG"]
-          if tag and tag != f"v{version}":
-              raise SystemExit(f"Tag {tag!r} does not match Python/plugin version v{version}")
-          PY
+        run: PYTHON=python bash scripts/bump-version.sh --check
       - name: Install the actual Python bridge
         run: python -m pip install -e ".[dev]"
       - uses: actions/setup-node@v4
@@ -48,7 +32,7 @@ jobs:
       - run: npm run build
       - run: npm run check:opencode
       - run: npm run test:ui-contracts
-      - run: npm run test:plugins
+      - run: LUMINARY_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')" npm run test:plugins
       - run: npm run pack:plugins
       - name: Check complete, version-matched release tarballs
         run: |
@@ -74,6 +58,13 @@ jobs:
                       if not entry.isfile() or entry.size == 0:
                           raise SystemExit(f"{filename}: missing or empty {member}")
           PY
+      - name: Build the setup consumer wheel
+        run: python -m build --wheel --outdir artifacts/setup-wheel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup-wheel
+          path: artifacts/setup-wheel/*.whl
+          if-no-files-found: error
       - name: Upload validated plugin tarballs
         uses: actions/upload-artifact@v4
         with:
@@ -156,8 +147,47 @@ jobs:
           path: real-model-gate.json
           if-no-files-found: ignore
 
+  setup-contracts:
+    name: Installed setup contracts (${{ matrix.os }})
+    needs: [native-packages]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          check-latest: true
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: setup-wheel
+          path: artifacts/setup-wheel
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-plugin-packages
+          path: artifacts/plugins
+      - run: python -m pip install artifacts/setup-wheel/*.whl pytest
+      - run: npm ci --ignore-scripts
+      - name: Exercise the installed setup and actual platform shell
+        run: |
+          python -I -c "from luminary_memory.integrations.setup import run_setup"
+          python -m pytest tests/test_setup_bootstrap.py tests/test_setup.py tests/test_agent_integrations.py tests/test_embeddings.py tests/test_release_versions.py tests/hermes/test_install_script.py -q
+          node scripts/test-installed-inspector.mjs "$(python -c 'import sys; print(sys.executable)')"
+          LUMINARY_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')" npm run test:plugin-artifacts
+          python scripts/smoke-setup-bootstrap.py artifacts/setup-wheel/*.whl
+
   pypi:
-    needs: [real-model, native-packages, python-native-contracts]
+    needs: [real-model, native-packages, python-native-contracts, setup-contracts]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -176,11 +206,16 @@ jobs:
         with:
           name: inspector-resources
           path: src/luminary_memory
-      - name: Build sdist and wheel
+      - name: Download the exact tested wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: setup-wheel
+          path: dist
+      - name: Build sdist without replacing the tested wheel
         run: |
           python -m pip install --upgrade pip
           pip install build
-          python -m build
+          python -m build --sdist
       - name: Download validated plugin tarballs
         uses: actions/download-artifact@v4
         with:

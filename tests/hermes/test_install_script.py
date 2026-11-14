@@ -18,6 +18,7 @@ being re-parsed out of a shell heredoc.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -82,19 +83,21 @@ def _make_checkout(root: Path, *, with_agent: bool = True) -> Path:
     return checkout
 
 
+def _venv_python(venv: Path) -> Path:
+    return venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
 def _venv_site_packages(venv: Path) -> Path:
-    """The site-packages path this interpreter version would use inside ``venv``."""
+    """Use the platform layout the tested interpreter actually discovers."""
+    if os.name == "nt":
+        return venv / "Lib" / "site-packages"
     version = f"python{sys.version_info.major}.{sys.version_info.minor}"
     return venv / "lib" / version / "site-packages"
 
 
 def _make_venv(root: Path) -> Path:
-    """Build a venv-shaped directory whose python is this interpreter."""
     venv = root / "venv"
-    (venv / "bin").mkdir(parents=True)
-    (venv / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
-    (venv / "bin" / "python").symlink_to(sys.executable)
-    _venv_site_packages(venv).mkdir(parents=True, exist_ok=True)
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True)
     return venv
 
 
@@ -117,7 +120,7 @@ def test_runtime_python_resolves_the_activated_environment(tmp_path):
     result = _run(RUNTIME_PY, env=_base_env(HERMES_HOME=str(tmp_path)))
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == str(venv / "bin" / "python")
+    assert result.stdout.strip() == str(_venv_python(venv))
 
 
 def test_runtime_python_skips_a_site_packages_without_a_venv(tmp_path):
@@ -136,7 +139,7 @@ def test_runtime_python_skips_a_site_packages_without_a_venv(tmp_path):
 def test_runtime_python_skips_its_own_environment(tmp_path):
     """The interpreter running the probe is never the answer, even inside a venv."""
     checkout = _make_checkout(tmp_path)
-    own_site = Path(sys.prefix).resolve() / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+    own_site = _venv_site_packages(Path(sys.prefix).resolve())
     if not own_site.is_dir():
         pytest.skip("this interpreter has no venv site-packages to shadow")
     _bootstrap_adding(checkout, own_site)
@@ -223,17 +226,17 @@ def test_capability_probe_accepts_a_pip_installed_hermes(tmp_path):
     (agent / "memory_provider.py").write_text(CONTRACT_STUB, encoding="utf-8")
 
     # Make the luminary entry point visible the way a real install would.
-    source_site = Path(sys.prefix).resolve() / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+    source_site = _venv_site_packages(Path(sys.prefix).resolve())
     dist_info = next(source_site.glob("luminary_memory-*.dist-info"), None)
     if dist_info is None:
         pytest.skip("the test environment has no luminary dist-info to mirror")
-    (site_packages / dist_info.name).symlink_to(dist_info)
+    shutil.copytree(dist_info, site_packages / dist_info.name)
     (site_packages / "_luminary_src.pth").write_text(
         str(REPO_ROOT / "src") + "\n", encoding="utf-8"
     )
 
     result = subprocess.run(
-        [str(venv / "bin" / "python"), "-I", str(PROBE_PY)],
+        [str(_venv_python(venv)), "-I", str(PROBE_PY)],
         check=False,
         capture_output=True,
         text=True,

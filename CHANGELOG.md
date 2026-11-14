@@ -2,30 +2,71 @@
 
 ## [Unreleased]
 
+Source changes below are **UNRELEASED**. Registry current remains **0.3.4**.
+The proposed **0.3.5** bump is deferred; source versions remain **0.3.4**.
+Nothing here authorizes a release. These notes do not claim platform acceptance,
+post-publication registry proof, or release readiness.
+
 ### Added
 
-- One-command native installation. `install.sh` (Linux/macOS) and
-  `install.ps1` (Windows) provision a private Python runtime with `uv`, install
-  the version-matched bridge, write `~/.luminary/bridge.json`, configure every
-  detected agent, and verify the bridge with a live handshake. The installer is
-  non-interactive, idempotent, and never modifies `PATH` or a shell profile.
-- `luminary-memory setup` exposes the same flow without the shell wrapper:
-  `--agents auto|all|opencode,pi,omp`, `--check`, `--upgrade`, `--uninstall`,
-  `--prune`, `--version`, `--no-config`, `--project`, `--dry-run`, `--json`.
-  It reads each agent's plugin pin and installs the matching bridge, so a
-  plugin and its bridge cannot drift apart.
-- `docs/install.md` documents the one-command installer, manual installation
-  for OpenCode, pi, and omp, verification, updates, and complete removal,
-  including how to keep or delete the memory store.
-- The bridge exposes `action:"version"` for installers and adapters. It opens
-  no database, workspace, or session, so a version probe cannot create a store.
-- Native adapters resolve the bridge interpreter from `LUMINARY_PYTHON`, then
-  `~/.luminary/bridge.json`, then the path embedded at install time. A failed
-  `core` load is reported once per turn instead of being silently skipped.
+- One-command managed native setup for OpenCode, pi, and omp through the
+  existing POSIX/PowerShell installers. Mutating setup provisions an isolated
+  uv-managed Python 3.12 bridge and version-matched native registrations,
+  user-wide by default; native npm packages alone do not provision Python.
+  Managed tooling stays under `~/.luminary/bin`, bridges under
+  `~/.luminary/venvs/<version>`, and existing model-cache settings are preserved.
+  Persistent PATH, shell profiles, API keys, saving settings, and memory ownership
+  are not changed.
+- `luminary-memory setup` exposes selected-agent setup, explicit upgrade,
+  read-only check/dry-run/list, per-agent removal, and separate pruning.
+  Schema-1 `~/.luminary/bridge.json` retains per-agent `python`, `version`,
+  and `mode`. The bridge's database-free `action:"version"` supports health
+  checks without opening a workspace, session, or memory store.
+- Updated tracked installation/integration guides, native package READMEs, and
+  website together, separating unreleased source behavior from published 0.3.4
+  and marking manual/copied installation as advanced alternatives.
 - Submitted the Hermes provider to the official plugin catalog
   (`plugin-catalog/luminary.yaml`, pinned at `8c8aec9`): the adapter directory
   is now loadable as a standalone plugin, declares a truthful
   `requires_hermes` floor and SPDX license, and ships its own disclosure README.
+
+### Fixed
+
+- Source setup validates actual bridge version/capabilities instead of treating
+  executable existence as health. Repeat mutating setup repairs/reuses the
+  selected release; check reports missing, broken, or drifted installations.
+- Native memory and inspector launch share local interpreter discovery:
+  explicit `LUMINARY_PYTHON`, selected agent's bridge record, embedded interpreter,
+  then PATH. Invalid explicit overrides fail visibly without silent fallback.
+- Explicit upgrade from 0.3.4 migrates matching native registration, not just the
+  bridge record. Owned copied adapters are cut over without duplicate loading;
+  modified/unrecognized copies are preserved with a conflict. Native install
+  failure does not silently select the copied alternative.
+- Check, dry-run, and detection-only list do not bootstrap tooling, runtimes,
+  packages, or models, or change config, records, or stores. Selected-agent
+  uninstall preserves other hosts and memories; pruning separately removes only
+  unreferenced managed environments.
+- `MemoryClient` forwards an explicitly supplied model-cache directory to its
+  embedding engine instead of silently using the default cache. Hermes installer
+  regression fixtures now use real platform venv layouts, including Windows.
+- The existing version procedure has a read-only `--check` gate. CI exercises
+  installed wheel and extracted npm artifacts across the supported OS matrix;
+  publication consumes the exact tested wheel. Source bumps no longer rewrite
+  historical released-baseline documentation.
+
+### Compatibility
+
+- Published 0.3.4 predates the managed `setup` command. Migration requires the
+  new installer with explicit upgrade to an available supported release; older
+  bridges lacking setup are rejected rather than silently copy-installed.
+- Native project registration supports pi `--local` and OpenCode project config.
+  omp's advertised `--scope` is ignored by its user-scoped npm/git/link CLI;
+  native omp project setup is refused before changes. Explicit copied-adapter
+  project installation remains available.
+- Healthy cached runtime operation does not require setup downloads, but offline
+  semantic operations still require the configured model in cache.
+- Hermes stays on its separate provider/catalog path, not the Node bridge venv.
+  Its catalog submission is not a claim of an upstream merge or deployment.
 
 ### Changed
 

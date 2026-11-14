@@ -152,7 +152,47 @@
       lead: "Install Luminary locally, write a first fact, recall it, and keep the store inspectable.",
       sections: [
         {
-          title: "Install",
+          title: "Native setup: source versus registry",
+          paragraphs: ["Registry current is 0.3.4. Managed native setup is UNRELEASED source; the proposed 0.3.5 bump is deferred and no next release has been staged. These instructions are not completed platform acceptance, registry-download proof, or release readiness. The published 0.3.4 wheel predates setup; its manual installation is an advanced alternative below.", "Install OpenCode, pi, or omp first. Luminary does not install or replace the host. The installed host must supply its supported runtime; no separate Node installation is needed when it already does so. The following are public installer entry points; main may differ from this unreleased checkout."],
+          tips: ["The full tracked installation guide is docs/install.md. A next registry release requires audit and separately authorized publication."]
+        },
+        {
+          title: "Recommended installer: Windows",
+          paragraphs: ["Run in PowerShell. The installer, not npm install or a native package install, provisions the uv-managed Python 3.12 bridge; no manual Python, pip, venv activation, or interpreter export is needed for managed setup."],
+          code: "irm https://raw.githubusercontent.com/alertxsto/luminary-memory/main/install.ps1 | iex"
+        },
+        {
+          title: "Recommended installer: Linux / macOS",
+          paragraphs: ["Run in a POSIX shell. Mutating setup validates bridge version/capabilities and registers one matching native adapter per selected host, user-wide by default. Native package installation alone never provisions Python; failed native installation does not silently fall back to a copied adapter."],
+          code: "curl -fsSL https://raw.githubusercontent.com/alertxsto/luminary-memory/main/install.sh | sh",
+          table: table("Native registration for available coordinated release X", ["Host", "Default registration"], [
+            ["pi", "pi install npm:luminary-memory-pi@X"],
+            ["omp", "omp plugin install luminary-memory-omp@X"],
+            ["OpenCode V2", "{\"plugins\":[\"luminary-memory-opencode@X\"]} in user config"]
+          ])
+        },
+        {
+          title: "Managed paths and interpreter selection",
+          paragraphs: ["Tooling lives under ~/.luminary/bin; isolated bridge environments under ~/.luminary/venvs/<version>. Schema-1 ~/.luminary/bridge.json records python, version, and mode per agent. Existing ~/.luminary/luminary.env controls the stable model cache (default ~/.luminary/models). Setup does not modify persistent PATH, shell profiles, discovered system/project Python environments, memory ownership, saving settings, or API keys.", "Memory tools and native inspector share local discovery: explicit LUMINARY_PYTHON > selected agent's bridge.json record > embedded interpreter > PATH. An invalid explicit interpreter fails visibly without fallback. Resolution and ordinary turns never install runtimes or packages."],
+          warnings: ["A healthy cached runtime can operate offline without setup downloads, but semantic operations still need the configured model in cache. An uncached model can require network access; cold offline setup is not promised."]
+        },
+        {
+          title: "Inspect, repeat, migrate, and remove",
+          paragraphs: ["Normal repeat setup repairs/reuses the selected compatible release; it does not implicitly upgrade existing pins. Check probes actual version/capability health without opening a memory DB. --check, --dry-run, and setup --list never provision uv, Python, packages, or models or change config, records, or stores.", "Migration from 0.3.4 requires the new installer with explicit --upgrade --version X for an available target, not the old bridge's absent setup command. Native registration must change along with the bridge record. Owned copied adapters are cut over without double loading; modified/unrecognized copies are preserved with a conflict.", "Selected-agent --uninstall --agents pi preserves other hosts and memories. Separate --prune removes only unreferenced managed environments; it does not delete the memory store or model cache."],
+          table: table("Local-wrapper options", ["POSIX", "PowerShell"], [
+            ["sh ./install.sh --agents pi --check", ".\\install.ps1 -Agents pi -Check"],
+            ["sh ./install.sh --agents pi --upgrade --version X", ".\\install.ps1 -Agents pi -Upgrade -Version X"],
+            ["sh ./install.sh --uninstall --agents pi", ".\\install.ps1 -Uninstall -Agents pi"],
+            ["sh ./install.sh --prune", ".\\install.ps1 -Prune"]
+          ]),
+          warnings: ["Use options with a downloaded local wrapper; do not append arguments to iex. X means an actual supported available release, not an already published next version."]
+        },
+        {
+          title: "Project scope and advanced alternatives",
+          paragraphs: ["Native project registration supports pi install --local (project trust required) and OpenCode project config with plural plugins. omp 18.20 help advertises --scope, but the upstream plugin-manager contract says npm/git/link CLI installation stays user-scoped and warns then ignores it. Source setup therefore refuses native omp --project before changes; explicit luminary-memory hook install omp remains a project-local copied alternative.", "For manual published 0.3.4, install Python 3.11+ and luminary-memory==0.3.4 yourself, set LUMINARY_PYTHON in the host/server environment, then register pi install npm:luminary-memory-pi@0.3.4, omp plugin install luminary-memory-omp@0.3.4, or OpenCode {\"plugins\":[\"luminary-memory-opencode@0.3.4\"]}. Keep bridge and native package versions matched.", "Explicit copied installation via luminary-memory hook install pi (or omp/opencode), adding --global for user-wide discovery, remains an advanced alternative. Never load native and copied forms together; keep unrelated extensions. Hermes stays on its separate provider/catalog path, not the Node bridge venv; no upstream catalog PR merge or deployment is claimed."]
+        },
+        {
+          title: "Advanced library installation",
           paragraphs: ["SQLite is the default backend. The core retrieval pipeline is local and does not require an LLM; optional LLM calls are limited to write-time curation and maintenance."],
           code: "python -m pip install luminary-memory\n# optional Hermes provider\npython -m pip install \"luminary-memory[hermes]\"",
           tips: ["Use Python 3.11+ for the supported development/runtime path.", "Keep the SQLite file under a backed-up application data directory, not inside a disposable working tree."],
@@ -923,7 +963,7 @@
           warnings: ["Planning/audit notes under docs/ are ignored by design. Do not treat them as the source-facing contract or stage them accidentally."]
         },
         {
-          title: "Current release snapshot",
+          title: "Current published release snapshot",
           paragraphs: ["Python and all three npm latest tags are 0.3.4. The npm tarballs are byte-identical to the tagged GitHub assets, and all their built resources match the PyPI wheel. GitHub Actions published through OIDC with signed npm provenance. This coordinated release replaces the mismatched npm 0.3.3 builds without overwriting them. Native inspection remains limited to the verified hosts."],
           table: table("Release checks", ["Surface", "Current contract"], [
             ["Version", "0.3.4 / Python 3.11+"],
@@ -935,6 +975,11 @@
             ["Native Hermes memory", "Disabled through documented config switches when Luminary is active"]
           ]),
           tips: ["Update CHANGELOG.md, the tracked Markdown guide, and the website guide together when a public contract changes."]
+        },
+        {
+          title: "Unreleased setup work",
+          paragraphs: ["Managed native setup and shared inspector interpreter discovery are source changes, not part of the published 0.3.4 wheel. The proposed 0.3.5 bump is deferred; no next release has been staged. The one-command surface is the installer, not npm installation. No completed platform acceptance, next-release registry-download proof, or release readiness is claimed."],
+          tips: ["Use the Quickstart installation sections and tracked docs/install.md for source-versus-registry boundaries, migration, read-only modes, project limitations, and memory-preserving removal."]
         },
         {
           title: "Recent release history",

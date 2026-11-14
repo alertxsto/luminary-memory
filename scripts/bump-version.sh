@@ -6,6 +6,51 @@
 # filesystems — python's write is atomic and portable).
 set -euo pipefail
 
+# One read-only release gate, shared by CI and publication.
+if [[ "${1:-}" == "--check" ]]; then
+  "${PYTHON:-python3}" - <<'PY'
+import ast
+import json
+import os
+from pathlib import Path
+import re
+import tomllib
+
+def text(path):
+    return Path(path).read_text(encoding="utf-8")
+
+version = tomllib.loads(text("pyproject.toml"))["project"]["version"]
+module = ast.parse(text("src/luminary_memory/__init__.py"))
+python_version = next(
+    ast.literal_eval(node.value) for node in module.body
+    if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__version__" for t in node.targets)
+)
+if python_version != version:
+    raise SystemExit("Python runtime version differs from project metadata")
+lock = json.loads(text("package-lock.json"))
+for agent in ("pi", "opencode", "omp"):
+    path = f"plugins/{agent}/package.json"
+    manifest = json.loads(text(path))
+    if manifest["name"] != f"luminary-memory-{agent}" or manifest["version"] != version:
+        raise SystemExit(f"{path}: package identity/version differs from Python {version}")
+    if lock["packages"][f"plugins/{agent}"]["version"] != version:
+        raise SystemExit(f"package-lock.json: {agent} version differs from Python {version}")
+for path, pattern in (
+    ("install.sh", r'VERSION="\$\{LUMINARY_VERSION:-([0-9.]+)\}"'),
+    ("install.ps1", r'\$Version = "([0-9.]+)"'),
+    ("src/luminary_memory/hermes/plugin.yaml", r'^version: ([0-9.]+)$'),
+):
+    matches = re.findall(pattern, text(path), re.M)
+    if matches != [version]:
+        raise SystemExit(f"{path}: version default differs from Python {version}")
+tag = os.environ.get("RELEASE_TAG")
+if tag and tag != f"v{version}":
+    raise SystemExit(f"Tag {tag!r} differs from source version v{version}")
+print(f"Source versions synchronized: {version} (no publication claimed)")
+PY
+  exit $?
+fi
+
 OLD="$(sed -n 's/^version = "\([0-9]\+\.[0-9]\+\.[0-9]\+\)"/\1/p' pyproject.toml | head -1)"
 NEW="${1:?usage: ./bump-version.sh X.Y.Z}"
 
@@ -80,7 +125,6 @@ edits = [
     ("src/luminary_memory/__init__.py", r'__version__ = "(\d+\.\d+\.\d+)"', f'__version__ = "{new}"'),
     ("src/luminary_memory/hermes/plugin.yaml", r'^version: (\d+\.\d+\.\d+)$', f"version: {new}"),
     ("website/index.html", r'v\d+\.\d+\.\d+ - Self-Hosted Memory Layer', f"v{new} - Self-Hosted Memory Layer"),
-    ("docs/ROADMAP.md", r'Current release:\*\* v\d+\.\d+\.\d+', f"Current release:** v{new}"),
     ("README.md", r'v\d+\.\d+\.\d+ → v1\.0\.0', f"v{new} → v1.0.0"),
     ("docs/ROADMAP.md", r'v\d+\.\d+\.\d+ → v1\.0\.0', f"v{new} → v1.0.0"),
     ("install.sh", r'VERSION="\$\{LUMINARY_VERSION:-(\d+\.\d+\.\d+)\}"', f'VERSION="${{LUMINARY_VERSION:-{new}}}"'),
@@ -98,7 +142,6 @@ for path, pat, repl in edits:
 
 # remaining version displays (v-prefixed) and pip floors
 for path, pat, repl in [
-    ("docs/index.md", r'Released baseline: `\d+\.\d+\.\d+`', f"Released baseline: `{new}`"),
     ("website/docs.html", r'<span>v\d+\.\d+\.\d+</span>', f"<span>v{new}</span>"),
     ("website/index.html", r'<span>v\d+\.\d+\.\d+</span>', f"<span>v{new}</span>"),
 ]:
