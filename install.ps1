@@ -137,6 +137,21 @@ if ($Check) {
 
 if ($DryRun) { Write-Log "would install: $($selected -join ' ')"; exit 0 }
 
+# The copy adapter and the npm plugin must not load together. Remove any
+# Luminary npm pin before installing the copy adapter.
+if ($selected -contains "opencode") {
+  $configBase = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $homeDir ".config" }
+  $config = Join-Path $configBase "opencode\opencode.jsonc"
+  if (Test-Path $config) {
+    $text = Get-Content -Raw $config
+    $updated = [regex]::Replace($text, '\s*"luminary-memory-opencode@[^"]*"\s*,?', '')
+    $updated = [regex]::Replace($updated, ',(\s*\])', '$1')
+    if ($updated -ne $text) {
+      [System.IO.File]::WriteAllText($config, $updated, (New-Object System.Text.UTF8Encoding($false)))
+    }
+  }
+}
+
 foreach ($agent in $selected) {
   if ($Verbose) { Write-Host "+ install $agent --global" }
   & $python -m luminary_memory.integrations install $agent --global

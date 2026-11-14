@@ -173,6 +173,23 @@ fi
 
 [ "$DRY_RUN" -eq 1 ] && { log "would install: $SELECTED"; exit 0; }
 
+# The copy adapter and the npm plugin must not load together. Remove any
+# Luminary npm pin before installing the copy adapter.
+if echo " $SELECTED " | grep -q " opencode "; then
+  "$PY" - <<'EOF'
+import os, re
+from pathlib import Path
+base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "opencode"
+path = base / "opencode.jsonc"
+if path.exists():
+    text = path.read_text(encoding="utf-8-sig")
+    updated = re.sub(r'\s*"luminary-memory-opencode@[^"]*"\s*,?', '', text)
+    updated = re.sub(r',(\s*\])', r'\1', updated)
+    if updated != text:
+        path.write_text(updated, encoding="utf-8")
+EOF
+fi
+
 for agent in $SELECTED; do
   run "$PY" -m luminary_memory.integrations install "$agent" --global
 done
