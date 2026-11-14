@@ -248,6 +248,7 @@ rm -rf ~/.luminary
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
+| `copy adapter (bridge predates setup)` | the installed bridge has no `setup` command | expected for a bridge older than the setup command; the installer used the copy adapter that embeds the interpreter |
 | `Luminary memory is unavailable` in a turn | bridge missing or version mismatch | run the installer, then restart the host |
 | `unsupported memory action` | plugin newer than the bridge | `luminary-memory setup --upgrade` |
 | `bridge_exit` in `--check` | interpreter cannot import the bridge | reinstall the bridge for that version |

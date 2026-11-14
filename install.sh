@@ -39,7 +39,6 @@ EOF
 log() { printf '\033[1;36m[luminary]\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m[luminary]\033[0m ERROR: %s\n' "$*" >&2; exit 1; }
 run() { [ "$VERBOSE" -eq 1 ] && printf '+ %s\n' "$*"; "$@"; }
-RAW="${LUMINARY_RAW:-https://raw.githubusercontent.com/alertxsto/luminary-memory}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -63,6 +62,23 @@ LUMINARY_HOME="$HOME/.luminary"
 BIN_DIR="$LUMINARY_HOME/bin"
 VENV="$LUMINARY_HOME/venvs/$VERSION"
 PY="$VENV/bin/python"
+
+select_agents() {
+  case "$AGENTS" in
+    all) echo "opencode pi omp" ;;
+    auto)
+      found=""
+      if [ -d "$HOME/.config/opencode" ]; then found="$found opencode"; fi
+      if [ -n "${LOCALAPPDATA:-}" ] && [ -d "$LOCALAPPDATA/Programs/ai.opencode.desktop" ]; then
+        found="$found opencode"
+      fi
+      if [ -d "$HOME/.pi" ]; then found="$found pi"; fi
+      if [ -d "$HOME/.omp" ]; then found="$found omp"; fi
+      echo "$found" | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' '
+      ;;
+    *) echo "$AGENTS" | tr ',' ' ' ;;
+  esac
+}
 
 # 1. A bridge interpreter. Status-only modes reuse an existing venv.
 if [ "$MODE" = "check" ] || [ "$MODE" = "uninstall" ]; then
@@ -93,7 +109,7 @@ if [ ! -x "$PY" ]; then
   run uv pip install --python "$PY" "luminary-memory==$VERSION"
 fi
 
-# 3. Everything that touches host config and the shared bridge record.
+# 3. Preferred path: the bridge ships the setup command.
 set -- --agents "$AGENTS" --version "$VERSION"
 [ "$NO_CONFIG" -eq 1 ] && set -- "$@" --no-config
 [ "$PROJECT" -eq 1 ] && set -- "$@" --project
@@ -110,24 +126,84 @@ if "$PY" -m luminary_memory.integrations setup --list >/dev/null 2>&1; then
   exit $?
 fi
 
-# A published bridge can predate the setup command. Fetch the compatibility
-# setup from the matching release tag, then main, and only trust a copy that
-# actually supports --list. A stale or truncated download must fail loudly
-# instead of silently doing nothing.
-SETUP="$LUMINARY_HOME/setup.py"
-fetch_setup() {
-  mkdir -p "$LUMINARY_HOME"
-  for ref in "v$VERSION" main; do
-    rm -f "$SETUP"
-    curl -fsSL "$RAW/$ref/src/luminary_memory/integrations/setup.py" -o "$SETUP" 2>/dev/null || continue
-    # A silent no-op also exits 0, so require real detection output.
-    if [ -n "$("$PY" "$SETUP" --list 2>/dev/null)" ]; then
-      return 0
-    fi
-  done
-  rm -f "$SETUP"
-  return 1
-}
-log "bridge predates setup; fetching compatibility setup"
-fetch_setup || fail "cannot obtain a compatible setup for bridge $VERSION; install a release that ships the setup command"
-run "$PY" "$SETUP" "$@"
+# ------------------------------------------------------------------------
+# Compatibility path for a published bridge that predates `setup`.
+#
+# It uses only commands and actions the older bridge already has:
+#   - `luminary-memory.integrations install <agent> --global` writes a copy
+#     adapter that embeds this interpreter, so no env var is required;
+#   - the `core` action proves the bridge can read its store.
+# Nothing is downloaded, so a stale remote copy cannot masquerade as success.
+# ------------------------------------------------------------------------
+SELECTED=$(select_agents)
+[ -n "$SELECTED" ] || fail "no supported agent detected; use --agents opencode,pi,omp or --all"
+
+if [ "$MODE" = "uninstall" ]; then
+  rm -rf "$HOME/.config/opencode/plugins/luminary-memory"
+  rm -rf "$HOME/.pi/agent/extensions/luminary-memory"
+  rm -rf "$HOME/.omp/agent/extensions/luminary-memory"
+  rm -f "$LUMINARY_HOME/bridge.json"
+  log "removed Luminary adapters and bridge record"
+  exit 0
+fi
+
+if [ "$MODE" = "check" ]; then
+  "$PY" - <<'EOF'
+import json, sys
+from pathlib import Path
+path = Path.home() / ".luminary" / "bridge.json"
+if not path.exists():
+    print("no bridge record; run the installer first")
+    raise SystemExit(1)
+data = json.loads(path.read_text(encoding="utf-8"))
+agents = data.get("agents") or {}
+if not agents:
+    print("no agent recorded; run the installer first")
+    raise SystemExit(1)
+ok = True
+for agent, entry in agents.items():
+    python = Path(entry.get("python", ""))
+    alive = python.is_file()
+    ok = ok and alive
+    print(f"{agent:<9} {'ok' if alive else 'missing':<9} bridge={entry.get('version', '-')}  python={python}")
+raise SystemExit(0 if ok else 1)
+EOF
+  exit $?
+fi
+
+[ "$DRY_RUN" -eq 1 ] && { log "would install: $SELECTED"; exit 0; }
+
+for agent in $SELECTED; do
+  run "$PY" -m luminary_memory.integrations install "$agent" --global
+done
+
+"$PY" - "$PY" "$VERSION" "$SELECTED" <<'EOF'
+import json, os, subprocess, sys
+from pathlib import Path
+
+python, version, selected = sys.argv[1], sys.argv[2], sys.argv[3].split()
+home = Path.home() / ".luminary"
+home.mkdir(parents=True, exist_ok=True)
+data = {"schema": 1, "agents": {
+    agent: {"python": python, "version": version, "mode": "copy"}
+    for agent in selected
+}}
+(home / "bridge.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+failed = False
+for agent in selected:
+    request = {"agent": agent, "workspace": os.getcwd(), "session_id": "setup-check", "action": "core"}
+    result = subprocess.run(
+        [python, "-m", "luminary_memory.integrations", "bridge"],
+        input=json.dumps(request).encode(), capture_output=True,
+    )
+    try:
+        reply = json.loads(result.stdout.decode())
+    except Exception:
+        reply = {"ok": False, "message": result.stderr.decode()[:200]}
+    ok = reply.get("ok") is True
+    failed = failed or not ok
+    detail = "" if ok else f"  {(reply.get('message') or reply.get('reason') or '')}"
+    print(f"{agent:<9} {'ok' if ok else 'error':<9} bridge={version}{detail}")
+raise SystemExit(1 if failed else 0)
+EOF

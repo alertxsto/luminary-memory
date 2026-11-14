@@ -12,7 +12,8 @@ export function resolveBridgePython(agent: string, installed: string): string {
   const explicit = process.env.LUMINARY_PYTHON
   if (explicit) return explicit
   try {
-    const record = JSON.parse(readFileSync(join(homedir(), ".luminary", "bridge.json"), "utf8"))
+    const raw = readFileSync(join(homedir(), ".luminary", "bridge.json"), "utf8").replace(/^\uFEFF/, "")
+    const record = JSON.parse(raw)
     const entry = record?.agents?.[agent]
     if (entry && typeof entry.python === "string" && entry.python.trim()) return entry.python
   } catch {

@@ -44,6 +44,11 @@ This replaces the mismatched npm `0.3.3` builds without overwriting them.
 
 ### Fixed
 
+- The one-command installer now works with a published bridge that predates
+  `setup`. It probes for the command, falls back to the bridge's stable
+  copy-adapter install, and verifies with the `core` action instead of failing
+  on a missing `version` handshake. `~/.luminary/bridge.json` is written
+  without a BOM, and the adapter resolver tolerates one.
 - Isolate the inspector's default-store test from the operator's home on
   Windows by setting `USERPROFILE` as well as `HOME`.
 - Native core memory is now a separate, query-independent DB-backed baseline

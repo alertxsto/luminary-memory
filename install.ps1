@@ -32,6 +32,17 @@ $binDir = Join-Path $homeDir ".luminary\bin"
 $venv = Join-Path $homeDir ".luminary\venvs\$Version"
 $python = Join-Path $venv "Scripts\python.exe"
 
+function Select-Agents {
+  if ($Agents -eq "all") { return @("opencode", "pi", "omp") }
+  if ($Agents -ne "auto") { return $Agents.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ } }
+  $found = @()
+  if (Test-Path (Join-Path $homeDir ".config\opencode")) { $found += "opencode" }
+  if ($env:LOCALAPPDATA -and (Test-Path (Join-Path $env:LOCALAPPDATA "Programs\ai.opencode.desktop"))) { $found += "opencode" }
+  if (Test-Path (Join-Path $homeDir ".pi")) { $found += "pi" }
+  if (Test-Path (Join-Path $homeDir ".omp")) { $found += "omp" }
+  return $found | Select-Object -Unique
+}
+
 # 1. A bridge interpreter. Status-only modes reuse an existing venv.
 if (($Check -or $Uninstall) -and -not (Test-Path $python)) {
   $candidate = Get-ChildItem (Join-Path $homeDir ".luminary\venvs\*\Scripts\python.exe") -ErrorAction SilentlyContinue |
@@ -66,7 +77,7 @@ if (-not (Test-Path $python)) {
   if ($LASTEXITCODE -ne 0) { throw "uv pip install failed" }
 }
 
-# 3. Everything that touches host config and the shared bridge record.
+# 3. Preferred path: the bridge ships the setup command.
 $arguments = @("--agents", $Agents, "--version", $Version)
 if ($NoConfig) { $arguments += "--no-config" }
 if ($Project) { $arguments += "--project" }
@@ -76,11 +87,6 @@ if ($Check) { $arguments += "--check" }
 if ($Upgrade) { $arguments += "--upgrade" }
 if ($Uninstall) { $arguments += "--uninstall" }
 
-if ($Verbose) { Write-Host "+ $python -m luminary_memory.integrations setup $($arguments -join ' ')" }
-$raw = if ($env:LUMINARY_RAW) { $env:LUMINARY_RAW } else { "https://raw.githubusercontent.com/alertxsto/luminary-memory" }
-
-# Probe for the setup command. A published bridge can predate it; native
-# stderr must not abort the installer under ErrorActionPreference=Stop.
 $previous = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 & $python -m luminary_memory.integrations setup --list *> $null
@@ -90,22 +96,72 @@ if ($hasSetup) {
   & $python -m luminary_memory.integrations setup @arguments
   exit $LASTEXITCODE
 }
-# Run the compatibility setup from the matching release tag, then main, and
-# only trust a copy that actually supports --list.
-$setup = Join-Path $homeDir ".luminary\setup.py"
-Write-Log "bridge predates setup; fetching compatibility setup"
-$fetched = $false
-foreach ($ref in @("v$Version", "main")) {
-  try {
-    Invoke-WebRequest -UseBasicParsing "$raw/$ref/src/luminary_memory/integrations/setup.py" -OutFile $setup
-  } catch { continue }
-  $previous = $ErrorActionPreference
-  $ErrorActionPreference = "Continue"
-  $probe = & $python $setup --list 2>$null
-  $ok = $LASTEXITCODE -eq 0 -and $probe
-  $ErrorActionPreference = $previous
-  if ($ok) { $fetched = $true; break }
+
+# ------------------------------------------------------------------------
+# Compatibility path for a published bridge that predates `setup`.
+#
+# It uses only commands and actions the older bridge already has:
+#   - `luminary_memory.integrations install <agent> --global` writes a copy
+#     adapter that embeds this interpreter, so no env var is required;
+#   - the `core` action proves the bridge can read its store.
+# Nothing is downloaded, so a stale remote copy cannot masquerade as success.
+# ------------------------------------------------------------------------
+$selected = @(Select-Agents | Where-Object { $_ })
+if (-not $selected) {
+  throw "No supported agent detected; use -Agents opencode,pi,omp or -All."
 }
-if (-not $fetched) { throw "cannot obtain a compatible setup for bridge $Version; install a release that ships the setup command" }
-& $python $setup @arguments
-exit $LASTEXITCODE
+
+if ($Uninstall) {
+  Remove-Item -Recurse -Force (Join-Path $homeDir ".config\opencode\plugins\luminary-memory") -ErrorAction SilentlyContinue
+  Remove-Item -Recurse -Force (Join-Path $homeDir ".pi\agent\extensions\luminary-memory") -ErrorAction SilentlyContinue
+  Remove-Item -Recurse -Force (Join-Path $homeDir ".omp\agent\extensions\luminary-memory") -ErrorAction SilentlyContinue
+  Remove-Item -Force (Join-Path $homeDir ".luminary\bridge.json") -ErrorAction SilentlyContinue
+  Write-Log "removed Luminary adapters and bridge record"
+  exit 0
+}
+
+if ($Check) {
+  $bridge = Join-Path $homeDir ".luminary\bridge.json"
+  if (-not (Test-Path $bridge)) { Write-Host "no bridge record; run the installer first"; exit 1 }
+  $data = Get-Content -Raw $bridge | ConvertFrom-Json
+  $ok = $true
+  foreach ($entry in $data.agents.PSObject.Properties) {
+    $alive = Test-Path $entry.Value.python
+    if (-not $alive) { $ok = $false }
+    $state = if ($alive) { "ok" } else { "missing" }
+    Write-Host ("{0,-9} {1,-9} bridge={2}  python={3}" -f $entry.Name, $state, $entry.Value.version, $entry.Value.python)
+  }
+  if (-not $ok) { exit 1 }
+  exit 0
+}
+
+if ($DryRun) { Write-Log "would install: $($selected -join ' ')"; exit 0 }
+
+foreach ($agent in $selected) {
+  if ($Verbose) { Write-Host "+ install $agent --global" }
+  & $python -m luminary_memory.integrations install $agent --global
+  if ($LASTEXITCODE -ne 0) { throw "installing the $agent adapter failed" }
+}
+
+$record = @{ schema = 1; agents = @{} }
+foreach ($agent in $selected) {
+  $record.agents[$agent] = @{ python = $python; version = $Version; mode = "copy" }
+}
+$path = Join-Path $homeDir ".luminary\bridge.json"
+New-Item -ItemType Directory -Force -Path (Split-Path $path) | Out-Null
+$json = $record | ConvertTo-Json -Depth 5
+[System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding($false)))
+
+$failed = $false
+foreach ($agent in $selected) {
+  $request = @{ agent = $agent; workspace = (Get-Location).Path; session_id = "setup-check"; action = "core" } | ConvertTo-Json -Compress
+  $reply = $request | & $python -m luminary_memory.integrations bridge 2>$null
+  try { $parsed = $reply | ConvertFrom-Json } catch { $parsed = $null }
+  $ok = $parsed -and $parsed.ok -eq $true
+  if (-not $ok) { $failed = $true }
+  $state = if ($ok) { "ok" } else { "error" }
+  $detail = if ($ok) { "" } elseif ($parsed.message) { "  " + $parsed.message } elseif ($parsed.reason) { "  " + $parsed.reason } else { "  bridge error" }
+  Write-Host ("{0,-9} {1,-9} bridge={2}{3}" -f $agent, $state, $Version, $detail)
+}
+if ($failed) { exit 1 }
+exit 0

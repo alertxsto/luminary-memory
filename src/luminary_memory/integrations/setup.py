@@ -199,7 +199,7 @@ def _read_bridge(home: Path) -> dict:
     path = _bridge_file(home)
     if not path.exists():
         return {"schema": BRIDGE_SCHEMA, "agents": {}}
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(data, dict) or not isinstance(data.get("agents"), dict):
         raise ValueError(f"{path} is not a Luminary bridge record")
     return data
