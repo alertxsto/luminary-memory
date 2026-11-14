@@ -18,7 +18,8 @@
     ]
   },
   "scripts": {
-    "prepack": "node ../../scripts/build-plugins.mjs"
+    "prepack": "node ../../scripts/build-plugins.mjs",
+    "postinstall": "node ./dist/bootstrap.js"
   },
   "engines": {
     "node": ">=22.19.0"

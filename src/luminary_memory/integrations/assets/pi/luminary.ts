@@ -6,7 +6,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerPiInspector } from "./inspector.js";
 import { bridgeEnvironment, nativeUserSource, type RememberSource } from "../common/bridge-source.js";
-import { resolveBridgePython } from "../common/bridge-launch.js";
+import { ensureBridgePython, resolveBridgePython } from "../common/bridge-launch.js";
 
 type Action = "core" | "recall" | "remember" | "forget" | "activity" | "turn";
 type Arguments = { query?: string; text?: string; evidence_quote?: string; tags?: string[]; memory_id?: number; user?: string; assistant?: string };
@@ -26,10 +26,10 @@ function failure(message: string): Reply {
 }
 
 /** No shell, bounded input/output, and no transcript writes in this extension. */
-function bridge(ctx: ExtensionContext, action: Action, args: Arguments, signal?: AbortSignal, source?: RememberSource): Promise<Reply> {
-  if (signal?.aborted) return Promise.resolve(failure("Luminary request cancelled"));
+async function bridge(ctx: ExtensionContext, action: Action, args: Arguments, signal?: AbortSignal, source?: RememberSource, healed = false): Promise<Reply> {
+  if (signal?.aborted) return failure("Luminary request cancelled");
   const request = JSON.stringify({ ...args, action, agent: "pi", workspace: resolve(ctx.cwd), session_id: ctx.sessionManager.getSessionId() });
-  if (Buffer.byteLength(request, "utf8") > MAX_OUTPUT) return Promise.resolve(failure("Luminary request exceeds 256 KiB"));
+  if (Buffer.byteLength(request, "utf8") > MAX_OUTPUT) return failure("Luminary request exceeds 256 KiB");
   const { promise, resolve: resolveReply } = Promise.withResolvers<Reply>();
   let settled = false;
   let bytes = 0;
@@ -63,8 +63,29 @@ function bridge(ctx: ExtensionContext, action: Action, args: Arguments, signal?:
   });
   child.on("close", (code) => {
     if (settled) return;
+    const raw = Buffer.concat(stdout).toString("utf8");
+    // An interpreter that cannot import the bridge exits non-zero with no stdout.
+    // Repair the managed bridge once, then retry this request rather than making
+    // the user restart pi after an install that skipped lifecycle scripts.
+    if (!raw.trim() && !healed) {
+      void ensureBridgePython("pi", "__LUMINARY_PYTHON__", (message) => {
+        if (ctx.hasUI) ctx.ui.setStatus("luminary", message);
+      }).then((bridgeReady) => {
+        if (settled) return;
+        if (!bridgeReady.ready) {
+          finish(failure(`Luminary bridge is unavailable: ${bridgeReady.detail ?? `exit ${code} from ${python}`}`));
+          return;
+        }
+        void bridge(ctx, action, args, signal, source, true).then(finish);
+      });
+      return;
+    }
+    if (!raw.trim()) {
+      finish(failure(`Luminary bridge produced no response (exit ${code}) from ${python}. Run \`luminary-memory setup --agents pi\` or set LUMINARY_PYTHON, then restart pi.`));
+      return;
+    }
     try {
-      const value = JSON.parse(Buffer.concat(stdout).toString("utf8"));
+      const value = JSON.parse(raw);
       if (!value || typeof value.ok !== "boolean" || typeof value.status !== "string") throw new Error("invalid response shape");
       if (code !== 0 && value.ok) throw new Error(`bridge exited with code ${code}`);
       finish({

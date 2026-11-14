@@ -7,30 +7,35 @@ second memory engine. Its native extension contract targets
 Building this repository uses Node.js 22.22.2+ in the 22.x LTS line (or the other
 versions accepted by the root manifest).
 
-## Recommended installer (unreleased source)
+## Install
 
-**Registry current: 0.3.4. Managed native setup: UNRELEASED.** The next release
-version bump is deferred; 0.3.5 has not been staged. These source
-instructions are not platform acceptance, registry proof, or release readiness.
-Install pi first. Public entry points (`main` may differ from this checkout):
-
-Windows (PowerShell):
-
-```powershell
-irm https://raw.githubusercontent.com/alertxsto/luminary-memory/main/install.ps1 | iex
-```
-
-Linux / macOS:
+**Registry current: 0.3.4. Self-provisioning install: UNRELEASED source.** The
+published 0.3.4 package ships only the adapter, so it still needs the manual
+Python step below. From source, installation is one command:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/alertxsto/luminary-memory/main/install.sh | sh
+pi install npm:luminary-memory-pi@<available-release>
 ```
 
-The installer provisions a uv-managed Python 3.12 bridge and uses native
-`pi install npm:luminary-memory-pi@X` user-wide by default, with a matching
-available release `X`. Native package installation alone never provisions
-Python. See the [full install guide](https://github.com/alertxsto/luminary-memory/blob/main/docs/install.md)
-for selected-agent options and the unreleased/public-artifact boundary.
+The package provisions the matching Python bridge itself: it reuses an explicit
+`LUMINARY_PYTHON`, an existing `~/.luminary/bridge.json` record, or creates a
+version-pinned venv under `~/.luminary/venvs/<version>`. It uses `uv` when one is
+available (set `LUMINARY_UV` to point at it), a local Python 3.11+ otherwise, and
+on a host with neither it downloads a standalone `uv` into `~/.luminary/bin` and
+lets that install its own CPython. Progress and failures print on stderr; a
+failed provision never removes the installed package.
+
+npm 12 blocks dependency install scripts by default and a package cannot approve
+itself, so the `postinstall` hook is only a fast path on older npm. The primary
+path is the first pi session: the extension runs the same provisioning script
+once, reports progress in the status line, and warns when no interpreter can
+provide the engine. Set `LUMINARY_SKIP_BOOTSTRAP=1` to opt out of that runtime
+path, or `LUMINARY_NO_DOWNLOAD=1` to forbid fetching `uv`. An invalid explicit
+`LUMINARY_PYTHON` is reported rather than silently replaced.
+
+Expect the first session on a bare host to take a few minutes: it fetches `uv`,
+a CPython, and roughly 250 MB of wheels. Later sessions reuse the venv and start
+immediately.
 
 ## Advanced: manual published 0.3.4 installation
 
@@ -71,7 +76,8 @@ Current source uses the same discovery for memory and inspector:
 **explicit `LUMINARY_PYTHON` > schema-1 `~/.luminary/bridge.json` pi record
 > embedded interpreter > PATH**. An invalid explicit interpreter fails visibly
 without fallback. Native package installation embeds no machine-specific Python
-path, and discovery/ordinary turns never install Python or dependencies.
+path. Discovery never installs anything; the first session provisions the bridge
+once, and ordinary turns reuse it.
 Managed tooling lives under `~/.luminary/bin`, versioned bridges under
 `~/.luminary/venvs/<version>`, and the existing model cache under
 `~/.luminary/models` via `~/.luminary/luminary.env`.
@@ -116,9 +122,13 @@ there is a package-detail route. A registry install does not prove indexing.
 /luminary forget 12
 ```
 
-Use an actual returned memory ID for `forget`. The bare command opens native UI
-dialogs when available; headless callers must supply the action. The model tool
-is `luminary_memory`. Commands emit structured `luminary_activity` messages
+Use an actual returned memory ID for `forget`. The bare command opens the
+inspector: a Zentui-style framed surface with numbered sections, an accent rail
+on the selected row, a compact key-help line, and live status. It renders only
+that overlay; it never replaces pi's editor, transcript, or footer. `compact`
+keeps the inline activity widget, and `close` dismisses the panel. Headless and
+RPC sessions receive structured state instead of drawing. The model tool is
+`luminary_memory`. Commands emit structured `luminary_activity` messages
 without starting a model turn; UI status/dialogs require pi's native UI.
 
 Recall runs before normal user turns and treats retrieved content as untrusted

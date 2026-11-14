@@ -83,6 +83,10 @@ for (const { agent, directory, source } of packages) {
       index: source,
       rpc: join(dirname(source), "rpc.ts"),
       tui: join(dirname(source), "tui.tsx"),
+    } : agent === "pi" ? {
+      index: source,
+      // Runs as the package postinstall so one command provisions the bridge.
+      bootstrap: join(root, "src", "luminary_memory", "integrations", "assets", "common", "bootstrap.ts"),
     } : { index: source },
     outdir: destination,
     bundle: true,
@@ -107,7 +111,10 @@ for (const { agent, directory, source } of packages) {
   }
   const resources = join(root, "src", "luminary_memory", "integrations", "assets", "compiled", agent);
   await mkdir(resources, { recursive: true });
-  for (const name of agent === "opencode" ? ["index.js", "rpc.js", "tui.js", "gui-experimental.cjs"] : ["index.js"]) {
+  const artifacts = agent === "opencode"
+    ? ["index.js", "rpc.js", "tui.js", "gui-experimental.cjs"]
+    : agent === "pi" ? ["index.js", "bootstrap.js"] : ["index.js"];
+  for (const name of artifacts) {
     await copyFile(join(destination, name), join(resources, name));
   }
   await copyFile(join(root, "LICENSE"), join(directory, "LICENSE"));
