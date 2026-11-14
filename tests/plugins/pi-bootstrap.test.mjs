@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -141,5 +141,63 @@ test("runtime provisioning reports an unusable interpreter instead of guessing",
     else process.env.LUMINARY_PYTHON = previous.explicit;
     await rm(home, { recursive: true, force: true });
     await cleanup();
+  }
+});
+
+// A missing interpreter fails at spawn, not at close. The adapter must repair the
+// bridge from that path too, or a plain `pi install` stays broken until restart.
+test("a missing interpreter triggers provisioning instead of a dead adapter", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "luminary-adapter-"));
+  const home = await mkdtemp(join(tmpdir(), "luminary-adapter-home-"));
+  const previous = {
+    home: process.env.HOME, path: process.env.PATH,
+    explicit: process.env.LUMINARY_PYTHON, download: process.env.LUMINARY_NO_DOWNLOAD,
+  };
+  try {
+    await symlink(join(root, "node_modules"), join(directory, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+    // Mirror the published layout: dist/index.js beside dist/bootstrap.js, with
+    // the package manifest one level up, because the provisioner reads its version.
+    const dist = join(directory, "dist");
+    await mkdir(dist, { recursive: true });
+    await writeFile(join(directory, "package.json"), JSON.stringify({ name: "luminary-memory-pi", version: "0.3.4" }));
+    await copyFile(bootstrap, join(dist, "bootstrap.js"));
+    const entry = join(dist, "adapter.mjs");
+    await build({
+      entryPoints: [join(root, "src/luminary_memory/integrations/assets/pi/luminary.ts")],
+      outfile: entry, bundle: true, platform: "node", format: "esm", target: "node22",
+      plugins: [{ name: "native-boundaries", setup(builder) {
+        builder.onResolve({ filter: /^@(earendil-works|oh-my-pi)\/pi-tui$/ }, () => ({ path: "drawing", namespace: "boundary" }));
+        builder.onLoad({ filter: /.*/, namespace: "boundary" }, () => ({ contents:
+          "export function matchesKey(){return false} export function truncateToWidth(t,w){return String(t).slice(0,w)} export function visibleWidth(t){return String(t).length}" }));
+      }}],
+    });
+    const { default: plugin } = await import(pathToFileURL(entry).href);
+    let tool;
+    plugin({ on() {}, registerCommand() {}, registerTool(definition) { tool = definition; }, sendMessage() {} });
+
+    process.env.HOME = home;
+    process.env.PATH = "";
+    delete process.env.LUMINARY_PYTHON;
+    process.env.LUMINARY_NO_DOWNLOAD = "1";
+    const statuses = [];
+    const ctx = {
+      mode: "rpc", hasUI: true, cwd: directory,
+      ui: { setStatus: (_key, value) => statuses.push(value), notify() {}, setWidget() {} },
+      sessionManager: { getSessionId: () => "adapter-session" },
+    };
+    const result = await tool.execute("call", { action: "recall", query: "anything" }, undefined, undefined, ctx);
+
+    assert.equal(result.isError, true);
+    // Only the provisioning script emits this, so the spawn failure reached repair.
+    assert.match(result.content[0].text, /LUMINARY_NO_DOWNLOAD=1 forbids fetching one/);
+    assert.ok(statuses.some((value) => /preparing the Python bridge/.test(value)),
+      "the operator must see that provisioning started");
+  } finally {
+    if (previous.home === undefined) delete process.env.HOME; else process.env.HOME = previous.home;
+    if (previous.path === undefined) delete process.env.PATH; else process.env.PATH = previous.path;
+    if (previous.explicit === undefined) delete process.env.LUMINARY_PYTHON; else process.env.LUMINARY_PYTHON = previous.explicit;
+    if (previous.download === undefined) delete process.env.LUMINARY_NO_DOWNLOAD; else process.env.LUMINARY_NO_DOWNLOAD = previous.download;
+    await rm(directory, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
   }
 });

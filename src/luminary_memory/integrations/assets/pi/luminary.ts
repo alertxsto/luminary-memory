@@ -50,8 +50,32 @@ async function bridge(ctx: ExtensionContext, action: Action, args: Arguments, si
   const timer = setTimeout(() => stop("Luminary bridge timed out after 60 seconds"), TIMEOUT_MS);
   signal?.addEventListener("abort", cancel, { once: true });
   if (signal?.aborted) cancel();
-  child.on("error", (error) => finish(failure(`Cannot start Luminary bridge: ${error.message}`)));
-  child.stdin.on("error", (error) => stop(`Cannot write Luminary request: ${error.message}`));
+  // An interpreter that cannot import the bridge exits non-zero with no stdout,
+  // and a missing one fails at spawn. Repair the managed bridge once, then retry
+  // this request rather than making the user restart pi after an install that
+  // skipped lifecycle scripts. Provisioning can take minutes, so the request
+  // timer must not fire while it runs.
+  let healing = false;
+  const heal = (code: number | null) => {
+    clearTimeout(timer);
+    void ensureBridgePython("pi", "__LUMINARY_PYTHON__", (message) => {
+      if (ctx.hasUI) ctx.ui.setStatus("luminary", message);
+    }).then((bridgeReady) => {
+      if (settled) return;
+      if (!bridgeReady.ready) {
+        finish(failure(`Luminary bridge is unavailable: ${bridgeReady.detail ?? `exit ${code} from ${python}`}`));
+        return;
+      }
+      void bridge(ctx, action, args, signal, source, true).then(finish);
+    }, (error: unknown) => finish(failure(`Luminary bridge is unavailable: ${String(error).slice(0, 300)}`)));
+  };
+  const fail = (message: string, code: number | null) => {
+    if (settled || healing) return;
+    if (!healed) { healing = true; heal(code); return; }
+    finish(failure(message));
+  };
+  child.on("error", (error) => fail(`Cannot start Luminary bridge: ${error.message}`, null));
+  child.stdin.on("error", (error) => fail(`Cannot write Luminary request: ${error.message}`, null));
   child.stdout.on("data", (chunk: Buffer) => {
     bytes += chunk.length;
     if (bytes > MAX_OUTPUT) return stop("Luminary bridge output exceeds 256 KiB");
@@ -64,24 +88,8 @@ async function bridge(ctx: ExtensionContext, action: Action, args: Arguments, si
   child.on("close", (code) => {
     if (settled) return;
     const raw = Buffer.concat(stdout).toString("utf8");
-    // An interpreter that cannot import the bridge exits non-zero with no stdout.
-    // Repair the managed bridge once, then retry this request rather than making
-    // the user restart pi after an install that skipped lifecycle scripts.
-    if (!raw.trim() && !healed) {
-      void ensureBridgePython("pi", "__LUMINARY_PYTHON__", (message) => {
-        if (ctx.hasUI) ctx.ui.setStatus("luminary", message);
-      }).then((bridgeReady) => {
-        if (settled) return;
-        if (!bridgeReady.ready) {
-          finish(failure(`Luminary bridge is unavailable: ${bridgeReady.detail ?? `exit ${code} from ${python}`}`));
-          return;
-        }
-        void bridge(ctx, action, args, signal, source, true).then(finish);
-      });
-      return;
-    }
     if (!raw.trim()) {
-      finish(failure(`Luminary bridge produced no response (exit ${code}) from ${python}. Run \`luminary-memory setup --agents pi\` or set LUMINARY_PYTHON, then restart pi.`));
+      fail(`Luminary bridge produced no response (exit ${code}) from ${python}. Run \`luminary-memory setup --agents pi\` or set LUMINARY_PYTHON, then restart pi.`, code);
       return;
     }
     try {
