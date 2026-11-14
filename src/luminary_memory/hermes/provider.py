@@ -24,10 +24,11 @@ from agent.memory_provider import MemoryProvider  # present only in hermes runti
 
 from luminary_memory.api import MemoryClient
 from luminary_memory.config import Settings
-from .activity import operation_snapshot
-from .config import _DEFAULTS, load_config, save_config
 from luminary_memory.recall.filters import is_noise_memory
 from luminary_memory.scope import memory_matches_scope
+
+from .activity import operation_snapshot
+from .config import _DEFAULTS, load_config, save_config
 
 _LUMINARY_GLYPH = "🌙"
 

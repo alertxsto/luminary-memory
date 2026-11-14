@@ -79,10 +79,11 @@ def _service(session_ref: str, *, initialize: bool = False) -> Iterator[tuple]:
     from hermes_cli.install_identity import get_install_id
 
     from luminary_memory.api import MemoryClient
-    from .config import load_config
-    from .provider import LuminaryMemoryProvider
     from luminary_memory.inspector.identity import resolve_context
     from luminary_memory.inspector.service import InspectorService
+
+    from .config import load_config
+    from .provider import LuminaryMemoryProvider
 
     native = native_session_context(session_ref)
     home = native["profile_id"]
