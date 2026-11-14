@@ -26,10 +26,11 @@ lets that install its own CPython. Progress and failures print on stderr; a
 failed provision never removes the installed package.
 
 npm 12 blocks dependency install scripts by default and a package cannot approve
-itself, so the `postinstall` hook is only a fast path on older npm. The primary
-path is the first pi session: the extension runs the same provisioning script
-once, reports progress in the status line, and warns when no interpreter can
-provide the engine. Set `LUMINARY_SKIP_BOOTSTRAP=1` to opt out of that runtime
+itself, so the `postinstall` hook is only a fast path on older npm. If npm prints
+`install scripts blocked` for this package, that is expected and needs no action:
+the bridge is provisioned on first use instead. The primary path is the first pi
+session: the extension runs the same provisioning script once, reports progress
+in the status line, and warns when no interpreter can provide the engine. Set `LUMINARY_SKIP_BOOTSTRAP=1` to opt out of that runtime
 path, or `LUMINARY_NO_DOWNLOAD=1` to forbid fetching `uv`. An invalid explicit
 `LUMINARY_PYTHON` is reported rather than silently replaced.
 
