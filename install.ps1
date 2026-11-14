@@ -77,5 +77,35 @@ if ($Upgrade) { $arguments += "--upgrade" }
 if ($Uninstall) { $arguments += "--uninstall" }
 
 if ($Verbose) { Write-Host "+ $python -m luminary_memory.integrations setup $($arguments -join ' ')" }
-& $python -m luminary_memory.integrations setup @arguments
+$raw = if ($env:LUMINARY_RAW) { $env:LUMINARY_RAW } else { "https://raw.githubusercontent.com/alertxsto/luminary-memory" }
+
+# Probe for the setup command. A published bridge can predate it; native
+# stderr must not abort the installer under ErrorActionPreference=Stop.
+$previous = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $python -m luminary_memory.integrations setup --list *> $null
+$hasSetup = $LASTEXITCODE -eq 0
+$ErrorActionPreference = $previous
+if ($hasSetup) {
+  & $python -m luminary_memory.integrations setup @arguments
+  exit $LASTEXITCODE
+}
+# Run the compatibility setup from the matching release tag, then main, and
+# only trust a copy that actually supports --list.
+$setup = Join-Path $homeDir ".luminary\setup.py"
+Write-Log "bridge predates setup; fetching compatibility setup"
+$fetched = $false
+foreach ($ref in @("v$Version", "main")) {
+  try {
+    Invoke-WebRequest -UseBasicParsing "$raw/$ref/src/luminary_memory/integrations/setup.py" -OutFile $setup
+  } catch { continue }
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  $probe = & $python $setup --list 2>$null
+  $ok = $LASTEXITCODE -eq 0 -and $probe
+  $ErrorActionPreference = $previous
+  if ($ok) { $fetched = $true; break }
+}
+if (-not $fetched) { throw "cannot obtain a compatible setup for bridge $Version; install a release that ships the setup command" }
+& $python $setup @arguments
 exit $LASTEXITCODE

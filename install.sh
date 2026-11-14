@@ -39,6 +39,7 @@ EOF
 log() { printf '\033[1;36m[luminary]\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m[luminary]\033[0m ERROR: %s\n' "$*" >&2; exit 1; }
 run() { [ "$VERBOSE" -eq 1 ] && printf '+ %s\n' "$*"; "$@"; }
+RAW="${LUMINARY_RAW:-https://raw.githubusercontent.com/alertxsto/luminary-memory}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -104,4 +105,29 @@ case "$MODE" in
   uninstall) set -- "$@" --uninstall ;;
 esac
 
-run "$PY" -m luminary_memory.integrations setup "$@"
+if "$PY" -m luminary_memory.integrations setup --list >/dev/null 2>&1; then
+  run "$PY" -m luminary_memory.integrations setup "$@"
+  exit $?
+fi
+
+# A published bridge can predate the setup command. Fetch the compatibility
+# setup from the matching release tag, then main, and only trust a copy that
+# actually supports --list. A stale or truncated download must fail loudly
+# instead of silently doing nothing.
+SETUP="$LUMINARY_HOME/setup.py"
+fetch_setup() {
+  mkdir -p "$LUMINARY_HOME"
+  for ref in "v$VERSION" main; do
+    rm -f "$SETUP"
+    curl -fsSL "$RAW/$ref/src/luminary_memory/integrations/setup.py" -o "$SETUP" 2>/dev/null || continue
+    # A silent no-op also exits 0, so require real detection output.
+    if [ -n "$("$PY" "$SETUP" --list 2>/dev/null)" ]; then
+      return 0
+    fi
+  done
+  rm -f "$SETUP"
+  return 1
+}
+log "bridge predates setup; fetching compatibility setup"
+fetch_setup || fail "cannot obtain a compatible setup for bridge $VERSION; install a release that ships the setup command"
+run "$PY" "$SETUP" "$@"

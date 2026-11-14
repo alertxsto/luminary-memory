@@ -304,10 +304,23 @@ def _bridge_call(python: Path, agent: str, workspace: Path, action: str) -> dict
 
 def handshake(python: Path, agent: str, workspace: Path) -> dict:
     version = _bridge_call(python, agent, workspace, "version")
-    core = _bridge_call(python, agent, workspace, "core") if version.get("ok") else {
-        "ok": False, "status": "skipped", "reason": "version_failed",
-    }
-    return {"version": version, "core": core}
+    if version.get("ok"):
+        core = _bridge_call(python, agent, workspace, "core")
+        return {"version": version, "core": core, "legacy": False}
+    # Published bridges before the version action still support core. A
+    # working core load is a valid bridge, so probe it before failing an
+    # install that would otherwise leave the host without memory.
+    core = _bridge_call(python, agent, workspace, "core")
+    if core.get("ok"):
+        return {
+            "version": {
+                "ok": True, "status": "ok", "legacy": True,
+                "version": _probe_version(python) or "",
+            },
+            "core": core,
+            "legacy": True,
+        }
+    return {"version": version, "core": core, "legacy": False}
 
 
 def _selected(agents: str, home: Path, *, project: bool) -> list[str]:
@@ -327,11 +340,17 @@ def _install_copy(agent: str, root: Path, python: Path, *, dry_run: bool) -> Non
         return
     from luminary_memory.integrations.cli import install_adapter
 
-    install_adapter(agent, root, python=python)
+    try:
+        install_adapter(agent, root, python=python)
+    except TypeError:
+        # Published bridges predate the explicit interpreter argument; they
+        # embed the running interpreter, which is this venv.
+        install_adapter(agent, root)
 
 
 def _remove_copy(agent: str, root: Path, *, dry_run: bool) -> bool:
-    target = root / "extensions" / "luminary-memory"
+    folder = "plugins" if agent == "opencode" else "extensions"
+    target = root / folder / "luminary-memory"
     if not target.exists():
         return False
     if not dry_run:
@@ -463,14 +482,21 @@ def run_setup(
         report.bridge = target
         entries[agent] = {
             "python": str(interpreter), "version": target,
-            "mode": "npm" if agent == "opencode" else "copy",
+            "mode": "npm" if agent == "opencode" and not result.get("legacy") else "copy",
         }
         if not no_config:
-            if agent == "opencode":
+            if agent == "opencode" and not result.get("legacy"):
                 _patch_opencode(root, target, dry_run=dry_run)
             else:
+                # A bridge without the version action predates the npm
+                # resolver. Use the copy adapter, which embeds this
+                # interpreter, and remove any npm pin that would double-load.
+                if agent == "opencode":
+                    _remove_opencode(root, dry_run=dry_run)
                 _install_copy(agent, root, interpreter, dry_run=dry_run)
         report.status = "ok"
+        if result.get("legacy"):
+            report.detail = "copy adapter (bridge predates setup)"
         reports.append(report)
     if not check:
         _write_bridge(home, bridge, dry_run=dry_run)
@@ -503,3 +529,36 @@ def run_setup(
         if exit_code == 0 and not check and not uninstall and not dry_run:
             print("Restart the configured agent(s) to load the bridge.")
     return exit_code
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Standalone entry point used when a published bridge predates `setup`."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="luminary-setup",
+        description="Install or update the Luminary bridge and native agents.",
+    )
+    parser.add_argument("--agents", default="auto", help="auto | all | opencode,pi,omp")
+    parser.add_argument("--version", default=None, help="bridge version to install")
+    parser.add_argument("--project", action="store_true", help="target project-local config")
+    parser.add_argument("--no-config", action="store_true", help="install the bridge only")
+    parser.add_argument("--check", action="store_true", help="report status without changes")
+    parser.add_argument("--upgrade", action="store_true", help="move plugin pins to the target")
+    parser.add_argument("--uninstall", action="store_true", help="remove Luminary entries")
+    parser.add_argument("--prune", action="store_true", help="remove unreferenced venvs")
+    parser.add_argument("--dry-run", action="store_true", help="show actions without writing")
+    parser.add_argument("--json", action="store_true", dest="json_output", help="JSON report")
+    parser.add_argument("--list", action="store_true", dest="list_only", help="show detection")
+    args = parser.parse_args(argv)
+    return run_setup(
+        args.agents, version=args.version, project=args.project,
+        no_config=args.no_config, check=args.check, upgrade=args.upgrade,
+        uninstall=args.uninstall, prune=args.prune, dry_run=args.dry_run,
+        json_output=args.json_output, list_only=args.list_only,
+        python=Path(sys.executable),
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
