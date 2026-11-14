@@ -33,7 +33,7 @@ for (const agent of ["pi", "omp", "opencode"]) {
               builder.onResolve({ filter: /^@(earendil-works|oh-my-pi)\/pi-tui$/ },
                 () => ({ path: "native-drawing", namespace: "headless-guard" }));
               builder.onLoad({ filter: /.*/, namespace: "headless-guard" }, () => ({
-                contents: "export function matchesKey(){throw Error('Unexpected native drawing')} export function truncateToWidth(){throw Error('Unexpected native drawing')}",
+                contents: "export function matchesKey(){throw Error('Unexpected native drawing')} export function truncateToWidth(){throw Error('Unexpected native drawing')} export function visibleWidth(){throw Error('Unexpected native drawing')}",
               }));
             },
           }],
@@ -236,7 +236,7 @@ try {
             builder.onResolve({ filter: /^@(earendil-works|oh-my-pi)\/pi-tui$/ },
               () => ({ path: "native-drawing", namespace: "headless-guard" }));
             builder.onLoad({ filter: /.*/, namespace: "headless-guard" }, () => ({
-              contents: "export function matchesKey(){throw Error('Unexpected native drawing')} export function truncateToWidth(){throw Error('Unexpected native drawing')}",
+              contents: "export function matchesKey(){throw Error('Unexpected native drawing')} export function truncateToWidth(){throw Error('Unexpected native drawing')} export function visibleWidth(){throw Error('Unexpected native drawing')}",
             }));
           },
         }],
@@ -306,13 +306,24 @@ test("direct npm packing builds the native entry instead of publishing a broken 
   await packageFixture(async (directory) => {
     for (const agent of ["pi", "omp", "opencode"]) {
       await rm(join(directory, "plugins", agent, "dist"), { recursive: true, force: true });
-      const packed = spawnSync(process.execPath, [
-        process.env.npm_execpath, "pack", "--workspace", `luminary-memory-${agent}`, "--json",
+      // Under `node --test` there is no npm_execpath; fall back to the npm shim.
+      const npm = process.env.npm_execpath
+        ? [process.execPath, process.env.npm_execpath]
+        : [process.platform === "win32" ? "npm.cmd" : "npm"];
+      const packed = spawnSync(npm[0], [
+        ...npm.slice(1), "pack", "--workspace", `luminary-memory-${agent}`, "--json",
       ], { cwd: directory, encoding: "utf8", maxBuffer: 1024 * 1024 });
       assert.equal(packed.status, 0, packed.stderr);
-      const [artifact] = JSON.parse(packed.stdout);
-      assert.ok(artifact.files.some((file) => file.path === "dist/index.js"),
+      const parsed = JSON.parse(packed.stdout);
+      // npm emits an array for multiple targets and a workspace-keyed object otherwise.
+      const [artifact] = Array.isArray(parsed) ? parsed : Object.values(parsed);
+      const paths = artifact.files.map((file) => file.path);
+      assert.ok(paths.includes("dist/index.js"),
         `${agent}: direct pack must include its native entry from a clean checkout`);
+      if (agent === "pi") {
+        assert.ok(paths.includes("dist/bootstrap.js"),
+          "pi: the postinstall bridge provisioner must ship with the package");
+      }
     }
   });
 });

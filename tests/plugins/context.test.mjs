@@ -60,7 +60,7 @@ for (const agent of ['opencode', 'pi', 'omp']) {
           builder.onResolve({ filter: /^@(earendil-works|oh-my-pi)\/pi-tui$/ }, () => ({ path: 'drawing', namespace: 'boundary' }));
           builder.onLoad({ filter: /.*/, namespace: 'boundary' }, ({ path }) => ({ contents: path === 'process'
             ? `export const spawn = globalThis[${JSON.stringify(spawnKey)}];`
-            : "export function matchesKey(){throw Error('Unexpected native drawing')} export function truncateToWidth(){throw Error('Unexpected native drawing')}" }));
+            : "export function matchesKey(){throw Error('Unexpected native drawing')} export function truncateToWidth(){throw Error('Unexpected native drawing')} export function visibleWidth(){throw Error('Unexpected native drawing')}" }));
         }}],
       });
       const { default: plugin } = await import(pathToFileURL(entry).href);
@@ -320,7 +320,7 @@ for (const agent of ['pi', 'omp']) {
           builder.onResolve({ filter: /^@(earendil-works|oh-my-pi)\/pi-tui$/ }, () => ({ path: 'drawing', namespace: 'boundary' }));
           builder.onLoad({ filter: /.*/, namespace: 'boundary' }, ({ path }) => ({ contents: path === 'process'
             ? `export const spawn = globalThis[${JSON.stringify(spawnKey)}];`
-            : "export function matchesKey(){throw Error('Unexpected native drawing')} export function truncateToWidth(){throw Error('Unexpected native drawing')}" }));
+            : "export function matchesKey(){throw Error('Unexpected native drawing')} export function truncateToWidth(){throw Error('Unexpected native drawing')} export function visibleWidth(){throw Error('Unexpected native drawing')}" }));
         }}],
       });
       const { default: plugin } = await import(pathToFileURL(entry).href);
