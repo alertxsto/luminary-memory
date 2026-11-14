@@ -133,7 +133,7 @@ def _read_opencode(root: Path) -> tuple[Path, dict]:
         return path, {}
     data = json.loads(_strip_jsonc(path.read_text(encoding="utf-8-sig")))
     if not isinstance(data, dict):
-        raise ValueError(f"{path} must contain a JSON object")
+        raise TypeError(f"{path} must contain a JSON object")
     return path, data
 
 
@@ -201,7 +201,7 @@ def _read_bridge(home: Path) -> dict:
         return {"schema": BRIDGE_SCHEMA, "agents": {}}
     data = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(data, dict) or not isinstance(data.get("agents"), dict):
-        raise ValueError(f"{path} is not a Luminary bridge record")
+        raise TypeError(f"{path} is not a Luminary bridge record")
     return data
 
 
@@ -237,7 +237,7 @@ def _probe_version(python: Path) -> str | None:
         result = subprocess.run(
             [str(python), "-c",
              "import importlib.metadata as m; print(m.version('luminary-memory'))"],
-            capture_output=True, text=True, timeout=30,
+            check=False, capture_output=True, text=True, timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -284,6 +284,7 @@ def _bridge_call(python: Path, agent: str, workspace: Path, action: str) -> dict
     try:
         result = subprocess.run(
             [str(python), "-m", "luminary_memory.integrations", "bridge"],
+            check=False,
             input=json.dumps(request).encode("utf-8"),
             capture_output=True, timeout=60,
         )
