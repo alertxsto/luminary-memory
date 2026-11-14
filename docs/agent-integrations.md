@@ -27,8 +27,45 @@ source under `src/luminary_memory/integrations/assets/`; no second memory engine
 or separate adapter fork is maintained.
 Python and all three native npm packages are published at `0.3.3`, with npm
 `latest` pointing to that version. The OpenCode adapter targets V2; the older
-npm `0.3.1` adapter is V1-only. Install the Python bridge into the environment
-the host will use:
+npm `0.3.1` adapter is V1-only.
+
+### One-command install
+
+The installer provisions a private Python runtime with `uv`, installs the
+version-matched bridge, writes `~/.luminary/bridge.json`, configures every
+detected agent, and verifies the bridge. It is non-interactive and idempotent.
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/alertxsto/luminary-memory/main/install.ps1 | iex
+```
+
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/alertxsto/luminary-memory/main/install.sh | sh
+```
+
+Options: `--agents opencode,pi,omp`, `--all`, `--check`, `--upgrade`,
+`--uninstall`, `--prune`, `--version X`, `--no-config`, `--project`,
+`--dry-run`, `--verbose`. `luminary-memory setup --list` prints agent
+detection without changing anything.
+
+The same logic is available from the Python CLI:
+
+```bash
+luminary-memory setup --agents auto
+luminary-memory setup --check
+luminary-memory setup --agents pi --version 0.3.4
+```
+
+`setup` reads each agent's plugin pin and installs the matching bridge, so a
+plugin and its bridge cannot drift apart. `~/.luminary/bridge.json` records the
+interpreter per agent; adapters read it automatically, so `LUMINARY_PYTHON` is
+only needed as an explicit override.
+
+### Manual install
+
+Install the Python bridge into the environment the host will use:
 
 ```bash
 python -m pip install --upgrade "luminary-memory==0.3.3"

@@ -10,13 +10,18 @@ class FastembedEngine:
         self,
         model_name: str | None = None,
         threads: int = 1,
+        cache_dir: str | None = None,
     ):
-        self.model_name = model_name or Settings().embedding_model
+        settings = Settings()
+        self.model_name = model_name or settings.embedding_model
+        self.cache_dir = cache_dir or settings.model_cache_dir or None
         self.threads = threads
         self._model: TextEmbedding | None = None
 
     def _load(self) -> TextEmbedding:
-        self._model = TextEmbedding(model_name=self.model_name, threads=self.threads)
+        self._model = TextEmbedding(
+            model_name=self.model_name, threads=self.threads, cache_dir=self.cache_dir,
+        )
         return self._model
 
     @property

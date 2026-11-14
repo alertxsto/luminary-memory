@@ -83,6 +83,8 @@ edits = [
     ("docs/ROADMAP.md", r'Current release:\*\* v\d+\.\d+\.\d+', f"Current release:** v{new}"),
     ("README.md", r'v\d+\.\d+\.\d+ → v1\.0\.0', f"v{new} → v1.0.0"),
     ("docs/ROADMAP.md", r'v\d+\.\d+\.\d+ → v1\.0\.0', f"v{new} → v1.0.0"),
+    ("install.sh", r'VERSION="\$\{LUMINARY_VERSION:-(\d+\.\d+\.\d+)\}"', f'VERSION="${{LUMINARY_VERSION:-{new}}}"'),
+    ("install.ps1", r'\$Version = "(\d+\.\d+\.\d+)"', f'$Version = "{new}"'),
 ]
 for path, pat, repl in edits:
     try:

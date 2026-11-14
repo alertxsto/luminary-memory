@@ -210,6 +210,9 @@ class Settings:
     # embeddings
     embedding_model: str = field(default_factory=lambda: _settings_env().get("LUMINARY_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL))
     embedding_dim: int = field(default_factory=lambda: _env_int("LUMINARY_EMBEDDING_DIM", 384))
+    # Stable model cache. Empty keeps fastembed's platform default (a temp
+    # directory on Windows), which can be cleared between runs.
+    model_cache_dir: str = field(default_factory=lambda: _settings_env().get("LUMINARY_MODEL_CACHE", ""))
     # ingest
     ingest_whitelist: list[str] = field(default_factory=lambda: _env_list("LUMINARY_INGEST_WHITELIST"))
     ingest_llm: bool = field(default_factory=lambda: _env_bool("LUMINARY_INGEST_LLM", False))
@@ -297,6 +300,7 @@ class Settings:
             "pg_dsn": self.pg_dsn,
             "embedding_model": self.embedding_model,
             "embedding_dim": self.embedding_dim,
+            "model_cache_dir": self.model_cache_dir,
             "ingest_whitelist": self.ingest_whitelist,
             "ingest_llm": self.ingest_llm,
             "rrf_k": self.rrf_k,

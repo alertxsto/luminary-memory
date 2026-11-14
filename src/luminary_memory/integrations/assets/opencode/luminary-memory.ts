@@ -11,6 +11,7 @@ import { LuminaryConsole } from "./rpc.js"
 import { createInspectorTransport } from "../common/inspector-transport.js"
 import type { ConsoleResult } from "../common/console-contract.js"
 import { bridgeEnvironment, nativeUserSource, type RememberSource } from "../common/bridge-source.js"
+import { resolveBridgePython } from "../common/bridge-launch.js"
 
 type Reply = {
   ok: boolean
@@ -32,6 +33,7 @@ type Turn = {
   retention?: Promise<void>
   lastRetention?: Reply
   touched: number
+  notified?: boolean
 }
 
 const MAX_INPUT_BYTES = 131072
@@ -42,6 +44,7 @@ const MAX_SESSIONS = 128
 const INSTALLED_PYTHON: string = "__LUMINARY_PYTHON__"
 const RECALL_MESSAGE_PREFIX = "luminary:recall:"
 const CORE_MESSAGE_PREFIX = "luminary:core:"
+const SETUP_MESSAGE_PREFIX = "luminary:setup:"
 
 function failure(reason: string, message: string, status = "error"): Reply {
   return { ok: status === "skipped", status, reason, message, context: "", memories: [], stored: 0, deleted: 0 }
@@ -58,7 +61,7 @@ function bridge(request: Record<string, unknown>, timeout: number, signal?: Abor
     let bytes = 0
     const chunks: Buffer[] = []
     // Executable and arguments remain separate; prompt text is stdin, never shell syntax.
-    const executable = process.env.LUMINARY_PYTHON || (INSTALLED_PYTHON.startsWith("__LUMINARY_") ? "python" : INSTALLED_PYTHON)
+    const executable = resolveBridgePython("opencode", INSTALLED_PYTHON)
     const child = spawn(executable, ["-m", "luminary_memory.integrations", "bridge"], {
       cwd: String(request.workspace),
       shell: false,
@@ -291,7 +294,8 @@ export default Plugin.define({
     await ctx.session.hook("context", async (event) => {
       // Context hooks edit only this request, never persistent transcript/system authority.
       event.messages = event.messages.filter(message =>
-        !message.id?.startsWith(RECALL_MESSAGE_PREFIX) && !message.id?.startsWith(CORE_MESSAGE_PREFIX))
+        !message.id?.startsWith(RECALL_MESSAGE_PREFIX) && !message.id?.startsWith(CORE_MESSAGE_PREFIX) &&
+        !message.id?.startsWith(SETUP_MESSAGE_PREFIX))
       if (controller.signal.aborted) return
       try {
         const signal = readSignal()
@@ -326,6 +330,18 @@ export default Plugin.define({
         const [core, recall] = await Promise.all([turn.core, turn.recall])
         if (turns.get(event.sessionID) !== turn) return
         const injected: { id: string; role: "user"; content: { type: "text"; text: string }[] }[] = []
+        if (!core.ok && !turn.notified) {
+          // A missing or mismatched bridge must be visible, not silently skipped.
+          turn.notified = true
+          const detail = core.message || core.reason || core.status
+          console.error(`[luminary] core unavailable: ${detail}`)
+          injected.push({
+            id: SETUP_MESSAGE_PREFIX + turn.messageID, role: "user",
+            content: [{ type: "text", text:
+              `Luminary memory is unavailable (${detail}). ` +
+              "Run `npx luminary-memory-opencode setup` and restart OpenCode." }],
+          })
+        }
         if (core.ok && core.context.trim()) {
           injected.push({ id: CORE_MESSAGE_PREFIX + turn.messageID, role: "user", content: [{ type: "text", text: core.context }] })
         }

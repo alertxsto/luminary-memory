@@ -93,10 +93,13 @@ def _install_tree(target: Path, files: dict[str, str], *, force: bool) -> list[P
             shutil.rmtree(stage)
 
 
-def install_adapter(agent: str, directory: Path, *, force: bool = False) -> list[Path]:
+def install_adapter(
+    agent: str, directory: Path, *, force: bool = False, python: Path | None = None,
+) -> list[Path]:
     """Install the complete compiled native package, never an orphaned TS file."""
     if agent not in AGENTS:
         raise ValueError("agent must be opencode, pi, or omp")
+    interpreter = str(python or sys.executable)
     resources = importlib.resources.files("luminary_memory.integrations").joinpath("assets")
     source = resources.joinpath("compiled", agent)
     names = ["index.js", "rpc.js", "tui.js"] if agent == "opencode" else ["index.js"]
@@ -106,7 +109,7 @@ def install_adapter(agent: str, directory: Path, *, force: bool = False) -> list
     for name in names:
         try:
             files[name] = source.joinpath(name).read_text(encoding="utf-8").replace(
-                '"__LUMINARY_PYTHON__"', json.dumps(sys.executable),
+                '"__LUMINARY_PYTHON__"', json.dumps(interpreter),
             )
         except FileNotFoundError as exc:
             raise ValueError("Native resources are absent. Install a complete wheel, or run npm run build before building the wheel.") from exc
@@ -183,6 +186,36 @@ def install(
     except (OSError, ValueError, TypeError) as exc:
         typer.echo(f"Install failed: {exc}", err=True)
         raise typer.Exit(1) from None
+
+
+@app.command("setup")
+def setup(
+    agents: str = typer.Option("auto", "--agents", help="auto | all | opencode,pi,omp"),
+    version: str | None = typer.Option(None, "--version", help="Bridge version to install"),
+    project: bool = typer.Option(False, "--project", help="Target project-local config"),
+    no_config: bool = typer.Option(False, "--no-config", help="Install the bridge only"),
+    check: bool = typer.Option(False, "--check", help="Report status without changes"),
+    upgrade: bool = typer.Option(False, "--upgrade", help="Move plugin pins to the target version"),
+    uninstall: bool = typer.Option(False, "--uninstall", help="Remove Luminary entries"),
+    prune: bool = typer.Option(False, "--prune", help="Remove unreferenced bridge venvs"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show actions without writing"),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable report"),
+    list_only: bool = typer.Option(False, "--list", help="Show agent detection and exit"),
+) -> None:
+    """Install or update the bridge and every detected native agent."""
+    from luminary_memory.integrations.setup import run_setup
+
+    try:
+        code = run_setup(
+            agents, version=version, project=project, no_config=no_config,
+            check=check, upgrade=upgrade, uninstall=uninstall, prune=prune,
+            dry_run=dry_run, json_output=json_output, list_only=list_only,
+            python=Path(sys.executable),
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        typer.echo(f"Setup failed: {exc}", err=True)
+        raise typer.Exit(1) from None
+    raise typer.Exit(code)
 
 
 @app.command("bridge")

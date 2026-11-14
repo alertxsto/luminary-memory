@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- One-command native installation. `install.sh` (Linux/macOS) and
+  `install.ps1` (Windows) provision a private Python runtime with `uv`, install
+  the version-matched bridge, write `~/.luminary/bridge.json`, configure every
+  detected agent, and verify the bridge with a live handshake. The installer is
+  non-interactive, idempotent, and never modifies `PATH` or a shell profile.
+- `luminary-memory setup` exposes the same flow without the shell wrapper:
+  `--agents auto|all|opencode,pi,omp`, `--check`, `--upgrade`, `--uninstall`,
+  `--prune`, `--version`, `--no-config`, `--project`, `--dry-run`, `--json`.
+  It reads each agent's plugin pin and installs the matching bridge, so a
+  plugin and its bridge cannot drift apart.
+- The bridge exposes `action:"version"` for installers and adapters. It opens
+  no database, workspace, or session, so a version probe cannot create a store.
+- Native adapters resolve the bridge interpreter from `LUMINARY_PYTHON`, then
+  `~/.luminary/bridge.json`, then the path embedded at install time. A failed
+  `core` load is reported once per turn instead of being silently skipped.
+
 ### Fixed
 
 - Native core memory is now a separate, query-independent DB-backed baseline

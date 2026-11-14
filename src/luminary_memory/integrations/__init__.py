@@ -297,8 +297,18 @@ def dispatch(request: dict, *, client: MemoryClient | None = None) -> dict:
     if not isinstance(agent, str) or not re.fullmatch(r"[a-z][a-z0-9._-]{0,63}", agent):
         raise ValueError("agent must be a stable lowercase harness ID (1-64 characters)")
     action = request.get("action")
-    if action not in {"core", "recall", "remember", "forget", "activity", "turn"}:
+    if action not in {"core", "recall", "remember", "forget", "activity", "turn", "version"}:
         raise ValueError("unsupported memory action")
+    if action == "version":
+        # Handshake for installers and adapters: no database, workspace or
+        # session is opened, so a version probe can never create a store.
+        from luminary_memory import __version__
+
+        return _reply(
+            "ok", f"Luminary bridge {__version__}.",
+            version=__version__,
+            actions=["core", "recall", "remember", "forget", "activity", "turn"],
+        )
     workspace = Path(_text(request, "workspace")).expanduser()
     if not workspace.is_absolute():
         raise ValueError("workspace must be an absolute path")

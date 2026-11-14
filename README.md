@@ -63,6 +63,56 @@ luminary-memory stats
 
 ---
 
+## One-command install (OpenCode, pi, omp)
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/alertxsto/luminary-memory/main/install.ps1 | iex
+```
+
+Linux / macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alertxsto/luminary-memory/main/install.sh | sh
+```
+
+The installer provisions a private Python runtime with `uv`, installs the
+version-matched bridge, writes `~/.luminary/bridge.json`, configures every
+detected agent, and verifies the bridge with a live handshake. No Python, Node,
+or venv setup is required, and no shell profile or `PATH` is modified.
+
+It is non-interactive and idempotent. Run it again to update.
+
+| Option | Meaning |
+|---|---|
+| `--agents opencode,pi` | configure only these agents |
+| `--all` | configure every supported agent |
+| `--check` | report versions and drift, change nothing |
+| `--upgrade` | move plugin pins to the target version |
+| `--uninstall` | remove Luminary entries |
+| `--prune` | remove unreferenced bridge venvs |
+| `--version X` | pin the bridge version |
+| `--no-config` | install the bridge only |
+| `--project` | target project-local config |
+| `--dry-run` | show actions without writing |
+| `--list` | show agent detection (`luminary-memory setup --list`) |
+
+The same logic is available without the shell wrapper:
+
+```bash
+luminary-memory setup --agents auto
+luminary-memory setup --check
+luminary-memory setup --agents pi --version 0.3.4
+```
+
+`setup` reads each agent's plugin pin and installs the matching bridge, so a
+plugin and its bridge cannot drift apart. `~/.luminary/bridge.json` records the
+interpreter per agent; adapters read it automatically, so `LUMINARY_PYTHON` is
+only needed as an explicit override.
+
+---
+
 ## Native hooks for supported harnesses
 
 The harness-neutral JSON bridge supports native adapters without coupling the

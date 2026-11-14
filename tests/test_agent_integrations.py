@@ -673,3 +673,82 @@ def test_config_file_cannot_supply_native_writer_authority(native, tmp_path, mon
     assert response["reason"] == "user_evidence_required"
     assert client.backend.count() == 0
     assert os.environ.get("LUMINARY_BRIDGE_SOURCE") is None
+
+
+def test_version_action_reports_bridge_contract():
+    from luminary_memory import __version__
+
+    response = dispatch({"agent": "pi", "action": "version"})
+    assert response["ok"] is True
+    assert response["version"] == __version__
+    assert "core" in response["actions"]
+
+
+def test_jsonc_strip_preserves_strings_and_removes_trailing_commas():
+    from luminary_memory.integrations.setup import _strip_jsonc
+
+    text = '{\n  // comment\n  "url": "https://x//y",\n  "a": 1,\n}\n'
+    assert json.loads(_strip_jsonc(text)) == {"url": "https://x//y", "a": 1}
+
+
+def test_setup_writes_bridge_and_patches_opencode_config(tmp_path, monkeypatch):
+    import sys
+    from pathlib import Path
+
+    from luminary_memory import __version__
+    from luminary_memory.integrations.setup import _strip_jsonc, run_setup
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("LUMINARY_DB_PATH", str(tmp_path / "memory.db"))
+    config = tmp_path / "config" / "opencode" / "opencode.jsonc"
+    config.parent.mkdir(parents=True)
+    config.write_text('{\n  // keep this comment\n  "plugins": ["other-plugin"],\n}\n')
+
+    code = run_setup("opencode", home=tmp_path, python=Path(sys.executable), version=__version__)
+
+    assert code == 0
+    data = json.loads(_strip_jsonc(config.read_text()))
+    assert "other-plugin" in data["plugins"]
+    assert f"luminary-memory-opencode@{__version__}" in data["plugins"]
+    bridge = json.loads((tmp_path / ".luminary" / "bridge.json").read_text())
+    assert bridge["agents"]["opencode"]["version"] == __version__
+
+
+def test_setup_check_reports_drift(tmp_path, monkeypatch):
+    import sys
+
+    from luminary_memory.integrations.setup import run_setup
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    config = tmp_path / "config" / "opencode" / "opencode.jsonc"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"plugins": ["luminary-memory-opencode@0.0.2"]}))
+    bridge = tmp_path / ".luminary" / "bridge.json"
+    bridge.parent.mkdir(parents=True)
+    bridge.write_text(json.dumps({
+        "schema": 1,
+        "agents": {"opencode": {"python": sys.executable, "version": "0.0.1"}},
+    }))
+
+    assert run_setup("opencode", home=tmp_path, check=True) == 1
+
+
+def test_setup_uninstall_removes_entries(tmp_path, monkeypatch):
+    import sys
+
+    from luminary_memory.integrations.setup import _strip_jsonc, run_setup
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    config = tmp_path / "config" / "opencode" / "opencode.jsonc"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"plugins": ["other-plugin", "luminary-memory-opencode@0.3.4"]}))
+    bridge = tmp_path / ".luminary" / "bridge.json"
+    bridge.parent.mkdir(parents=True)
+    bridge.write_text(json.dumps({
+        "schema": 1,
+        "agents": {"opencode": {"python": sys.executable, "version": "0.3.4"}},
+    }))
+
+    assert run_setup("opencode", home=tmp_path, uninstall=True) == 0
+    assert json.loads(_strip_jsonc(config.read_text()))["plugins"] == ["other-plugin"]
+    assert "opencode" not in json.loads(bridge.read_text())["agents"]

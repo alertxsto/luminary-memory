@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerPiInspector } from "./inspector.js";
 import { bridgeEnvironment, nativeUserSource, type RememberSource } from "../common/bridge-source.js";
+import { resolveBridgePython } from "../common/bridge-launch.js";
 
 type Action = "core" | "recall" | "remember" | "forget" | "activity" | "turn";
 type Arguments = { query?: string; text?: string; evidence_quote?: string; tags?: string[]; memory_id?: number; user?: string; assistant?: string };
@@ -33,8 +34,8 @@ function bridge(ctx: ExtensionContext, action: Action, args: Arguments, signal?:
   let settled = false;
   let bytes = 0;
   const stdout: Buffer[] = [];
-  const python = process.env.LUMINARY_PYTHON || "__LUMINARY_PYTHON__";
-  const child = spawn(python.startsWith("__LUMINARY_") ? "python" : python, ["-m", "luminary_memory.integrations", "bridge"], {
+  const python = resolveBridgePython("pi", "__LUMINARY_PYTHON__");
+  const child = spawn(python, ["-m", "luminary_memory.integrations", "bridge"], {
     cwd: ctx.cwd, env: bridgeEnvironment("pi", resolve(ctx.cwd), ctx.sessionManager.getSessionId(), source), shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
   });
   const finish = (reply: Reply) => {
