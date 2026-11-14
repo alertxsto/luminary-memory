@@ -19,9 +19,30 @@
 - Native adapters resolve the bridge interpreter from `LUMINARY_PYTHON`, then
   `~/.luminary/bridge.json`, then the path embedded at install time. A failed
   `core` load is reported once per turn instead of being silently skipped.
+- Submitted the Hermes provider to the official plugin catalog
+  (`plugin-catalog/luminary.yaml`, pinned at `8c8aec9`): the adapter directory
+  is now loadable as a standalone plugin, declares a truthful
+  `requires_hermes` floor and SPDX license, and ships its own disclosure README.
+
+### Changed
+
+- Rebuilt the public website around blue three-tone lunar artwork, a
+  streamlined product introduction, usable code examples, and a full-width
+  illustrated wordmark footer.
+- Reworked documentation into a responsive navigation/article/contents layout
+  while preserving the existing guide URLs, search, code copying, and history.
+- Added a shared persistent light/dark theme and keyboard-accessible navigation;
+  documentation source links open the tracked files on GitHub.
+
+## [0.3.4] - 2026-11-14
+
+Coordinated Python and native-plugin release from one source revision.
+This replaces the mismatched npm `0.3.3` builds without overwriting them.
 
 ### Fixed
 
+- Isolate the inspector's default-store test from the operator's home on
+  Windows by setting `USERPROFILE` as well as `HOME`.
 - Native core memory is now a separate, query-independent DB-backed baseline
   loaded through the bridge's new `core` action, which takes no query. Query
   recall stays pure evidence: it removes rows already present in the loaded
@@ -57,9 +78,11 @@ companion; the interactive UI roadmap is incomplete.
 ### Added
 
 - Published the Python bridge and all three native npm packages at `0.3.3`.
-  npm `latest` points to `0.3.3` for `luminary-memory-pi`,
-  `luminary-memory-opencode`, and `luminary-memory-omp`; registry shasums were
-  verified after publication.
+  The npm packages were published later from `develop`, not the `v0.3.3`
+  tag, and their built entry points differ from the downloadable release
+  tarballs. Matching version numbers do not establish compatibility or
+  identical provenance. Use the tagged GitHub tarballs with Python `0.3.3`
+  until a coordinated replacement release is available.
 - Optional operator config file (`~/.luminary/luminary.env`) shared by native
   integrations and the CLI. Env-style `LUMINARY_*` settings load before
   `Settings` is constructed; process environment wins, `LUMINARY_CONFIG_FILE`

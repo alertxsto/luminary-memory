@@ -25,9 +25,10 @@ and omp. That means ownership by this project, not endorsement or listing
 approval by the harness maintainers. All three compile the canonical adapter
 source under `src/luminary_memory/integrations/assets/`; no second memory engine
 or separate adapter fork is maintained.
-Python and all three native npm packages are published at `0.3.3`, with npm
-`latest` pointing to that version. The OpenCode adapter targets V2; the older
-npm `0.3.1` adapter is V1-only.
+Python and all three native npm packages are published at `0.3.4`.
+The npm tarballs are byte-identical to the tagged GitHub release assets,
+and all packaged `dist` resources match the PyPI wheel.
+The OpenCode adapter targets V2; the older npm `0.3.1` adapter is V1-only.
 
 ### One-command install
 
@@ -68,7 +69,7 @@ only needed as an explicit override.
 Install the Python bridge into the environment the host will use:
 
 ```bash
-python -m pip install --upgrade "luminary-memory==0.3.3"
+python -m pip install --upgrade "luminary-memory==0.3.4"
 export LUMINARY_PYTHON=/absolute/venv/bin/python
 ```
 
@@ -100,7 +101,7 @@ path. No package install hook silently installs Python dependencies.
 | --- | --- | --- |
 | pi | `pi install /absolute/repo/plugins/pi` | `pi install npm:luminary-memory-pi` |
 | omp | `omp plugin link /absolute/repo/plugins/omp` | `omp plugin install luminary-memory-omp` |
-| OpenCode V2 | `{"plugins":["/absolute/repo/plugins/opencode/dist"]}`; configured local paths must be directories | `opencode plugin add luminary-memory-opencode@0.3.3`, or `{"plugins":["luminary-memory-opencode@0.3.3"]}` |
+| OpenCode V2 | `{"plugins":["/absolute/repo/plugins/opencode/dist"]}`; configured local paths must be directories | `opencode plugin add luminary-memory-opencode@0.3.4`, or `{"plugins":["luminary-memory-opencode@0.3.4"]}` |
 
 Local pi/omp packages load in place, so keep the installed directory. An
 extracted tarball works independently of this repository. See the host READMEs
@@ -148,18 +149,28 @@ the next coordinated release; do not overwrite an already-published Python tag.
 See [contributor release instructions](../CONTRIBUTING.md).
 
 Publication verified on 2026-11-14: Python and all three npm packages are
-available at `0.3.3`:
+available at `0.3.4`:
 [pi](https://www.npmjs.com/package/luminary-memory-pi),
 [OpenCode](https://www.npmjs.com/package/luminary-memory-opencode), and
 [omp](https://www.npmjs.com/package/luminary-memory-omp).
-All npm `latest` tags point to `0.3.3`. Verified SHA-1 shasums:
-pi `a5c613417ef20c4e178e53a5e56e5b9e4e0c121d`,
-OpenCode `ee8ffe5a4089b5441dde52af9a90d4f0ce37fe9b`,
-omp `82d18ba70ebba95d3566c1f394561000a76d34c5`.
-Installing all three from npm succeeded. The real V2 CLI also installed the
-OpenCode package and an actual native session stored a fact through the
-published PyPI wheel. That wheel's CLI installer and remember/recall/forget
-operations passed; wheel and sdist SHA-256 checksums match PyPI.
+All npm `latest` tags point to `0.3.4`. Verified SHA-1 shasums:
+pi `dde6e4d9f67831e2bcda32e04795c7c4703f6f33`,
+OpenCode `ef37e9142fdff1814724af41667988362e6705ed`,
+omp `93149736de17d48a087825149d3f450631f5efeb`.
+
+The npm tarballs are byte-identical to the `v0.3.4` GitHub release assets,
+and all their built resources match the PyPI wheel. PyPI wheel/sdist and
+npm tarball digests were checked against registry metadata. GitHub Actions
+published all three npm packages through OIDC with signed provenance.
+
+The older npm `0.3.3` builds differ from the `v0.3.3` GitHub tarballs and
+match a later `develop` revision. That mismatch was repaired by publishing
+`0.3.4`, not by overwriting existing registry versions or moving the old tag.
+
+Earlier `0.3.3` installation evidence covered installing all three npm
+packages, a real V2 CLI session storing a fact through the PyPI wheel, and
+the wheel's CLI installer and remember/recall/forget operations. Those checks
+did not establish npm/tag artifact identity or test the later `core` action.
 
 The `0.3.2` V2 adapter was separately exercised in the real **2.1.4** server.
 Native requests verified remember, same-session duplicate suppression, scoped
@@ -180,8 +191,8 @@ proof of a live website listing.
 
 ## Interactive inspectors
 
-The `0.3.3` source includes the inspector in the Python and native npm
-packages. The published `0.3.3` packages include it. Installing the
+The `0.3.4` source includes the inspector in the Python and native npm
+packages. The published `0.3.4` packages include it. Installing the
 inspector does not enable saving, start a server on import, or call an AI model.
 Exact tested native hosts and the two remaining blocked surfaces are recorded
 in the [roadmap matrix](ROADMAP.md#target-support-matrix).
@@ -281,7 +292,7 @@ This remains an alternative to native package installation. Install the
 published Python bridge, then copy only the adapter for the host you use:
 
 ```bash
-python -m pip install --upgrade "luminary-memory==0.3.3"
+python -m pip install --upgrade "luminary-memory==0.3.4"
 luminary-memory hook install opencode
 luminary-memory hook install pi
 luminary-memory hook install omp

@@ -7,6 +7,21 @@ Use luminary-memory as a first-class **memory provider** for [Hermes Agent](http
 `luminary-memory` ships a Hermes `MemoryProvider` registered through the
 `hermes_agent.memory_providers` entry-point group.
 
+### From the Hermes plugin catalog
+
+Once the catalog entry is merged, install without cloning anything:
+
+```bash
+hermes plugins install luminary
+hermes memory setup        # choose Luminary for this profile
+```
+
+The catalog installs `src/luminary_memory/hermes` at a pinned commit into
+`~/.hermes/plugins/luminary` and installs `luminary-memory` into the Hermes
+interpreter. The plugin directory is self-contained: it loads both as the pip
+entry point and as a standalone directory, so upgrades follow
+`hermes plugins update luminary`.
+
 ```bash
 pip install "luminary-memory[hermes]"
 bash hermes/install.sh

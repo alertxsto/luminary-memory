@@ -10,7 +10,7 @@ from pathlib import Path
 
 def bind_inspector(args) -> int:
     """Owner-approved exact record scope; does not activate a provider or UI."""
-    from luminary_memory.hermes.inspector import native_session_context
+    from .inspector import native_session_context
     native = native_session_context(args.session)
     if args.agent != native["agent_id"]:
         raise PermissionError("Agent must equal the native provider's profile identity")
@@ -54,8 +54,8 @@ def configure(args) -> int:
     """Consume the same real typed fields as Hermes's dashboard, in one profile."""
     from hermes_constants import get_hermes_home
 
-    from luminary_memory.hermes.config import _typed_value, save_config
-    from luminary_memory.hermes.config_schema import CONFIG_SCHEMA
+    from .config import _typed_value, save_config
+    from .config_schema import CONFIG_SCHEMA
 
     fields = {field.key: field for field in CONFIG_SCHEMA.fields}
     changes = {}

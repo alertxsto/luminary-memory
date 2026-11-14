@@ -24,8 +24,8 @@ from agent.memory_provider import MemoryProvider  # present only in hermes runti
 
 from luminary_memory.api import MemoryClient
 from luminary_memory.config import Settings
-from luminary_memory.hermes.activity import operation_snapshot
-from luminary_memory.hermes.config import _DEFAULTS, load_config, save_config
+from .activity import operation_snapshot
+from .config import _DEFAULTS, load_config, save_config
 from luminary_memory.recall.filters import is_noise_memory
 from luminary_memory.scope import memory_matches_scope
 
@@ -537,7 +537,7 @@ class LuminaryMemoryProvider(MemoryProvider):
 
     def get_config_schema(self) -> list[dict]:
         """Derive setup descriptors from Hermes's typed dashboard schema."""
-        from luminary_memory.hermes.config_schema import CONFIG_SCHEMA
+        from .config_schema import CONFIG_SCHEMA
 
         fields: list[dict] = []
         for field in CONFIG_SCHEMA.fields:
@@ -595,7 +595,7 @@ class LuminaryMemoryProvider(MemoryProvider):
 
         from pathlib import Path
 
-        from luminary_memory.hermes.activation import activate_config
+        from .activation import activate_config
 
         activate_config(Path(hermes_home) / "config.yaml")
         # Ensure the provider's own zero-config file exists under the same
