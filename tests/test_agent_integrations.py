@@ -703,6 +703,12 @@ def test_setup_writes_bridge_and_patches_opencode_config(tmp_path, monkeypatch):
     config = tmp_path / "config" / "opencode" / "opencode.jsonc"
     config.parent.mkdir(parents=True)
     config.write_text('{\n  // keep this comment\n  "plugins": ["other-plugin"],\n}\n')
+    # The test exercises config patching, not venv provisioning. Reuse the
+    # checkout's interpreter so the local bridge contract is under test.
+    monkeypatch.setattr(
+        "luminary_memory.integrations.setup.ensure_venv",
+        lambda *args, **kwargs: Path(sys.executable),
+    )
 
     code = run_setup("opencode", home=tmp_path, python=Path(sys.executable), version=__version__)
 

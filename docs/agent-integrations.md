@@ -32,6 +32,9 @@ The OpenCode adapter targets V2; the older npm `0.3.1` adapter is V1-only.
 
 ### One-command install
 
+Full guide, including manual installation and complete removal:
+[install.md](install.md).
+
 The installer provisions a private Python runtime with `uv`, installs the
 version-matched bridge, writes `~/.luminary/bridge.json`, configures every
 detected agent, and verifies the bridge. It is non-interactive and idempotent.

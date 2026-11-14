@@ -65,6 +65,9 @@ luminary-memory stats
 
 ## One-command install (OpenCode, pi, omp)
 
+Full guide, including manual installation and complete removal:
+[docs/install.md](docs/install.md).
+
 Windows (PowerShell):
 
 ```powershell

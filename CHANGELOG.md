@@ -14,6 +14,9 @@
   `--prune`, `--version`, `--no-config`, `--project`, `--dry-run`, `--json`.
   It reads each agent's plugin pin and installs the matching bridge, so a
   plugin and its bridge cannot drift apart.
+- `docs/install.md` documents the one-command installer, manual installation
+  for OpenCode, pi, and omp, verification, updates, and complete removal,
+  including how to keep or delete the memory store.
 - The bridge exposes `action:"version"` for installers and adapters. It opens
   no database, workspace, or session, so a version probe cannot create a store.
 - Native adapters resolve the bridge interpreter from `LUMINARY_PYTHON`, then
