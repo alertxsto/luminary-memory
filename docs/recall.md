@@ -16,6 +16,14 @@ unsupported lexical hit cannot suppress a supported candidate. Confidence
 decides eligibility; the configured fusion weights and importance boost decide
 order among eligible rows.
 
+A short question can sit below the embedding model's measured floor even when a
+memory literally answers it ("What is the deploy target?" against "… deploy
+target is a private cluster"). When dense similarity is below the floor, the
+question's content words decide: a candidate that covers at least half of them
+is eligible, and its coverage stands in as support. Function words are ignored,
+so "the" and "is" cannot make an off-topic row look like an answer, and a row
+that shares none of the content words still abstains.
+
 When every strategy raises, recall returns status `unavailable` with reason
 `all_strategies_failed`, and the CLI exits non-zero with an error. That is not
 an abstention: abstention means the search ran and found no supported evidence.

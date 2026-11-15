@@ -95,6 +95,12 @@ post-publication registry proof, or release readiness.
 
 ### Fixed
 
+- A short question no longer abstains when a memory literally answers it. When
+  dense similarity sits below the model's measured floor, content-word coverage
+  (function words excluded) decides eligibility, so "What is the deploy target?"
+  reaches "… deploy target is a private cluster" while an off-topic row that
+  shares none of the question's content words still abstains.
+
 - Recall can answer a question asked in the language the memory was written in.
   The default embedding model was English-only (`BAAI/bge-small-en-v1.5`), so an
   Indonesian question about an Indonesian memory scored below the semantic floor

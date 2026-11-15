@@ -63,9 +63,12 @@ CASES = [
         "paraphrase",
         "Where will Luminary go live now?",
         {"user_id": "u1", "workspace_id": "luminary"},
-        {"answer"},
+        # Both rows state the same fact in two languages; the gate requires the
+        # fact, not one particular language's wording.
+        set(),
         {"docs"},
         False,
+        {"answer", "indonesian"},
     ),
     (
         "scope_isolation",
@@ -96,7 +99,7 @@ CASES = [
 
 def _run() -> tuple[bool, list[dict]]:
     from luminary_memory.api import MemoryClient
-    from luminary_memory.config import Settings
+    from luminary_memory.config import DEFAULT_EMBEDDING_MODEL, Settings
     from luminary_memory.ingest.llm import NoopEnricher
 
     settings = Settings(
@@ -104,7 +107,7 @@ def _run() -> tuple[bool, list[dict]]:
         evidence_required=True,
         rule_auto_replace=False,
     )
-    if settings.embedding_model != "BAAI/bge-small-en-v1.5":
+    if settings.embedding_model != DEFAULT_EMBEDDING_MODEL:
         raise SystemExit(
             f"unexpected embedding model {settings.embedding_model!r}; "
             "this gate must run the real default model"
@@ -132,7 +135,9 @@ def _run() -> tuple[bool, list[dict]]:
                 ids[key] = memory_id
             key_by_id = {value: key for key, value in ids.items()}
 
-            for case_key, query, scope, must_include, must_exclude, expect_abstain in CASES:
+            for case in CASES:
+                case_key, query, scope, must_include, must_exclude, expect_abstain, *rest = case
+                any_of = rest[0] if rest else set()
                 result = client.recall(query, limit=10, scope=scope, strict=True)
                 returned = {key_by_id[mid] for mid in (m.id for m in result.memories) if mid in key_by_id}
                 entry = {
@@ -156,6 +161,10 @@ def _run() -> tuple[bool, list[dict]]:
                     leaked = must_exclude & returned
                     if missing:
                         failures.append(f"{case_key}: missing required fact(s) {sorted(missing)}")
+                    if any_of and not (any_of & returned):
+                        failures.append(
+                            f"{case_key}: none of the accepted facts {sorted(any_of)} returned"
+                        )
                     if leaked:
                         failures.append(f"{case_key}: returned excluded fact(s) {sorted(leaked)}")
                 results.append(entry)

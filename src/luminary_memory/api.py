@@ -29,6 +29,21 @@ _VALID_MEMORY_STATUSES = frozenset(
     {"candidate", "active", "conflicted", "superseded", "expired", "deleted"}
 )
 
+# Function words carry no evidence that a memory answers a question. Lexical
+# coverage is measured over the remaining content words so that "the" and "is"
+# cannot make an off-topic row look like an answer.
+_QUERY_STOPWORDS = frozenset(
+    {
+        "a", "about", "an", "and", "any", "are", "as", "at", "be", "been", "but",
+        "by", "can", "could", "did", "do", "does", "for", "from", "had", "has",
+        "have", "he", "her", "his", "how", "i", "if", "in", "into", "is", "it",
+        "its", "me", "my", "no", "not", "of", "on", "or", "our", "she", "should",
+        "so", "than", "that", "the", "their", "them", "then", "there", "these",
+        "they", "this", "those", "to", "was", "we", "were", "what", "when",
+        "where", "which", "who", "why", "will", "with", "would", "you", "your",
+    }
+)
+
 
 def _content_hash(content: str) -> str:
     normalized = " ".join((content or "").strip().split()).casefold()
@@ -2351,6 +2366,7 @@ class MemoryClient:
             return {token for token in cleaned if len(token) >= 2}
 
         query_tokens = _token_set(query_for_retrieval)
+        content_query_tokens = query_tokens - _QUERY_STOPWORDS
         semantic_floor = semantic_support_floor(
             getattr(self.settings, "embedding_model", None)
         )
@@ -2368,6 +2384,11 @@ class MemoryClient:
             content_tokens = _token_set(memory.content)
             if query_tokens:
                 lexical = len(query_tokens & content_tokens) / len(query_tokens)
+            coverage = 0.0
+            if content_query_tokens:
+                coverage = len(content_query_tokens & (content_tokens - _QUERY_STOPWORDS)) / len(
+                    content_query_tokens
+                )
             identifier_tokens = {
                 token for token in query_tokens if any(char in token for char in "+-/:.@=#")
             }
@@ -2405,7 +2426,19 @@ class MemoryClient:
                 # semantic 0.5436. Keyword and graph scores saturate (an FTS
                 # bm25 of 2.6 and a graph weight of 8.0 both normalise to 1.0),
                 # so they may not outrank the question itself.
-                support = semantic_score if semantic_score >= semantic_floor else 0.0
+                if semantic_score >= semantic_floor:
+                    support = semantic_score
+                elif coverage >= 0.5:
+                    # A short question can sit below the model's floor even
+                    # when the memory literally answers it ("What is the deploy
+                    # target?" against "… deploy target is a private cluster").
+                    # Content-word coverage is the stand-in, and it is only
+                    # consulted below the floor: a row that shares half the
+                    # question's content words is addressing the question, and
+                    # a row that shares none still abstains.
+                    support = coverage
+                else:
+                    support = 0.0
             else:
                 # No usable embedding (test doubles, legacy rows): fall back to
                 # the lexical signals, which need no calibrated scale.
