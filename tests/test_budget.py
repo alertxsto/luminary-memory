@@ -1,4 +1,6 @@
-from luminary_memory.budget import truncate
+import pytest
+
+from luminary_memory.budget import budget_usage, truncate
 from luminary_memory.types import Memory
 
 
@@ -6,14 +8,11 @@ def _mk(content: str) -> Memory:
     return Memory(content=content)
 
 
-def test_truncate_respects_budget():
-    memories = [_mk("hello world"), _mk("foo bar baz"), _mk("something else here")]
-    # budget = 2 tokens (word-level)
-    result = truncate(memories, token_budget=2)
-    assert len(result) <= 2
-    # total tokens in result must fit budget
-    total = sum(len(m.content.split()) for m in result)
-    assert total <= 2
+def test_truncate_uses_bytes_when_no_tokenizer_is_available():
+    memories = [_mk("x" * 8000), _mk("café"), _mk("ok")]
+
+    assert truncate(memories, token_budget=5) == [memories[1]]
+    assert budget_usage("🙂") == (4, "bytes")
 
 
 def test_truncate_empty_returns_empty():
@@ -30,17 +29,35 @@ def test_truncate_zero_budget_returns_empty():
     assert truncate(memories, token_budget=0) == []
 
 
+def test_zero_hard_token_budget_never_requires_a_tokenizer():
+    assert truncate([_mk("hello")], token_budget=0, require_tokenizer=True) == []
+
+
 def test_truncate_preserves_highest_score_order():
     memories = [_mk("keep this one first"), _mk("drop this second one")]
-    result = truncate(memories, token_budget=4)
-    assert result[0].content == "keep this one first"
+    result = truncate(memories, token_budget=19)
+    assert result == [memories[0]]
 
 
-def test_truncate_custom_tokenizer():
+def test_truncate_custom_tokenizer_skips_oversized_memory():
     memories = [_mk("hello world"), _mk("foo")]
-    result = truncate(memories, token_budget=1, tokenizer=lambda s: list(s))
-    # tokenizer counts chars here, budget 1 => first memory too long, falls through
-    assert isinstance(result, list)
+    result = truncate(memories, token_budget=1, tokenizer=lambda text: text.split())
+    assert result == [memories[1]]
+    assert budget_usage("🙂", tokenizer=list) == (1, "tokens")
+
+
+def test_truncate_includes_serialized_header_and_unicode_bytes():
+    memories = [_mk("a"), _mk("too long to fit"), _mk("猫")]
+    serialize = lambda items: 'header[' + ",".join(f'"{m.content}"' for m in items) + ']'
+
+    assert truncate(memories, token_budget=17, serialize=serialize) == [
+        memories[0], memories[2]
+    ]
+
+
+def test_hard_token_budget_requires_an_actual_tokenizer():
+    with pytest.raises(ValueError, match="tokenizer"):
+        truncate([_mk("small")], token_budget=100, require_tokenizer=True)
 
 
 def test_env_float_invalid_returns_default(monkeypatch):

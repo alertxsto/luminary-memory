@@ -1,5 +1,7 @@
 """Regression tests for active-task continuity and scoped session episodes."""
 
+import pytest
+
 from luminary_memory.hermes.provider import LuminaryMemoryProvider
 
 
@@ -18,6 +20,8 @@ def _provider(tmp_path, **overrides):
         hermes_home=str(tmp_path),
         platform="cli",
         agent_identity="agent-a",
+        user_id="alice",
+        agent_workspace="workspace-a",
     )
     provider._config.update(overrides)
     provider._client.engine = _FakeEngine()
@@ -53,7 +57,8 @@ def test_session_continuity_does_not_cross_session_or_identity(tmp_path):
             "current session topic",
             source="hermes-session",
             metadata={"sequence": 1},
-            user_id="",
+            user_id="alice",
+            workspace_id="workspace-a",
             session_id="session-current",
             agent_id="agent-a",
         )
@@ -62,7 +67,8 @@ def test_session_continuity_does_not_cross_session_or_identity(tmp_path):
             "other session secret topic",
             source="hermes-session",
             metadata={"sequence": 2},
-            user_id="",
+            user_id="alice",
+            workspace_id="workspace-a",
             session_id="session-other",
             agent_id="agent-a",
         )
@@ -71,7 +77,8 @@ def test_session_continuity_does_not_cross_session_or_identity(tmp_path):
             "other agent secret topic",
             source="hermes-session",
             metadata={"sequence": 3},
-            user_id="",
+            user_id="alice",
+            workspace_id="workspace-a",
             session_id="session-current",
             agent_id="agent-b",
         )
@@ -96,3 +103,10 @@ def test_async_prefetch_uses_provider_session_when_hermes_omits_id(tmp_path):
         assert "scoped episode ledger" in block
     finally:
         provider.shutdown()
+
+
+def test_initialize_rejects_incomplete_trusted_identity(tmp_path):
+    provider = LuminaryMemoryProvider()
+    with pytest.raises(ValueError):
+        provider.initialize("session-current", hermes_home=str(tmp_path),
+                            agent_identity="agent-a", agent_workspace="workspace-a")

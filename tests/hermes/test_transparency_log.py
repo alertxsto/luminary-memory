@@ -15,6 +15,25 @@ class _FakeEngine:
         return [self.embed(text) for text in texts]
 
 
+def test_usage_telemetry_emits_redacted_deltas_only(tmp_path):
+    provider = LuminaryMemoryProvider()
+    provider.initialize("s", hermes_home=str(tmp_path), user_id="user",
+                        agent_workspace="workspace", agent_identity="agent")
+    class Enricher:
+        def usage_snapshot(self):
+            return {"calls": 1, "attempts": 2, "prompt_tokens": 10,
+                    "completion_tokens": None, "total_tokens": None, "secret": "private"}
+    provider._client.enricher = Enricher()
+    provider._log_usage(provider._client)
+    provider._log_usage(provider._client)
+    events = [json.loads(line) for line in
+              (tmp_path / "luminary" / "luminary.log").read_text().splitlines()]
+    usage = [event["usage"] for event in events if event["event"] == "llm.usage"]
+    assert usage == [{"calls": 1, "attempts": 2, "prompt_tokens": 10,
+                      "completion_tokens": None, "total_tokens": None}]
+    assert "private" not in json.dumps(usage)
+    provider.shutdown()
+
 def test_transparency_log_is_scoped_correlated_and_redacted(tmp_path):
     provider = LuminaryMemoryProvider()
     provider.initialize(
@@ -78,8 +97,10 @@ def test_transparency_logs_are_isolated_per_hermes_home(tmp_path):
     second_home = tmp_path / "second"
     first = LuminaryMemoryProvider()
     second = LuminaryMemoryProvider()
-    first.initialize("first-session", hermes_home=str(first_home), user_id="first-user")
-    second.initialize("second-session", hermes_home=str(second_home), user_id="second-user")
+    first.initialize("first-session", hermes_home=str(first_home), user_id="first-user",
+                     agent_workspace="first-workspace", agent_identity="first-agent")
+    second.initialize("second-session", hermes_home=str(second_home), user_id="second-user",
+                      agent_workspace="second-workspace", agent_identity="second-agent")
 
     first._log_event("test.first", operation="test", status="ok")
     second._log_event("test.second", operation="test", status="ok")

@@ -16,7 +16,7 @@ class Conflict(Exception):
     """A confirmed proposal no longer describes the current resource set."""
 
 
-KINDS = {"create", "correct", "tag", "core", "resolve_conflict", "retract", "grant", "revoke", "bind_location"}
+KINDS = {"create", "correct", "tag", "core", "resolve_conflict", "retract", "grant", "revoke", "bind_location", "assign_legacy"}
 
 
 def _context_binding(context):
@@ -32,6 +32,26 @@ class PreviewManager:
     def __init__(self, service):
         self.service = service
         self.backend = service.client.backend
+
+    @staticmethod
+    def _legacy_owner(memory, context):
+        fields = ("user_id", "workspace_id", "agent_id")
+        present = [field for field in fields if getattr(memory, field) not in (None, "")]
+        # Fully unowned rows belong to the local namespace, not to a user; only
+        # a partially owned row that already names this owner is assignable.
+        return bool(present) and all(
+            getattr(memory, field) in (None, "", getattr(context, field)) for field in fields
+        )
+
+    def legacy_inventory(self, context):
+        """Read candidates for this trusted owner without assigning or changing rows."""
+        validate_context(self.service.client, context)
+        return [
+            {"memory_id": memory.id, "revision": memory.revision, "content": memory.content,
+             "user_id": memory.user_id, "workspace_id": memory.workspace_id,
+             "agent_id": memory.agent_id, "session_id": memory.session_id}
+            for memory in self.backend.all() if self._legacy_owner(memory, context)
+        ]
 
     def prepare(self, context, request, kind, payload, *, before=None, after=None, effects=None, checks=None):
         authorization = self.service.authorizer(context, request)
@@ -123,6 +143,12 @@ class PreviewManager:
     def preview_change(self, context, request):
         args = thaw(request.arguments)
         kind = args.get("kind")
+        if kind == "purge":
+            from luminary_memory.inspector import purge
+            return purge.preview(self.service, context, request)
+        if kind == "maintenance_proposal":
+            from luminary_memory.inspector import llm_maintenance
+            return llm_maintenance.preview(self.service, context, request)
         if kind not in KINDS:
             from luminary_memory.inspector import features
             return features.preview_change(self.service, context, request)
@@ -142,6 +168,17 @@ class PreviewManager:
         memory = self.backend.get(memory_id)
         if memory is None:
             raise PermissionError("memory is not accessible")
+        if kind == "assign_legacy":
+            if request.selection_handle is not None or not self._legacy_owner(memory, context):
+                raise PermissionError("legacy row is not assignable to this owner")
+            expected = args.get("expected_revision")
+            if isinstance(expected, bool) or not isinstance(expected, int) or expected != memory.revision:
+                raise Conflict("content revision changed")
+            old_scope = {field: getattr(memory, field) for field in ("user_id", "workspace_id", "agent_id", "session_id")}
+            new_scope = {field: getattr(context, field) for field in ("user_id", "workspace_id", "agent_id")}
+            return self.prepare(context, request, kind, {"memory_id": memory_id, "expected_revision": expected},
+                                before={"content": memory.content, **old_scope}, after=new_scope,
+                                effects={"count": 1}, checks={"scope": old_scope})
         action = "retract" if kind == "retract" else "edit"
         authorization.require(action, memory)
         expected = args.get("expected_revision")
@@ -230,6 +267,12 @@ class PreviewManager:
             return self._apply_policy(context, kind, payload)
         if kind == "maintenance":
             return self._apply_maintenance(context, authorization, preview)
+        if kind == "purge":
+            from luminary_memory.inspector import purge
+            return purge.apply(self.service, context, authorization, preview)
+        if kind == "maintenance_proposal":
+            from luminary_memory.inspector import llm_maintenance
+            return llm_maintenance.apply(self.service, context, authorization, preview)
         if kind not in KINDS:
             from luminary_memory.inspector import features
             return features.apply_preview(self.service, context, preview, on_external_effect=on_external_effect)
@@ -247,6 +290,21 @@ class PreviewManager:
             inserted = memory.source_id == observation
             return {"memory_id": memory_id, "revision": memory.revision, "audit": "committed",
                     "stored": int(inserted), "duplicates": int(not inserted)}
+        if kind == "assign_legacy":
+            if request.selection_handle is not None:
+                raise PermissionError("assignment requires the native own project")
+            memory = self.backend.get(payload["memory_id"])
+            if memory is None or memory.revision != payload["expected_revision"]:
+                raise Conflict("resource changed")
+            current = {field: getattr(memory, field) for field in ("user_id", "workspace_id", "agent_id", "session_id")}
+            if current != preview["checks"]["scope"] or not self._legacy_owner(memory, context):
+                raise Conflict("legacy ownership changed")
+            for field in ("user_id", "workspace_id", "agent_id"):
+                setattr(memory, field, getattr(context, field))
+            self.backend.update(memory)
+            self.backend.record_event("inspector_assign_legacy", memory.id, before=current,
+                                      after={field: getattr(memory, field) for field in current}, actor="inspector-owner")
+            return {"memory_id": memory.id, "revision": memory.revision, "audit": "committed"}
         memory = self.backend.get(payload["memory_id"])
         if memory is None:
             raise Conflict("resource was removed")

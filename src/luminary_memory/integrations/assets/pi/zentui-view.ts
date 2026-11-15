@@ -1,8 +1,8 @@
 // Pi inspector surface styled after Zentui (github.com/lmilojevicc/pi-zentui, MIT):
-// framed cards, an accent rail on the selected row, a numbered section strip and
-// a compact key-help footer. The layout is written here, not copied: Zentui's
-// components own Pi's editor, transcript and footer, while this view renders one
-// overlay and must never take over those host surfaces.
+// one quiet ledger — a single accent rail on the selected row, a numbered section
+// strip, hairline dividers and a compact key line. Zentui owns Pi's editor,
+// transcript and footer; this view renders only Luminary's overlay and never
+// takes those host surfaces over.
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { TABS } from "../common/console-contract.js";
 import type { InspectorController } from "../common/console-controller.js";
@@ -31,7 +31,7 @@ type InspectorKey =
 
 type ColorRole = "accent" | "muted" | "warning";
 
-/** Zentui-style frame for the Luminary inspector. One card, one accent rail. */
+/** Luminary's inspector, drawn as a compact ledger. */
 export class ZentuiInspectorView {
   selected = 0;
   offset = 0;
@@ -49,33 +49,54 @@ export class ZentuiInspectorView {
     private height: () => number,
   ) {}
 
-  handleInput(data: string) {
+  /**
+   * Decode raw terminal input first, then fall back to the host matcher.
+   *
+   * The host's key names differ between Pi releases and a custom overlay does
+   * not always receive them, so the sequences a terminal actually sends decide
+   * navigation. Returning true tells the host the key was consumed.
+   */
+  handleInput(data: string): boolean {
     const rows = inspectorRows(this.controller);
-    if (this.key(data, "escape") || this.key(data, "ctrl+c")) this.finish({ type: "close" });
-    else if (this.key(data, "tab") || this.key(data, "right") || this.key(data, "shift+tab") || this.key(data, "left")) {
-      const direction = this.key(data, "shift+tab") || this.key(data, "left") ? -1 : 1;
+    const is = (key: InspectorKey, ...sequences: string[]) =>
+      sequences.includes(data) || this.key(data, key);
+    const close = is("escape", "\u001b", "q") || is("ctrl+c", "\u0003");
+    const nextSection = is("tab", "\t", "\u001b[C") || is("right");
+    const previousSection = is("shift+tab", "\u001b[Z") || is("left", "\u001b[D");
+    const up = is("up", "\u001b[A") || data === "k";
+    const down = is("down", "\u001b[B") || data === "j";
+    const pageUp = is("pageUp", "\u001b[5~") || data === "\u001b[1;5A";
+    const pageDown = is("pageDown", "\u001b[6~") || data === "\u001b[1;5B";
+    const confirm = is("enter", "\r", "\n") || data === "a";
+
+    if (close) this.finish({ type: "close" });
+    else if (nextSection || previousSection) {
       const index = TABS.findIndex((tab) => tab.id === this.controller.state.tab);
+      const step = previousSection ? -1 : 1;
       this.selected = 0;
       this.offset = 0;
-      void this.controller.selectTab(TABS[(index + direction + TABS.length) % TABS.length].id);
-    } else if (this.key(data, "up") || data === "k") {
+      void this.controller.selectTab(TABS[(index + step + TABS.length) % TABS.length].id);
+    } else if (/^[1-9]$/.test(data) && Number(data) <= TABS.length) {
+      this.selected = 0;
+      this.offset = 0;
+      void this.controller.selectTab(TABS[Number(data) - 1].id);
+    } else if (up) {
       if (rows.length) this.selected = Math.max(0, this.selected - 1);
       else this.offset = Math.max(0, this.offset - 1);
-    } else if (this.key(data, "down") || data === "j") {
+    } else if (down) {
       if (rows.length) this.selected = Math.min(Math.max(0, rows.length - 1), this.selected + 1);
       else this.offset++;
-    } else if (this.key(data, "pageUp")) {
-      if (rows.length) this.selected = Math.max(0, this.selected - 10);
-      else this.offset = Math.max(0, this.offset - 10);
-    } else if (this.key(data, "pageDown")) {
-      if (rows.length) this.selected = Math.min(Math.max(0, rows.length - 1), this.selected + 10);
-      else this.offset += 10;
-    } else if (this.key(data, "enter") || data === "a") this.finish({ type: "actions", row: rows[this.selected] });
+    } else if (pageUp) {
+      this.selected = Math.max(0, this.selected - 10);
+    } else if (pageDown) {
+      this.selected = rows.length ? Math.min(rows.length - 1, this.selected + 10) : this.offset + 10;
+    } else if (confirm) this.finish({ type: "actions", row: rows[this.selected] });
     else if (data === "/") this.finish({ type: "search" });
     else if (data === "r") this.finish({ type: "refresh" });
     else if (data === "t") this.finish({ type: "tabs" });
     else if (data === "c") this.finish({ type: "compact" });
     this.repaint();
+    return true;
   }
 
   /** Pi forwards these normalized events only when its native fullscreen routes them. */
@@ -89,7 +110,7 @@ export class ZentuiInspectorView {
       return { handled: true };
     }
     if (event.type !== "click" || event.button !== "left") return;
-    if (event.y === 1) {
+    if (event.y === 2) {
       const tab = this.tabRanges.find((range) => event.x >= range.start && event.x < range.end);
       if (tab) {
         this.selected = 0;
@@ -106,68 +127,73 @@ export class ZentuiInspectorView {
     return { handled: true, focus: true };
   }
 
-  private inner(line: string, width: number, role: ColorRole = "muted"): string {
-    const body = Math.max(1, width - 2);
-    const text = this.truncate(line, body);
-    const padding = " ".repeat(Math.max(0, body - visibleWidth(text)));
-    return this.color(role, "│") + text + padding + this.color(role, "│");
+  private line(text: string, width: number, role?: ColorRole): string {
+    const body = this.truncate(text, Math.max(1, width));
+    const padding = " ".repeat(Math.max(0, width - visibleWidth(body)));
+    return (role ? this.color(role, body) : body) + padding;
   }
 
-  private rule(left: string, right: string, width: number, corner: [string, string]): string {
-    const body = Math.max(1, width - 2);
-    const tail = right ? ` ${right} ─` : "─";
-    const lead = `─ ${left} `;
-    if (visibleWidth(lead) + visibleWidth(tail) > body) {
-      const text = this.truncate(`─ ${left}`, Math.max(0, body - 1));
-      return this.color(
-        "muted",
-        corner[0] + text + "─".repeat(Math.max(0, body - visibleWidth(text))) + corner[1],
-      );
-    }
-    return this.color(
-      "muted",
-      corner[0] + lead + "─".repeat(body - visibleWidth(lead) - visibleWidth(tail)) + tail + corner[1],
-    );
+  private divider(width: number): string {
+    return this.color("muted", "─".repeat(Math.max(1, width)));
   }
 
   private tabStrip(width: number): string {
-    const body = Math.max(1, width - 2);
-    let line = "";
+    const lines: string[] = [];
     this.tabRanges = [];
-    // Inner text starts at screen column 1; this string opens with one space.
-    let column = 2;
+    let column = 1;
+    let line = "";
+    let clipped = false;
     for (const [index, tab] of TABS.entries()) {
       const label = `${index + 1} ${tab.label}`;
       const active = tab.id === this.controller.state.tab;
       const rendered = active ? this.color("accent", `▎${label}`) : `  ${label}`;
       const size = visibleWidth(rendered);
-      if (column + size > body + 1) break;
+      if (column + size > width) {
+        clipped = true;
+        break;
+      }
       this.tabRanges.push({ start: column, end: column + size, index });
-      line += rendered + " ";
-      column += size + 1;
+      line += `${rendered}  `;
+      column += size + 2;
     }
-    return ` ${line.trimEnd()}`;
+    // The rest stay reachable with Tab; say so rather than hiding them silently.
+    if (clipped && column + 1 <= width) line += this.color("muted", "…");
+    lines.push(` ${line.trimEnd()}`);
+    return lines[0];
+  }
+
+  private fitRow(row: InspectorRow, width: number): string {
+    const permissions = row.permissions
+      ? Object.keys(row.permissions).filter((name) => row.permissions?.[name]).join(" ")
+      : "";
+    const id = String(row.id ?? row.event_id ?? "");
+    const left = `${id.padStart(3)}  ${inspectorRowContent(row)}`;
+    if (!permissions) return left;
+    const mark = `  ${permissions}`;
+    const room = width - visibleWidth(left) - visibleWidth(mark);
+    // Drop the trailing badge first: the record itself is what the user acts on.
+    return room > 0 ? `${left}${" ".repeat(room)}${this.color("muted", mark)}` : left;
   }
 
   render(width: number): string[] {
     const state = this.controller.state;
     const tab = TABS.find((item) => item.id === state.tab)!;
-    const lines: string[] = [];
     const status = state.busy ? "loading" : state.status;
-    lines.push(this.rule(`Luminary · ${tab.label}`, status, width, ["╭", "╮"]));
+    const project = this.controller.selectionHandle ? "shared" : "native";
+    const right = `policy ${state.policy_revision ?? "—"} · ${project}`;
+    const title = ` 🌙 Luminary · ${tab.label} · ${status}`;
+    const gap = Math.max(1, width - visibleWidth(title) - visibleWidth(right));
+    const lines: string[] = [title + " ".repeat(gap) + this.color("muted", right), this.divider(width)];
+    lines.push(this.line(this.tabStrip(width), width));
+    lines.push(this.divider(width));
 
-    const project = this.controller.selectionHandle ? "shared selection" : "native project";
-    lines.push(this.inner(` ${project} · policy ${state.policy_revision ?? "—"} · ${state.as_of ?? ""}`, width));
     const context = inspectorContextLine(this.controller);
-    if (context) lines.push(this.inner(` ${this.color("muted", context)}`, width));
-    lines.push(this.inner("", width));
-    lines.push(this.inner(this.tabStrip(width), width));
-    lines.push(this.inner("", width));
+    if (context) lines.push(this.line(` ${this.color("muted", context)}`, width));
 
     const rows = inspectorRows(this.controller);
-    const chrome = lines.length + 3;
-    const available = Math.max(1, this.height() - chrome);
-    this.rowStart = lines.length;
+    const footer = 2 + (state.error ? 1 : 0) + inspectorSummaryLines(this.controller).length;
+    const available = Math.max(1, this.height() - lines.length - footer - 1);
+    this.rowStart = lines.length + 1;
     this.rowCount = Math.min(rows.length, available);
     this.selected = Math.min(this.selected, Math.max(0, rows.length - 1));
 
@@ -176,14 +202,16 @@ export class ZentuiInspectorView {
       if (this.selected >= this.offset + available) this.offset = this.selected - available + 1;
       for (const [index, row] of rows.slice(this.offset, this.offset + available).entries()) {
         const position = this.offset + index;
-        const permissions = row.permissions
-          ? ` [${Object.keys(row.permissions).filter((name) => row.permissions?.[name]).join(",")}]`
-          : "";
-        const label = ` ${row.id ?? row.event_id ?? ""} ${inspectorRowContent(row)}${permissions}`;
-        lines.push(position === this.selected ? this.inner(this.color("accent", `▎${label}`), width) : this.inner(label, width));
+        const text = this.fitRow(row, Math.max(1, width - 3));
+        lines.push(position === this.selected
+          ? this.color("accent", ` ❯ ${text}`)
+          : `   ${text}`);
       }
     } else if (state.tab === "activity") {
-      lines.push(this.inner(state.data.gap === true ? " Activity history is incomplete. r: reload" : " No activity recorded in this authorized scope.", width, state.data.gap === true ? "warning" : "muted"));
+      const message = state.data.gap === true
+        ? " Activity history is incomplete · r reloads"
+        : " No activity recorded in this authorized scope";
+      lines.push(this.line(message, width, state.data.gap === true ? "warning" : "muted"));
     } else {
       const projection = Object.fromEntries(
         Object.entries(state.data).filter(
@@ -192,25 +220,39 @@ export class ZentuiInspectorView {
       );
       const body = Object.keys(projection).length
         ? JSON.stringify(projection, null, 2).split("\n")
-        : [" No records in this authorized view."];
+        : [" Nothing in this authorized view."];
       this.offset = Math.min(this.offset, Math.max(0, body.length - available));
-      for (const line of body.slice(this.offset, this.offset + available)) lines.push(this.inner(line, width));
+      for (const line of body.slice(this.offset, this.offset + available)) {
+        lines.push(this.line(` ${line}`, width));
+      }
     }
 
-    if (state.error) lines.push(this.inner(` ${state.error}`, width, "warning"));
-    for (const line of inspectorSummaryLines(this.controller)) lines.push(this.inner(` ${this.color("muted", line)}`, width));
-    lines.push(this.inner("", width));
-    const search = inspectorCanSearch(this.controller) ? " · / search" : "";
-    const full = `↑↓ select · Enter actions${search} · Tab sections · r refresh · c compact · Esc close`;
-    const compact = `↑↓ · Enter${inspectorCanSearch(this.controller) ? " · /" : ""} · Tab · r · c · Esc`;
-    const help = visibleWidth(` ${full}`) <= Math.max(1, width - 2) ? full : compact;
-    lines.push(this.inner(` ${this.color("muted", help)}`, width));
-    lines.push(this.color("muted", "╰" + "─".repeat(Math.max(1, width - 2)) + "╯"));
-    return lines.map((line) => this.truncate(line, Math.max(1, width)));
+    if (state.error) lines.push(this.line(` ${state.error}`, width, "warning"));
+    for (const line of inspectorSummaryLines(this.controller)) {
+      lines.push(this.line(` ${this.color("muted", line)}`, width));
+    }
+    lines.push(this.divider(width));
+    const search = inspectorCanSearch(this.controller) ? " · / filter" : "";
+    const full = `↑↓ move · ↵ actions${search} · ⇥ section · 1-${TABS.length} jump · r reload · c compact · esc close`;
+    const compact = `↑↓ · ↵${search} · ⇥ · r · c · esc`;
+    const minimal = "↑↓ ↵ ⇥ esc";
+    const help = visibleWidth(full) + 1 <= width ? full : visibleWidth(compact) + 1 <= width ? compact : minimal;
+    lines.push(this.line(` ${help}`, width, "muted"));
+    // Every line owns exactly one terminal row; short rows are padded here so
+    // the host never paints stale cells from a previous frame.
+    return lines.map((line) => this.line(line, Math.max(1, width)));
   }
 
   invalidate() {
     this.tabRanges = [];
     this.rowCount = 0;
   }
+
+  /** Focus hooks: a custom overlay may be asked to take or yield input. */
+  focus() {
+    this.repaint();
+  }
+
+  blur() {}
+
 }

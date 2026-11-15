@@ -15,7 +15,8 @@ class _FakeEngine:
 
 def _init_provider(tmp_path, **overrides):
     p = LuminaryMemoryProvider()
-    p.initialize("s1", hermes_home=str(tmp_path), platform="cli", agent_identity="test")
+    p.initialize("s1", hermes_home=str(tmp_path), platform="cli", agent_identity="test",
+                 user_id="test-user", agent_workspace="test-workspace")
     p._config.update(overrides)
     p._client.engine = _FakeEngine()
     return p
@@ -81,6 +82,35 @@ def test_session_end_flushes_pending_turns(tmp_path, monkeypatch):
     p.sync_turn("final turn", "reply", session_id="s1")
     p.on_session_end(messages=[{"role": "user", "content": "final turn"}])
     assert _wait_for_store(p, 1), "on_session_end did not flush"
+    p.shutdown()
+
+
+def test_session_end_runs_retention_after_queue_drains(tmp_path, monkeypatch):
+    from luminary_memory.lifecycle import runner
+
+    p = _init_provider(tmp_path)
+    order = []
+    p._retain_queue.put((lambda: order.append("written"),))
+    def retention(*args, **kwargs):
+        order.append("retention")
+        return {"status": "completed", "ledgers": {}}
+    monkeypatch.setattr(runner, "run_safe_retention", retention)
+    p.on_session_end([])
+    assert order == ["written", "retention"]
+    p.shutdown()
+
+
+def test_session_end_exposes_retention_failure(tmp_path, monkeypatch):
+    import pytest
+
+    from luminary_memory.lifecycle import runner
+
+    p = _init_provider(tmp_path)
+    def fail(*args, **kwargs):
+        raise RuntimeError("retention unavailable")
+    monkeypatch.setattr(runner, "run_safe_retention", fail)
+    with pytest.raises(RuntimeError, match="retention unavailable"):
+        p.on_session_end([])
     p.shutdown()
 
 

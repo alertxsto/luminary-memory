@@ -111,6 +111,53 @@ configured, but a scoped client cannot mutate them. Normal recall hides
 `conflicted`, `superseded`, deleted, and expired rows; `include_conflicted`
 exists for diagnostics.
 
+## Ownership and legacy migration
+
+These are unreleased source behaviors. Supply a complete user, workspace, and
+agent identity for scoped reads. Omitting a session permits durable reads across
+that identity's sessions; specifying one restricts the session. An unscoped
+client reads only fully unowned local records. `scope_include_global=True`
+explicitly adds fully unowned records to scoped reads, not partial records or
+permission to mutate them.
+
+A scope that names only some identity fields matches exactly on the fields it
+names and requires the omitted ones to be absent, so it never widens to another
+owner's record. It must include `user_id`: a workspace path alone is guessable
+and authorizes nothing. Exact-session episode reads are the exception; a missing
+user there matches the session's own rows whose user is also absent.
+
+Existing records with incomplete ownership may disappear from scoped results.
+Startup does not assign their ownership. Back up the store before a migration
+that changes data. The trusted native inspector's `legacy_inventory` operation
+lists incomplete records whose populated owner fields match the current owner;
+it does not modify them. Its `assign_legacy` preview requires the record ID and
+current revision, shows the ownership change, and requires owner confirmation.
+Records belonging to a different populated owner cannot be adopted this way.
+
+Native inspector transfer accepts missing owner fields only when the trusted
+own-project import preview explicitly sets `assign_legacy=true`; the preview
+lists assignments for owner confirmation. A file cannot choose a different
+populated owner. Direct Python and CLI import are not assignment operations:
+the whole batch must match the target ownership or it is rejected before writes.
+An unscoped import can still import fully unowned local records. Transfer
+exports are memory-record exports, not complete backups of episodes, secrets,
+configuration, or host state.
+
+These controls assume a trusted deployment owner. They are not authentication
+or isolation against arbitrary processes running as the same OS user; use a
+trusted principal and suitable database isolation for multi-user deployments.
+
+## Safe retention
+
+`luminary_memory.lifecycle.runner.run_safe_retention(backend, settings,
+scope=None, include_global=False)` runs a bounded, store-coordinated pass when
+due. It returns `status="not_due"` or `status="completed"` with `cleanup` and
+`ledgers` results. The latter reports `count`, `cap`, `overflow`, and `pruned`
+for each of `episodes`, `memory_events`, and `memory_evidence`. Protected
+references can leave a ledger above its cap; inspect `overflow` rather than
+assuming physical rows have been removed. Direct library users can invoke the
+pass explicitly; its interval is configured by `retention_interval_seconds`.
+
 ## Result and provenance shape
 
 `RecallResult` contains `memories`, parallel `scores`, `strategies_hit`,

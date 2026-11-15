@@ -65,7 +65,7 @@ def export_memories(
     path: str | Path,
     include_embeddings: bool = True,
     scope: dict | None = None,
-    include_global: bool = True,
+    include_global: bool = False,
 ) -> dict:
     normalized_scope = normalize_scope(scope)
     memories = [
@@ -134,7 +134,7 @@ def import_memories(
     engine=None,
     recompute_embeddings: bool = True,
     scope: dict | None = None,
-    include_global: bool = True,
+    include_global: bool = False,
 ) -> dict:
     p = Path(path)
     payload = json.loads(p.read_text(encoding="utf-8"))
@@ -256,18 +256,11 @@ def import_memories(
             content_hash=computed_hash if supplied_hash != computed_hash else supplied_hash,
             needs_reindex=bool(d.get("needs_reindex", False)),
         )
-        if normalized_scope:
-            # A scoped import cannot silently create global rows.  Explicit
-            # row ownership wins only when it matches the target scope.
-            mismatched = False
-            for field, value in normalized_scope.items():
-                existing = getattr(m, field, None)
-                if existing is not None and str(existing) != value:
-                    mismatched = True
-                    break
-                setattr(m, field, value)
-            if mismatched:
-                continue
+        # Import is not an ownership-assignment operation. Validate the entire
+        # batch before writing anything; a separate owner-confirmed flow is
+        # required to assign partial or unowned legacy records.
+        if not memory_matches_scope(m, normalized_scope, include_global=False, active_only=False):
+            raise PermissionError("imported record is outside the exact target ownership")
         records.append((d, m))
 
     if not records:

@@ -319,3 +319,17 @@ def test_new_observation_session_cannot_escape_a_bound_client_session(scenario):
         scoped.supersede(original.id, "An unauthorized cross-session observation",
                          session_id="another-session", source_id="must-not-be-saved")
     assert scenario.snapshot() == before
+
+
+def test_legacy_assignment_rejects_changed_owner_after_confirmation(scenario):
+    backend = scenario.client.backend
+    legacy = backend.add(Memory(content="legacy", user_id="alice"))
+    preview = scenario.preview("assign_legacy", memory_id=legacy,
+                               expected_revision=backend.get(legacy).revision)
+    receipt = scenario.service.confirm(scenario.context, preview)
+    changed = backend.get(legacy)
+    changed.user_id = "bob"
+    backend.update(changed)
+    result = scenario.request("mutate", preview_id=preview, confirmation_receipt=receipt)
+    assert result.status == "conflict"
+    assert backend.get(legacy).user_id == "bob"

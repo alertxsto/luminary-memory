@@ -106,8 +106,8 @@ involved. Every field is documented with:
 
 | Field | Env var | Default | Meaning |
 |-------|---------|---------|---------|
-| `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Sentence-transformer used for semantic similarity. Language coverage follows the selected model; the memory pipeline does not classify durability from vocabulary. |
-| `embedding_dim` | `LUMINARY_EMBEDDING_DIM` | `384` | Embedding vector dimension, must match the model output and the pgvector column. |
+| `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` | Sentence-transformer used for semantic similarity. Language coverage follows the selected model; the memory pipeline does not classify durability from vocabulary. The default is multilingual so a question asked in the user's own language can reach a memory stored in that language. |
+| `embedding_dim` | `LUMINARY_EMBEDDING_DIM` | `768` | Embedding vector dimension, must match the model output and the pgvector column. It follows `embedding_model` by default; set it explicitly only when you pin a model the library does not know. |
 
 ## Recall
 
@@ -141,11 +141,11 @@ Controls how stored memories are matched and ranked against a query.
 
 | Field | Env var | Default | Meaning |
 |-------|-----------|---------|---------|
-| `strict_recall` | `LUMINARY_STRICT_RECALL` | `false` for legacy library clients | Enables abstention when support is weak or ambiguous. Hermes and CLI enable it explicitly. |
-| `scope_include_global` | `LUMINARY_SCOPE_INCLUDE_GLOBAL` | `true` | Allows intentionally global rows to remain visible to a scoped caller; set `false` for strict tenant isolation. |
+| `strict_recall` | `LUMINARY_STRICT_RECALL` | `true` | Enables abstention when support is weak or ambiguous. Set `LUMINARY_STRICT_RECALL=0` only for a caller that deliberately wants permissive recall. |
+| `scope_include_global` | `LUMINARY_SCOPE_INCLUDE_GLOBAL` | `false` | Explicitly includes fully unowned records in scoped reads; partial ownership is not a global grant. |
 | `abstention_min_confidence` | `LUMINARY_ABSTENTION_MIN_CONFIDENCE` | `0.34` | Minimum conservative confidence for strict recall. |
 | `abstention_min_margin` | `LUMINARY_ABSTENTION_MIN_MARGIN` | `0.04` | Minimum top-vs-second margin for ambiguous strict results. |
-| `evidence_required` | `LUMINARY_EVIDENCE_REQUIRED` | `false` for legacy library clients | Requires evidence/source provenance for strict results and maintenance mutations. Hermes and CLI enable it explicitly. |
+| `evidence_required` | `LUMINARY_EVIDENCE_REQUIRED` | `true` | Requires evidence/source provenance for returned facts and maintenance proposals. Legacy rows without a quote stop being returned until repaired. |
 
 ### Semantic support floor
 
@@ -156,11 +156,28 @@ floor measured for the configured model.
 
 | Model | Floor | Source |
 |-------|-------|--------|
-| `BAAI/bge-small-en-v1.5` (default) | `0.635` | midpoint of the measured answer/no-answer gap on both gold fixtures |
+| `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` (default) | `0.39` | lowest floor that still rejects every no-answer case on both gold fixtures |
+| `BAAI/bge-small-en-v1.5` | `0.635` | midpoint of the measured answer/no-answer gap on both gold fixtures |
 | any model without a measurement | `0.78` | conservative default |
+
+The multilingual default trades a little English recall for language coverage:
+on the gold fixtures it scores `0.75` recall@10 against `0.85` for
+`BAAI/bge-small-en-v1.5`, with the same wrong-hit rate. Set
+`LUMINARY_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5` to keep the English-only
+behaviour, then run `luminary-memory reindex` so the stored vectors match the
+new width.
 
 The conservative default matters: switching `LUMINARY_EMBEDDING_MODEL` to an
 unmeasured model cannot make strict recall answer more, only abstain more.
+
+### Abstention gate
+
+`abstention_min_confidence` is also model-scoped, because the gate is the score
+of a candidate that only just clears the floor. `config.abstention_confidence_floor(model_name)`
+returns `0.27` for the multilingual default, `0.34` for
+`BAAI/bge-small-en-v1.5`, and `0.34` for any unmeasured model. Rows without a
+usable embedding keep the `0.34` gate regardless of model: their score comes
+from lexical overlap, which has no calibrated scale.
 Re-measure before lowering a floor for a new model — the gold fixture is the
 reference, and `benchmarks/baselines/README.md` explains how to run it.
 
@@ -182,10 +199,14 @@ reads these environment variables for the current process:
 | `LUMINARY_AGENT_ID` | `agent_id` |
 | `LUMINARY_SESSION_ID` | `session_id` |
 
-Each configured identity is applied before semantic, keyword, graph, temporal,
-tag, and fallback candidate generation. `scope_include_global=true` keeps
-legacy rows with `NULL` ownership visible during migration; set it to `false`
-for strict tenant isolation.
+Identity fields are applied before candidate generation. A scoped durable read
+requires all of `user_id`, `workspace_id`, and `agent_id`; omitted fields are
+not wildcards. An omitted session permits durable records across sessions of
+that exact identity; a supplied session restricts it. An unscoped client sees
+only records with all four fields absent. Setting `scope_include_global=true`
+also exposes fully unowned records to a scoped reader, but does not authorize
+their mutation or expose partially owned records. See
+[ownership migration](api.md#ownership-and-legacy-migration).
 
 ## Core memory (DB-backed, auto-loaded system prompt)
 
@@ -205,6 +226,7 @@ The Luminary equivalent of Hermes `MEMORY.md`, stored in the DB.
 | `episode_max_rows` | `LUMINARY_EPISODE_MAX_ROWS` | `10000` | Keep the newest scoped episode rows; `0` disables ledger pruning. |
 | `event_max_rows` | `LUMINARY_EVENT_MAX_ROWS` | `50000` | Keep the newest scoped audit-event rows; `0` disables ledger pruning. |
 | `evidence_max_rows` | `LUMINARY_EVIDENCE_MAX_ROWS` | `50000` | Keep the newest scoped evidence rows; `0` disables ledger pruning. |
+| `retention_interval_seconds` | `LUMINARY_RETENTION_INTERVAL_SECONDS` | `3600` | Minimum interval between safe retention passes for a store and scope; `0` makes every trigger due. |
 | `ttl_default_seconds` | `LUMINARY_TTL_DEFAULT_SECONDS` | `0` (none) | Default TTL for memories without an explicit expiry; after this they are candidates for pruning. |
 | `prune_min_importance` | `LUMINARY_PRUNE_MIN_IMPORTANCE` | `0.2` | Memories below this importance are pruned during lifecycle cleanup. |
 | `consolidate_jaccard_threshold` | `LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD` | `0.9` | Token-overlap threshold for merging near-identical memories. |

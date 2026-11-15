@@ -171,7 +171,7 @@ All settings accept a `LUMINARY_*` env var:
 | `backend` | `LUMINARY_BACKEND` | `sqlite` |
 | `db_path` | `LUMINARY_DB_PATH` | `luminary_memory.db` |
 | `pg_dsn` | `LUMINARY_PG_DSN` | `postgresql://localhost/luminary_memory` |
-| `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` |
+| `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` |
 | `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` |
 | `importance_recall_boost` | `LUMINARY_IMPORTANCE_RECALL_BOOST` | `1.0` |
 | `rule_auto_replace` | `LUMINARY_RULE_AUTO_REPLACE` | `true` |

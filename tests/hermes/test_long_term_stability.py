@@ -22,7 +22,8 @@ class _FakeEngine:
 def _provider(tmp_path, **kwargs) -> LuminaryMemoryProvider:
     provider = LuminaryMemoryProvider()
     provider.initialize(
-        "session-1", hermes_home=str(tmp_path), platform="cli", agent_identity="test", **kwargs
+        "session-1", hermes_home=str(tmp_path), platform="cli", agent_identity="test",
+        user_id="test-user", agent_workspace="test-workspace", **kwargs
     )
     provider._client.engine = _FakeEngine()
     return provider
@@ -155,7 +156,8 @@ def test_reinitialize_stops_previous_workers_before_starting_new_session(tmp_pat
     provider = _provider(tmp_path)
     old_writer = provider._writer_thread
     provider.initialize(
-        "session-2", hermes_home=str(tmp_path), platform="cli", agent_identity="test"
+        "session-2", hermes_home=str(tmp_path), platform="cli", agent_identity="test",
+        user_id="test-user", agent_workspace="test-workspace"
     )
 
     assert provider._session_id == "session-2"
@@ -169,7 +171,8 @@ def test_initialize_after_preflight_shutdown_starts_a_live_writer(tmp_path, monk
     provider = LuminaryMemoryProvider()
     provider.shutdown()
     provider.initialize(
-        "session-1", hermes_home=str(tmp_path), platform="cli", agent_identity="test"
+        "session-1", hermes_home=str(tmp_path), platform="cli", agent_identity="test",
+        user_id="test-user", agent_workspace="test-workspace"
     )
     provider._client.engine = _FakeEngine()
     _enable_curator(provider, monkeypatch)

@@ -8,9 +8,11 @@ export function nativeUserSource(quote: unknown, user: string): RememberSource |
   return { kind: "native_user", quote: bounded };
 }
 
-/** Never inherit provenance from a previous call or accept it from tool JSON. */
+/** Bind every invocation to host context; never inherit a previous invocation. */
 export function bridgeEnvironment(agent: string, workspace: string, session_id: string, source?: RememberSource): NodeJS.ProcessEnv {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "LUMINARY_BRIDGE_SOURCE"));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    !["LUMINARY_BRIDGE_SOURCE", "LUMINARY_BRIDGE_CONTEXT"].includes(key.toUpperCase())));
+  env.LUMINARY_BRIDGE_CONTEXT = JSON.stringify({ agent, workspace, session_id });
   env.LUMINARY_BRIDGE_SOURCE = source ? JSON.stringify({ ...source, agent, workspace, session_id }) : "";
   return { ...env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" };
 }

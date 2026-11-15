@@ -62,3 +62,18 @@ def test_backend_failure_is_not_empty(scenario, monkeypatch):
     result = scenario.request("browse")
     assert result.status == "unavailable"
     assert "password" not in json.dumps(result.to_dict())
+
+
+def test_legacy_inventory_is_read_only_and_excludes_other_owners(scenario):
+    backend = scenario.client.backend
+    legacy = backend.add(Memory(content="legacy", user_id="alice"))
+    backend.add(Memory(content="foreign legacy", user_id="bob"))
+    before = scenario.snapshot()
+    result = scenario.request("legacy_inventory")
+    assert result.status == "ok"
+    ids = [item["memory_id"] for item in result.data["items"]]
+    # Every partial row that already names this owner is listed; another
+    # owner's row is never disclosed.
+    assert legacy in ids
+    assert all(row["user_id"] in (None, "alice") for row in result.data["items"])
+    assert scenario.snapshot() == before

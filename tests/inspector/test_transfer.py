@@ -17,7 +17,7 @@ def test_import_digest_change_prevents_commit(scenario, tmp_path):
     path = tmp_path / "selected.json"
     path.write_text(json.dumps({"format": "luminary-memory-export", "version": 1, "memories": [{"content": "Imported original"}]}))
     handle = register_file(scenario.service, scenario.context, path, "read")
-    preview = scenario.request("transfer_preview", direction="import", file_handle=handle)
+    preview = scenario.request("transfer_preview", direction="import", file_handle=handle, assign_legacy=True)
     assert preview.status == "ok", preview.to_dict()
     receipt = scenario.service.confirm(scenario.context, preview.data["preview_id"])
     path.write_text(json.dumps({"format": "luminary-memory-export", "version": 1, "memories": [{"content": "Changed after approval"}]}))
@@ -37,6 +37,27 @@ def test_import_does_not_accept_foreign_record_ownership(scenario, tmp_path):
     assert result.status == "denied", result.to_dict()
 
 
+def test_legacy_import_requires_disclosed_owner_assignment(scenario, tmp_path):
+    from luminary_memory.inspector.transfer import register_file
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps({"format": "luminary-memory-export", "version": 1, "memories": [
+        {"content": "Legacy fact", "user_id": "alice", "session_id": "source-session"},
+    ]}))
+    handle = register_file(scenario.service, scenario.context, path, "read")
+    denied = scenario.request("transfer_preview", direction="import", file_handle=handle)
+    assert denied.status == "denied"
+    preview = scenario.request("transfer_preview", direction="import", file_handle=handle, assign_legacy=True)
+    assert preview.status == "ok"
+    assert preview.data["after"]["ownership_assignments"][0]["fields"] == {
+        "workspace_id": scenario.context.workspace_id, "agent_id": scenario.context.agent_id,
+    }
+    receipt = scenario.service.confirm(scenario.context, preview.data["preview_id"])
+    result = scenario.request("transfer_commit", preview_id=preview.data["preview_id"], confirmation_receipt=receipt)
+    assert result.status == "ok"
+    memory = next(m for m in scenario.client.backend.all() if m.content == "Legacy fact")
+    assert memory.session_id == "source-session"
+
+
 def test_import_rejects_unresolvable_legacy_lineage(scenario, tmp_path):
     from luminary_memory.inspector.transfer import register_file
     path = tmp_path / "lineage.json"
@@ -44,7 +65,7 @@ def test_import_rejects_unresolvable_legacy_lineage(scenario, tmp_path):
         "content": "A successor without its predecessor", "supersedes_id": 987654,
     }]}))
     handle = register_file(scenario.service, scenario.context, path, "read")
-    result = scenario.request("transfer_preview", direction="import", file_handle=handle)
+    result = scenario.request("transfer_preview", direction="import", file_handle=handle, assign_legacy=True)
     assert result.status in {"unsupported", "invalid_request"}, result.to_dict()
 
 
@@ -70,7 +91,7 @@ def test_cyclic_lineage_rejected_before_confirmation(scenario, tmp_path):
     ]}), encoding="utf-8")
     handle = register_file(scenario.service, scenario.context, path, "read")
     before = scenario.snapshot()
-    result = scenario.request("transfer_preview", direction="import", file_handle=handle)
+    result = scenario.request("transfer_preview", direction="import", file_handle=handle, assign_legacy=True)
     assert result.status == "invalid_request", result.to_dict()
     assert scenario.snapshot() == before
 
@@ -82,11 +103,11 @@ def test_import_maps_history_and_reports_only_actual_saves(scenario, tmp_path):
     path = tmp_path / "history.json"
     path.write_text(json.dumps({"format": "luminary-memory-export", "version": 1, "memories": [
         {"id": 1000002, "content": "Imported reviewed policy", "supersedes_id": 1000001, "created_at": "2025-01-02T00:00:00+00:00"},
-        {"id": 1000003, "content": "Previously saved imported policy"},
+        {"id": 1000003, "content": "Previously saved imported policy", "session_id": scenario.context.session_id},
         {"id": 1000001, "content": "Imported previous policy", "status": "superseded", "created_at": "2025-01-01T00:00:00+00:00"},
     ]}), encoding="utf-8")
     handle = register_file(scenario.service, scenario.context, path, "read")
-    preview = scenario.request("transfer_preview", direction="import", file_handle=handle)
+    preview = scenario.request("transfer_preview", direction="import", file_handle=handle, assign_legacy=True)
     assert preview.status == "ok", preview.to_dict()
     receipt = scenario.service.confirm(scenario.context, preview.data["preview_id"])
     result = scenario.request("transfer_commit", preview_id=preview.data["preview_id"], confirmation_receipt=receipt)
@@ -100,9 +121,9 @@ def test_import_maps_history_and_reports_only_actual_saves(scenario, tmp_path):
     assert newer.supersedes_id == older.id
     assert (older.user_id, older.workspace_id, older.agent_id) == (
         scenario.context.user_id, scenario.context.workspace_id, scenario.context.agent_id)
-    assert newer.session_id == scenario.context.session_id
+    assert newer.session_id is None
     before_reimport = scenario.snapshot()
-    repeated_preview = scenario.request("transfer_preview", direction="import", file_handle=handle)
+    repeated_preview = scenario.request("transfer_preview", direction="import", file_handle=handle, assign_legacy=True)
     assert repeated_preview.status == "ok", repeated_preview.to_dict()
     repeated_receipt = scenario.service.confirm(scenario.context, repeated_preview.data["preview_id"])
     repeated = scenario.request("transfer_commit", preview_id=repeated_preview.data["preview_id"], confirmation_receipt=repeated_receipt)
@@ -201,7 +222,7 @@ def test_native_file_selection_cannot_outlive_its_expiry_or_session(scenario, tm
     else:
         context = resolve_context(scenario.client, {**scenario.native, "session_id": "another-session"}, initialize=True)
     before = scenario.snapshot()
-    result = scenario.request("transfer_preview", context=context, direction="import", file_handle=handle)
+    result = scenario.request("transfer_preview", context=context, direction="import", file_handle=handle, assign_legacy=True)
     assert result.status == "denied", result.to_dict()
     assert scenario.snapshot() == before
 
@@ -266,7 +287,7 @@ def test_import_keeps_distinct_historical_observations_and_ignores_foreign_dupli
     handle = register_file(scenario.service, scenario.context, path, "read")
     mappings = []
     for expected in ((2, 0), (0, 2)):
-        preview = scenario.request("transfer_preview", direction="import", file_handle=handle)
+        preview = scenario.request("transfer_preview", direction="import", file_handle=handle, assign_legacy=True)
         assert preview.status == "ok", preview.to_dict()
         receipt = scenario.service.confirm(scenario.context, preview.data["preview_id"])
         result = scenario.request("transfer_commit", preview_id=preview.data["preview_id"], confirmation_receipt=receipt)

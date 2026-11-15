@@ -144,6 +144,14 @@ def recall(
                 typer.echo(json.dumps(payload, indent=2))
                 return
             if not result.memories:
+                if result.status == "unavailable":
+                    # A retrieval failure is not evidence that the store has no
+                    # answer; report it as an error instead of an abstention.
+                    console.print(
+                        f"error: memory retrieval unavailable ({result.reason or 'unknown'})",
+                        markup=False,
+                    )
+                    raise typer.Exit(1)
                 reason = f" ({result.reason})" if result.reason else ""
                 console.print(f"🌙 Luminary — no relevant memories found{reason}", markup=False)
                 return
@@ -348,6 +356,25 @@ def lifecycle(
     client = _client(db_path, backend)
     try:
         result = client.run_lifecycle(semantic=semantic)
+        typer.echo(json.dumps(result, indent=2))
+    finally:
+        client.close()
+
+
+@app.command()
+def reindex(
+    db_path: str | None = typer.Option(None, "--db-path", help="Override SQLite path"),
+    backend: str | None = typer.Option(None, "--backend", help="sqlite | pgvector"),
+) -> None:
+    """Re-embed every stored memory with the configured model.
+
+    Run this after changing LUMINARY_EMBEDDING_MODEL. Recall skips rows whose
+    vector width does not match the current model, so without a reindex the old
+    rows stay stored but never match again.
+    """
+    client = _client(db_path, backend)
+    try:
+        result = client.reindex_embeddings()
         typer.echo(json.dumps(result, indent=2))
     finally:
         client.close()

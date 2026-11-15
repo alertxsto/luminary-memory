@@ -85,11 +85,8 @@ def test_lifecycle_converges_and_does_not_lose_the_control_fact(tmp_path):
         for cycle in range(8):
             client.ingest_batch([_filler(cycle, offset) for offset in range(3)])
 
-        # Consolidation clusters greedily in one pass, so a row that is similar
-        # to several others can be claimed by one cluster and skip comparison
-        # with the rest. Convergence — not one-pass idempotence — is the real
-        # invariant: repeated passes must reach a fixed point instead of
-        # shrinking the store forever.
+        # Similarity never authorizes deleting a fact, so convergence means the
+        # store stops changing rather than shrinking.
         totals = [len(client.list(limit=0))]
         for _ in range(4):
             result = client.run_lifecycle()
@@ -97,7 +94,7 @@ def test_lifecycle_converges_and_does_not_lose_the_control_fact(tmp_path):
             totals.append(len(client.list(limit=0)))
 
         assert totals[-1] == totals[-2], f"lifecycle never converged: {totals}"
-        assert totals[1] < totals[0], f"first pass merged nothing: {totals}"
+        assert totals[-1] == totals[0], f"lifecycle changed the store: {totals}"
 
         result = client.recall(CONTROL_QUERY, limit=5, strict=True)
         assert any(CONTROL in memory.content for memory in result.memories)

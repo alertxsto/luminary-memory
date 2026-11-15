@@ -32,7 +32,7 @@ def prune(
     now=None,
     pin_threshold: float = 0.9,
     scope: dict | None = None,
-    include_global: bool = True,
+    include_global: bool = False,
 ) -> int:
     """Prune low-value memories.
 

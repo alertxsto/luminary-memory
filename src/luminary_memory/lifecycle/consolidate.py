@@ -3,43 +3,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from luminary_memory.recall.dedup import cosine_similarity, jaccard_similarity
-
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from luminary_memory.backends.base import MemoryBackend
 
 
-def _similar(
-    a,
-    b,
-    semantic: bool,
-    semantic_threshold: float,
-    jaccard_threshold: float,
-) -> bool:
-    """Semantic (embedding cosine) similarity with Jaccard fallback."""
-    if semantic:
-        ea = getattr(a, "embedding", None)
-        eb = getattr(b, "embedding", None)
-        if ea and eb and len(ea) == len(eb):
-            # Degenerate embeddings (all-equal values) carry no semantic
-            # signal — cosine of identical constant vectors is 1.0 for any
-            # content. Fall back to Jaccard in that case.
-            if _is_degenerate(ea) or _is_degenerate(eb):
-                return jaccard_similarity(a.content, b.content) >= jaccard_threshold
-            return cosine_similarity(ea, eb) >= semantic_threshold
-        # Missing/invalid embeddings → fall back to token overlap.
-    return jaccard_similarity(a.content, b.content) >= jaccard_threshold
-
-
-def _is_degenerate(vec: list[float]) -> bool:
-    """True when the vector carries no directional signal (all values equal)."""
-    if not vec:
-        return True
-    first = vec[0]
-    # Sample a few positions — full scan is overkill for typical 384-dim.
-    return all(v == first for v in vec[:16])
 
 
 def consolidate(
@@ -49,15 +18,12 @@ def consolidate(
     semantic_threshold: float = 0.85,
     pin_threshold: float = 0.9,
     scope: dict | None = None,
-    include_global: bool = True,
+    include_global: bool = False,
 ) -> int:
-    """Merge near-duplicate memories.
+    """Merge exact duplicates with compatible ownership and provenance.
 
-    Pinned memories (importance >= ``pin_threshold``, e.g. durable rules)
-    are never deleted by consolidation: they are excluded from clusters that
-    would merge them away. A pinned member can still become the cluster
-    master (its content is kept), but it is never a duplicate that gets
-    dropped.
+    Similarity options remain accepted for caller compatibility, but never
+    authorize deletion. Pinned memories are never deleted.
     """
     from luminary_memory.recall.graph import index_memory_entities
     from luminary_memory.scope import memory_matches_scope
@@ -77,18 +43,42 @@ def consolidate(
 
     def _pinned(m) -> bool:
         return float(getattr(m, "importance", 0.0) or 0.0) >= pin_threshold
+    claims_by_id = {}
 
-    def _same_ownership_scope(a, b) -> bool:
-        """Never merge near-duplicates that belong to different owners.
+    def _claims(memory):
+        if memory.id not in claims_by_id:
+            sql = getattr(backend, "_sql", None)
+            table = getattr(backend, "_inspector_table", None)
+            if not callable(sql) or not callable(table):
+                claims_by_id[memory.id] = None
+            else:
+                try:
+                    rows = sql(
+                        f"SELECT subject, predicate, object, polarity, status, confidence, "
+                        f"observed_at, valid_from, valid_to FROM {table('claims')} WHERE memory_id = ?",
+                        (memory.id,),
+                    ).fetchall()
+                    claims_by_id[memory.id] = {tuple(row) for row in rows}
+                except Exception:
+                    logger.warning("could not inspect claims for %s; keeping memory", memory.id, exc_info=True)
+                    claims_by_id[memory.id] = None
+        return claims_by_id[memory.id]
 
-        An unbound lifecycle client is allowed to inspect the whole database,
-        but it is not allowed to collapse two tenants/sessions into one row.
-        The exact four-field identity matches the database dedup invariant and
-        keeps lineage, tags, and future reads attributable to one scope.
-        """
-        return all(
-            getattr(a, field, None) == getattr(b, field, None)
-            for field in ("user_id", "workspace_id", "agent_id", "session_id")
+
+    def _compatible(a, b) -> bool:
+        fields = (
+            "content", "user_id", "workspace_id", "agent_id", "session_id",
+            "source", "source_id", "evidence_quote", "claim_key",
+            "observed_at", "valid_from", "valid_to", "status", "confidence",
+            "supersedes_id", "ttl_seconds", "metadata",
+        )
+        if not all(getattr(a, field, None) == getattr(b, field, None) for field in fields):
+            return False
+        if a.ttl_seconds and a.created_at != b.created_at:
+            return False
+        a_claims, b_claims = _claims(a), _claims(b)
+        return a_claims is not None and b_claims is not None and (
+            not a_claims or not b_claims or a_claims == b_claims
         )
 
     for i, m in enumerate(memories):
@@ -98,14 +88,7 @@ def consolidate(
         for n in memories[i + 1:]:
             if n.id in visited:
                 continue
-            if not _same_ownership_scope(m, n):
-                continue
-            # A shared claim key with different content is a conflict, not a
-            # duplicate.  Embeddings are intentionally not allowed to merge
-            # positive/negative or versioned facts.
-            if m.claim_key and n.claim_key and m.claim_key == n.claim_key and m.content_hash != n.content_hash:
-                continue
-            if _similar(m, n, semantic, semantic_threshold, threshold):
+            if all(_compatible(member, n) for member in cluster):
                 cluster.append(n)
         if len(cluster) < 2:
             continue
@@ -120,7 +103,26 @@ def consolidate(
                 continue
         master = max(cluster, key=lambda x: len(x.content))
         duplicates = [c for c in cluster if c.id != master.id]
+        try:
+            sql = backend._sql
+            table = backend._inspector_table
+            if any(
+                sql(
+                    f"SELECT 1 FROM {table('memories')} WHERE supersedes_id = ? LIMIT 1",
+                    (duplicate.id,),
+                ).fetchone()
+                for duplicate in duplicates
+            ):
+                continue
+        except Exception:
+            logger.warning("could not inspect lineage; keeping duplicates", exc_info=True)
+            continue
+        from luminary_memory.backends.base import MemoryBackend
+
         rehome = getattr(backend, "rehome_memory_references", None)
+        if not callable(rehome) or getattr(rehome, "__func__", None) is MemoryBackend.rehome_memory_references:
+            # A no-op reference transfer cannot establish that deletion is safe.
+            continue
         if callable(rehome):
             rehome_failed = False
             for duplicate in duplicates:
@@ -179,7 +181,6 @@ def consolidate(
                 merged += 1
         visited.add(master.id)  # type: ignore[arg-type]
     logger.info(
-        "consolidate mode=%s merged=%d reviewed=%d",
-        "semantic" if semantic else "jaccard", merged, len(memories),
+        "consolidate merged=%d reviewed=%d", merged, len(memories),
     )
     return merged

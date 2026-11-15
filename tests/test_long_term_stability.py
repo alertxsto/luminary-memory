@@ -219,7 +219,7 @@ def test_rule_replace_preserves_new_raw_episode_and_claim_lineage(tmp_path):
     client.close()
 
 
-def test_lifecycle_second_run_is_idempotent_after_consolidation(tmp_path):
+def test_lifecycle_keeps_near_duplicates_and_is_idempotent(tmp_path):
     settings = Settings(
         db_path=str(tmp_path / "lifecycle.db"),
         prune_min_importance=0.0,
@@ -241,8 +241,9 @@ def test_lifecycle_second_run_is_idempotent_after_consolidation(tmp_path):
     count_after_first = client.count()
     second = client.run_lifecycle(semantic=False)
 
-    assert first["consolidate"] == 1
-    assert count_after_first == 1
+    # Similarity is a review signal, not authority to delete a fact.
+    assert first["consolidate"] == 0
+    assert count_after_first == 2
     assert second["consolidate"] == 0
     assert client.count() == count_after_first
     client.close()
@@ -273,7 +274,7 @@ def test_lifecycle_consolidation_does_not_cross_owner_scope(tmp_path):
     assert result["consolidate"] == 0
     assert client.backend.get(alice_id) is not None
     assert client.backend.get(bob_id) is not None
-    assert client.count() == 2
+    assert len([row for row in client.backend.all() if row.status == "active"]) == 2
     client.close()
 
 

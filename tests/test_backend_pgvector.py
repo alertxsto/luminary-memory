@@ -209,11 +209,16 @@ def test_pgvector_real_scoped_keyword_vector_and_tags(real_pg_backend):
                             embedding=[1.0, 0.0, 0.0], user_id="alice", workspace_id="w", agent_id="pi"))
     backend.add(Memory(content="hello foreign world", tags=["ci", "beta"],
                        embedding=[1.0, 0.0, 0.0], user_id="bob", workspace_id="w", agent_id="pi"))
+    backend.add(Memory(content="hello partial world", tags=["ci"],
+                       embedding=[1.0, 0.0, 0.0], user_id="alice"))
+    global_id = backend.add(Memory(content="hello global world", embedding=[1.0, 0.0, 0.0]))
     scope = {"user_id": "alice", "workspace_id": "w", "agent_id": "pi"}
     assert [memory.id for memory, _ in backend.keyword_search("hello", limit=5, scope=scope, include_global=False)] == [own]
     assert [memory.id for memory, _ in backend.vector_search([1.0, 0.0, 0.0], limit=5, scope=scope, include_global=False)] == [own]
-    assert backend.by_tags(["alpha"]) == {own}
+    assert backend.by_tags(["alpha"], scope=scope, include_global=False) == {own}
     assert backend.by_tags(["absent"]) == set()
+    assert {memory.id for memory in backend.recent(scope={}, include_global=False)} == {global_id}
+    assert {memory.id for memory in backend.recent(scope=scope, include_global=True)} == {own, global_id}
 
 
 def test_pgvector_real_update_and_graph_cascade(real_pg_backend):
@@ -246,3 +251,11 @@ def test_pgvector_row_parser_rejects_corrupt_containers():
     backend = PGVectorBackend.__new__(PGVectorBackend)
     memory = backend._row_to_memory({"id": 1, "content": "hello", "metadata": "not-json{", "tags": "[corrupt"})
     assert memory.metadata == {} and memory.tags == []
+
+
+def test_pg_episode_missing_user_matches_only_missing_user(real_pg_backend):
+    backend = real_pg_backend
+    backend.record_episode("alice", "private", user_id="alice", workspace_id="w", agent_id="a", session_id="s")
+    backend.record_episode("missing", "local", workspace_id="w", agent_id="a", session_id="s")
+    rows = backend.recent_episodes(scope={"workspace_id": "w", "agent_id": "a", "session_id": "s"})
+    assert [row["id"] for row in rows] == ["missing"]

@@ -125,6 +125,77 @@ class TestCallLlm:
         with patch("requests.post", side_effect=requests.HTTPError("500 err")), pytest.raises(requests.HTTPError):
             enricher._call_llm([{"role": "user", "content": "hi"}])
 
+    def test_transport_error_log_does_not_expose_exception_text(self, enricher, caplog):
+        import requests
+
+        with patch("requests.post", side_effect=requests.ConnectionError("secret prompt test-key")), \
+                patch("time.sleep"), pytest.raises(requests.ConnectionError):
+            enricher._call_llm([])
+        assert "secret prompt" not in caplog.text
+        assert "test-key" not in caplog.text
+
+    def test_usage_aggregates_enveloped_and_root_provider_values(self, enricher):
+        responses = [
+            _FakeResp({"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}}),
+            _FakeResp({"data": {"choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 1, "total_tokens": 8}}}),
+        ]
+        with patch("requests.post", side_effect=responses):
+            enricher._call_llm([{"role": "user", "content": "private prompt"}])
+            enricher._call_llm([])
+        snapshot = enricher.usage_snapshot()
+        assert snapshot == {
+            "calls": 2, "attempts": 2, "prompt_tokens": 10,
+            "completion_tokens": 3, "total_tokens": 13,
+        }
+        assert "private" not in repr(snapshot)
+        assert "test-key" not in repr(snapshot)
+
+    def test_usage_is_unknown_for_failed_retry_and_missing_fields(self, enricher):
+        import requests
+
+        response = _FakeResp({"data": {"choices": []}, "usage": {
+            "prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7,
+        }})
+        with patch("requests.post", side_effect=[requests.ConnectionError("private"), response]), \
+                patch("time.sleep"):
+            enricher._call_llm([])
+        assert enricher.usage_snapshot() == {
+            "calls": 1, "attempts": 2, "prompt_tokens": None,
+            "completion_tokens": None, "total_tokens": None,
+        }
+
+    def test_usage_envelope_conflict_and_invalid_values_are_unknown(self, enricher):
+        response = _FakeResp({
+            "usage": {"prompt_tokens": 3, "completion_tokens": -1, "total_tokens": 4},
+            "data": {"choices": [], "usage": {
+                "prompt_tokens": 4, "completion_tokens": 1, "total_tokens": 5,
+            }},
+        })
+        with patch("requests.post", return_value=response):
+            enricher._call_llm([])
+        assert enricher.usage_snapshot() == {
+            "calls": 1, "attempts": 1, "prompt_tokens": None,
+            "completion_tokens": None, "total_tokens": None,
+        }
+
+    def test_usage_missing_after_known_response_is_not_zero(self, enricher):
+        with patch("requests.post", side_effect=[
+            _FakeResp({"choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 1, "total_tokens": 5}}),
+            _FakeResp({"choices": []}),
+        ]):
+            enricher._call_llm([])
+            enricher._call_llm([])
+        assert enricher.usage_snapshot()["total_tokens"] is None
+
+    def test_outer_envelope_usage_is_not_lost(self, enricher):
+        with patch("requests.post", return_value=_FakeResp({
+            "data": {"choices": []},
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+        })):
+            enricher._call_llm([])
+        assert enricher.usage_snapshot()["total_tokens"] == 3
+
+
 
 class TestReviewMemories:
     def test_review_returns_actions_json(self, enricher):
@@ -138,6 +209,20 @@ class TestReviewMemories:
         messages = mock.call_args.args[0]
         assert "curator" in messages[0]["content"]
         assert '"id": 1' in messages[1]["content"]
+
+    def test_review_requests_source_proposals_from_available_metadata(self, enricher):
+        from luminary_memory.types import Memory
+
+        memory = Memory(id=1, content="old fact", source_id="episode-1",
+                        evidence_quote="original source words")
+        with patch.object(enricher, "_call_llm", return_value='{"actions": []}') as call:
+            assert enricher.review_memories([memory]) == '{"actions": []}'
+        system, user = call.call_args.args[0]
+        assert "source_id" in system["content"]
+        assert "evidence_quote" in system["content"]
+        assert "confirmed" not in system["content"]
+        assert "episode-1" in user["content"]
+        assert "original source words" in user["content"]
 
     def test_review_no_base_url_returns_empty(self):
         e = OpenAICompatibleEnricher(base_url="", api_key="", model="m")

@@ -204,8 +204,8 @@ def test_import_can_restore_content_after_retraction(tmp_path):
     dst.close()
 
 
-def test_scoped_import_does_not_dedup_against_global_compatibility_row(tmp_path):
-    """Global read compatibility must not block a tenant-owned restore."""
+def test_scoped_import_rejects_unowned_rows_without_assignment(tmp_path):
+    import pytest
     db = tmp_path / "scoped-restore.db"
     writer = MemoryClient(db_path=str(db), engine=_FakeEngine(), enricher=NoopEnricher())
     writer.ingest("shared global restore fact")
@@ -221,14 +221,12 @@ def test_scoped_import_does_not_dedup_against_global_compatibility_row(tmp_path)
         engine=_FakeEngine(),
         enricher=NoopEnricher(),
         settings=Settings(db_path=str(db), scope_include_global=False),
-        scope={"user_id": "alice"},
+        scope={"user_id": "alice", "workspace_id": "w", "agent_id": "a"},
     )
-    result = scoped.import_memories(path)
-
-    assert result["imported"] == 1
-    assert scoped.count() == 1
-    assert [m.user_id for m in scoped.list(limit=0)] == ["alice"]
-    assert sum(m.content == "shared global restore fact" for m in scoped.backend.all()) == 2
+    with pytest.raises(PermissionError):
+        scoped.import_memories(path)
+    assert scoped.count() == 0
+    assert sum(m.content == "shared global restore fact" for m in scoped.backend.all()) == 1
     scoped.close()
 
 
@@ -358,7 +356,8 @@ def test_round_trip_remaps_inactive_lineage_into_nonempty_store(tmp_path):
         dst.close()
 
 
-def test_unbound_import_does_not_deduplicate_different_owners(tmp_path):
+def test_unbound_import_rejects_owned_rows(tmp_path):
+    import pytest
     dst = MemoryClient(db_path=str(tmp_path / "owners.db"), engine=_FakeEngine(), enricher=NoopEnricher())
     try:
         path = tmp_path / "owners.json"
@@ -366,8 +365,9 @@ def test_unbound_import_does_not_deduplicate_different_owners(tmp_path):
             {"content": "Identical independently owned fact", "user_id": "alice", "workspace_id": "same-project"},
             {"content": "Identical independently owned fact", "user_id": "bob", "workspace_id": "same-project"},
         ]}), encoding="utf-8")
-        assert dst.import_memories(path)["imported"] == 2
-        assert {memory.user_id for memory in dst.backend.all()} == {"alice", "bob"}
+        with pytest.raises(PermissionError):
+            dst.import_memories(path)
+        assert dst.backend.all() == []
     finally:
         dst.close()
 
@@ -439,12 +439,13 @@ def test_lineage_audit_failure_rolls_back_records_and_episodes(tmp_path, monkeyp
 
 
 def test_import_preserves_identical_observations_from_distinct_sessions(tmp_path):
-    dst = MemoryClient(db_path=str(tmp_path / "sessions.db"), engine=_FakeEngine(), enricher=NoopEnricher())
+    scope = {"user_id": "alice", "workspace_id": "w", "agent_id": "pi"}
+    dst = MemoryClient(db_path=str(tmp_path / "sessions.db"), scope=scope, engine=_FakeEngine(), enricher=NoopEnricher())
     try:
         path = tmp_path / "sessions.json"
         path.write_text(json.dumps({"memories": [
-            {"content": "Repeated observation", "user_id": "alice", "session_id": "session-a"},
-            {"content": "Repeated observation", "user_id": "alice", "session_id": "session-b"},
+            {"content": "Repeated observation", **scope, "session_id": "session-a"},
+            {"content": "Repeated observation", **scope, "session_id": "session-b"},
         ]}), encoding="utf-8")
         assert dst.import_memories(path)["imported"] == 2
         assert {memory.session_id for memory in dst.backend.all()} == {"session-a", "session-b"}

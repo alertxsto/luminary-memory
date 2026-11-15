@@ -7,6 +7,7 @@ and the distinction between a grounded row and a relevant one.
 from datetime import UTC, datetime, timedelta
 
 from benchmarks.gold import anchor_time, rebase_timestamps
+from benchmarks.metrics import cost_per_correct_answer, percentiles
 from benchmarks.run_benchmarks import _evaluate_gold
 from luminary_memory.types import Memory, RecallResult
 
@@ -112,6 +113,8 @@ def test_grounded_but_irrelevant_row_counts_as_a_wrong_hit():
     # Every returned row carries a source, yet one of them is a quality
     # failure: the two numbers must stay independent.
     assert report["source_grounded_rate"] == 1.0
+    assert report["cost"]["correct_answers"] == 0
+    assert report["cost"]["wall_ms_per_correct_answer"] is None
 
 
 def test_clean_answer_case_reports_no_wrong_hits():
@@ -134,3 +137,30 @@ def test_clean_answer_case_reports_no_wrong_hits():
     assert report["case_results"][0]["wrong_hit_ids"] == []
     assert report["wrong_hit_rate"] == 0.0
     assert report["recall@10"] == 1.0
+    assert report["cost"]["correct_answers"] == 1
+    assert report["cost"]["wall_ms_per_correct_answer"] is not None
+    assert report["cost"]["usd_per_correct_answer"] is None
+
+
+def test_no_answer_wrong_hit_is_not_counted_as_a_correct_answer():
+    client = _StubClient(
+        {"unrelated": 1}, {"unknown": [Memory(id=1, content="unrelated", source="source")]}
+    )
+    report = _evaluate_gold(client, [_memory("unrelated", 1)], [
+        {"key": "missing", "query": "unknown", "relevant": [], "no_answer": True}
+    ])
+    assert report["unsupported_answer_rate"] == 1.0
+    assert report["cost"]["correct_answers"] == 0
+    assert report["cost"]["wall_ms_per_correct_answer"] is None
+
+
+def test_cost_per_correct_answer_requires_both_cost_components_and_answers():
+    assert cost_per_correct_answer(120.0, 30.0, 3) == 50.0
+    assert cost_per_correct_answer(120.0, 30.0, 0) is None
+    assert cost_per_correct_answer(None, 30.0, 3) is None
+    assert cost_per_correct_answer(120.0, None, 3) is None
+
+
+def test_percentiles_interpolate_small_samples_and_mark_empty_unknown():
+    assert percentiles([10.0, 20.0])["p95"] == 19.5
+    assert percentiles([])["p95"] is None

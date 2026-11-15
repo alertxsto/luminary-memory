@@ -60,11 +60,11 @@ export function inspectorSummaryLines(controller: InspectorController): string[]
 }
 export function inspectorActions(controller: InspectorController, row?: InspectorRow): string[] {
   switch (controller.state.tab) {
-    case 'memories': return [...base, 'Create memory', ...(row?.id !== undefined ? ['Inspect', 'History', 'Expand evidence', 'Expand source episodes', 'Claims / conflicts', 'Lineage', ...(row.permissions?.edit ? ['Correct', 'Tags', 'Core designation', ...(row.claim_key ? ['Resolve conflict'] : [])] : []), ...(row.permissions?.retract ? ['Retract'] : [])] : [])];
+    case 'memories': return [...base, 'Create memory', ...(!controller.selectionHandle ? ['Review legacy ownership'] : []), ...(row?.id !== undefined ? ['Inspect', 'History', 'Expand evidence', 'Expand source episodes', 'Claims / conflicts', 'Lineage', ...(row.permissions?.edit ? ['Correct', 'Tags', 'Core designation', ...(row.claim_key ? ['Resolve conflict'] : [])] : []), ...(row.permissions?.retract ? ['Retract', 'Purge'] : [])] : [])];
     case 'activity': return [...resourceBase, ...(typeof controller.state.data.replay_context === 'string' ? ['Check new activity'] : []), 'Event details'];
     case 'evidence': return [...base, ...(row?.id !== undefined ? ['Inspect', 'History', 'Expand evidence', 'Expand source episodes', 'Claims / conflicts', 'Lineage'] : [])];
     case 'relations': return [...resourceBase, 'Explore entity', 'All relations', 'Adjacency details', ...(typeof row?.memory_id === 'number' ? ['Inspect supporting memory'] : [])];
-    case 'maintenance': return [...base, 'Preview maintenance', ...(row?.id !== undefined ? ['Inspect', ...(row.permissions?.edit && row.claim_key ? ['Resolve conflict'] : [])] : [])];
+    case 'maintenance': return [...base, 'Preview maintenance', 'Review maintenance suggestions', ...(row?.id !== undefined ? ['Inspect', ...(row.permissions?.edit && row.claim_key ? ['Resolve conflict'] : [])] : [])];
     case 'sharing': return [...resourceBase, 'Project information', ...(!controller.selectionHandle ? ['Grant rights', 'Revoke rights', 'Bind location'] : [])];
     case 'settings': return ['Refresh', 'View projection', 'Change setting', 'Readiness / diagnostics'];
     case 'transfer': return ['Refresh', 'View projection', 'Export records', 'Import records', 'Backup limitations'];
@@ -101,7 +101,7 @@ export async function runInspectorAction(controller: InspectorController, native
     await controller.preview(operation, { kind, ...(memory !== undefined ? { memory_id: memory, expected_revision: revision } : {}), ...fields }, commit);
     if (!live()) return;
     if (!controller.state.preview) return;
-    const result = await controller.commit(preview => dialogs.confirm('Confirm Luminary change', JSON.stringify(preview, null, 2)));
+    const result = await controller.commit(preview => dialogs.confirm('Confirm Luminary change', `${kind === 'purge' ? 'Purge covers identified copies in the active store, not backups, snapshots, exports or external copies; physical erasure is not guaranteed. Review shared impact before confirming.\n\n' : ''}${JSON.stringify(preview, null, 2)}`));
     if (result?.status === 'ok' && kind === 'correct' && typeof result.data?.memory_id === 'number' && live()) await controller.detail(result.data.memory_id);
   };
   switch (action) {
@@ -134,11 +134,30 @@ export async function runInspectorAction(controller: InspectorController, native
       await controller.load(); break;
     }
     case 'Create memory': { const content = await input('New durable memory'); if (content?.trim()) await change('create', { content }); break; }
+    case 'Review legacy ownership': {
+      const result = await controller.execute('legacy_inventory');
+      if (!live() || result?.status !== 'ok') return;
+      const items = Array.isArray(result.data?.items) ? result.data.items as InspectorRow[] : [];
+      if (!items.length) { await dialogs.show('Legacy ownership', 'No assignable partial-owner records in this native scope.'); return; }
+      const labels = items.map((item, index) => `${index + 1}. #${item.memory_id} ${String(item.content ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')}`);
+      const choice = await dialogs.select('Select a partial-owner record to review', labels);
+      const item = choice ? items[labels.indexOf(choice)] : undefined;
+      if (!item || !live()) return;
+      await change('assign_legacy', { memory_id: item.memory_id, expected_revision: item.revision });
+      break;
+    }
     case 'Inspect': if (memory !== undefined) { await controller.detail(memory); await dialogs.show('Memory ownership, permissions and detail', JSON.stringify(controller.state.data, null, 2)); } break;
     case 'Correct': { if (memory === undefined) return; const detail = await controller.detail(memory); const current = detail?.data?.memory as InspectorRow | undefined; if (!live() || detail?.status !== 'ok' || !current) return; const content = await input('Versioned correction', String(current.content ?? '')); if (content?.trim()) await change('correct', { content, expected_revision: current.revision }); break; }
     case 'Tags': { const value = await input('Tags (comma separated)', Array.isArray(row?.tags) ? row.tags.join(', ') : ''); if (value !== undefined) await change('tag', { tags: value.split(',').map(t => t.trim()).filter(Boolean) }); break; }
     case 'Core designation': { const value = await dialogs.select('Core memory', ['Core', 'Ordinary']); if (value) await change('core', { pinned: value === 'Core' }); break; }
     case 'Retract': await change('retract', {}); break;
+    case 'Purge': {
+      if (memory === undefined) return;
+      const scope = await dialogs.select('Purge impact: expand only after reviewing shared records', ['Standard purge', 'Expand shared impact']);
+      if (!scope) return;
+      await change('purge', { expand_shared: scope === 'Expand shared impact' });
+      break;
+    }
     case 'History': {
       if (memory === undefined) return;
       let cursor: unknown;
@@ -175,6 +194,17 @@ export async function runInspectorAction(controller: InspectorController, native
       break;
     case 'View projection': case 'Event details': case 'Adjacency details': await dialogs.show(action, JSON.stringify(action === 'View projection' ? controller.state.data : row ?? controller.state.data, null, 2)); break;
     case 'Preview maintenance': { const kind = await dialogs.select('Manual maintenance proposal', ['prune', 'cleanup_expired']); if (kind) await change(kind, {}, 'maintenance_preview'); break; }
+    case 'Review maintenance suggestions': {
+      const result = await controller.execute('maintenance_suggestions');
+      if (!live() || result?.status !== 'ok') return;
+      const items = Array.isArray(result.data?.items) ? result.data.items as Record<string, unknown>[] : [];
+      if (!items.length) { await dialogs.show('Maintenance suggestions', 'No suggestions are available.'); return; }
+      const labels = items.map((item, index) => `${index + 1}. #${item.memory_id} ${item.action}: ${String(item.proposed_content ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')}`);
+      const choice = await dialogs.select('Select a suggestion to preview', labels);
+      const item = choice ? items[labels.indexOf(choice)] : undefined;
+      if (item && typeof item.proposal_id === 'string' && live()) await change('maintenance_proposal', { proposal_id: item.proposal_id });
+      break;
+    }
     case 'Resolve conflict': { if (memory === undefined) return; const detail = await controller.detail(memory); const current = detail?.data?.memory as InspectorRow | undefined; const token = detail?.data?.conflict_set_token; if (!live() || detail?.status !== 'ok' || typeof token !== 'string' || !current) return; await change('resolve_conflict', { memory_id: memory, expected_revision: current.revision, expected_conflict_set_token: token }); break; }
     case 'Project information': { const result = await controller.execute('browse', { view: 'sharing' }); if (live() && result?.status === 'ok') await dialogs.show('Project information and explicit rights', JSON.stringify(result.data, null, 2)); break; }
     case 'Grant rights': { const recipient_agent_id = await input('Agent receiving explicit project rights'); if (!recipient_agent_id) return; const capabilities: string[] = []; for (const right of ['read', 'contribute', 'edit', 'retract']) { if (await dialogs.confirm(`Grant ${right}?`, `Independently grant ${right} to ${recipient_agent_id} in this project?`)) capabilities.push(right); if (!live()) return; } if (!capabilities.length) { await dialogs.show('No rights selected', 'No grant was proposed. Existing rights are unchanged.'); return; } await change('grant', { recipient_agent_id, capabilities }, 'preview_change', 'grant'); break; }
@@ -195,7 +225,7 @@ export async function runInspectorAction(controller: InspectorController, native
       break;
     }
     case 'Readiness / diagnostics': await controller.execute('get_settings', { diagnostics: true }); break;
-    case 'Export records': case 'Import records': { if (!registerFile) { await dialogs.show('Data transfer unavailable', 'This host has no trusted file-selection transport. No file was read or written.'); return; } const direction = action === 'Import records' ? 'import' : 'export'; const path = await input(direction === 'import' ? 'Select existing memory-record file (absolute path)' : 'Select output memory-record file (absolute path)'); if (!path) return; try { const file_handle = await registerFile(path, direction === 'import' ? 'read' : 'write'); await change('transfer', { direction, file_handle }, 'transfer_preview'); } catch { await dialogs.show('File selection failed', 'The native server could not register this file. No transfer was committed.'); } break; }
+    case 'Export records': case 'Import records': { const direction = action === 'Import records' ? 'import' : 'export'; const path = await input(direction === 'import' ? 'Select existing memory-record file (absolute path)' : 'Select output memory-record file (absolute path)'); if (!path) return; let assign_legacy = false; if (direction === 'import') { const choice = await dialogs.select('Import partial-owner records?', ['Do not assign legacy owners', 'Assign missing ownership to this native owner']); if (!choice) return; assign_legacy = choice === 'Assign missing ownership to this native owner'; } if (!live()) return; try { const file_handle = await registerFile(path, direction === 'import' ? 'read' : 'write'); await change('transfer', { direction, file_handle, ...(assign_legacy ? { assign_legacy: true } : {}) }, 'transfer_preview'); } catch { await dialogs.show('File selection failed', 'The native server could not register this file. No transfer was committed.'); } break; }
     case 'Backup limitations': await dialogs.show('Data transfer', 'Memory-record export is not a full store backup. It does not back up backend configuration, secrets, raw source episodes or native host state. The preview reports exact authorized coverage.'); break;
     case 'Explain with AI': if (await dialogs.confirm('Optional AI explanation', 'Request a disclosure preview for this authorized Summary? No model call runs until you confirm that disclosure.')) await change('explain', { phase: 'preview' }, 'explain', 'explain'); break;
   }

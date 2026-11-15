@@ -152,6 +152,28 @@ def test_recent_episodes_are_ordered_and_exactly_scoped(tmp_path):
     b.close()
 
 
+def test_episode_missing_user_matches_only_missing_user(tmp_path):
+    b = _mk(tmp_path)
+    b.record_episode("alice", "private", user_id="alice", workspace_id="w", agent_id="a", session_id="s")
+    b.record_episode("missing", "local", workspace_id="w", agent_id="a", session_id="s")
+    rows = b.recent_episodes(scope={"workspace_id": "w", "agent_id": "a", "session_id": "s"})
+    assert [row["id"] for row in rows] == ["missing"]
+    b.close()
+
+
+def test_scoped_reads_quarantine_partial_and_legacy_global(tmp_path):
+    b = _mk(tmp_path)
+    own = b.add(Memory(content="own", user_id="alice", workspace_id="w", agent_id="a"))
+    b.add(Memory(content="partial", user_id="alice"))
+    b.add(Memory(content="other", user_id="bob", workspace_id="w", agent_id="a"))
+    global_id = b.add(Memory(content="global"))
+    scope = {"user_id": "alice", "workspace_id": "w", "agent_id": "a"}
+    assert {m.id for m in b.recent(scope=scope, include_global=False)} == {own}
+    assert {m.id for m in b.recent(scope=scope, include_global=True)} == {own, global_id}
+    assert {m.id for m in b.recent(scope={}, include_global=False)} == {global_id}
+    b.close()
+
+
 def test_touch_memories_batches_access(tmp_path):
     b = _mk(tmp_path)
     a = b.add(Memory(content="fact one"))
@@ -560,9 +582,20 @@ def test_prune_episodes_respects_exact_scope(tmp_path):
     b.close()
 
 
-def test_prune_evidence_keeps_newest_rows(tmp_path):
+def test_prune_evidence_keeps_rows_of_active_records(tmp_path):
     b = _mk(tmp_path)
     mid = b.add(Memory(content="evidence owner"))
+    for i in range(5):
+        b.add_evidence(mid, f"quote {i}", source_id=f"source-{i}")
+
+    assert b.prune_evidence(2) == 0
+    assert b.conn.execute("SELECT COUNT(*) FROM memory_evidence").fetchone()[0] == 5
+    b.close()
+
+
+def test_prune_evidence_keeps_newest_rows(tmp_path):
+    b = _mk(tmp_path)
+    mid = b.add(Memory(content="withdrawn owner", status="deleted"))
     for i in range(5):
         b.add_evidence(mid, f"quote {i}", source_id=f"source-{i}")
 
@@ -576,8 +609,8 @@ def test_prune_evidence_keeps_newest_rows(tmp_path):
 
 def test_prune_evidence_respects_owner_scope(tmp_path):
     b = _mk(tmp_path)
-    mine = b.add(Memory(content="mine", user_id="u1"))
-    other = b.add(Memory(content="other", user_id="u2"))
+    mine = b.add(Memory(content="mine", user_id="u1", status="deleted"))
+    other = b.add(Memory(content="other", user_id="u2", status="deleted"))
     b.add_evidence(mine, "mine quote")
     b.add_evidence(other, "other quote")
 

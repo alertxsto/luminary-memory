@@ -102,7 +102,11 @@ def _digest(path):
     return hashlib.sha256(_read(path)).hexdigest() if path.exists() else None
 
 
-def _records(data, context, workspace):
+class LegacyAssignmentRequired(PermissionError):
+    """An import contains unowned fields without explicit adoption."""
+
+
+def _records(data, context, workspace, *, assign_legacy=False):
     payload = json.loads(data.decode("utf-8"))
     if not isinstance(payload, dict) or payload.get("format") != EXPORT_FORMAT or payload.get("version") != EXPORT_VERSION:
         raise ValueError("unsupported memory-record format")
@@ -113,8 +117,10 @@ def _records(data, context, workspace):
         if not isinstance(row, dict) or not isinstance(row.get("content"), str) or not row["content"].strip() or len(row["content"].encode()) > 65536:
             raise ValueError("invalid memory record")
         for key, expected in (("user_id", context.user_id), ("workspace_id", workspace), ("agent_id", context.agent_id)):
-            if row.get(key) is not None and row[key] != expected:
+            if row.get(key) not in (None, "") and row[key] != expected:
                 raise PermissionError("file cannot choose another record owner")
+            if row.get(key) in (None, "") and not assign_legacy:
+                raise LegacyAssignmentRequired("partial ownership requires explicit owner assignment")
         if row.get("status", "active") not in {"active", "candidate", "conflicted", "superseded", "expired", "deleted"}:
             raise ValueError("invalid record lifecycle")
         tags = row.get("tags", [])
@@ -136,8 +142,11 @@ def preview(service, context, request):
     authorization = service.authorizer(context, request)
     if importing and not authorization.can_contribute():
         raise PermissionError("contribute capability is required")
+    assign_legacy = args.get("assign_legacy", False)
+    if not isinstance(assign_legacy, bool) or (assign_legacy and (not importing or request.selection_handle is not None)):
+        raise ValueError("legacy assignment requires an import into the native own project")
     if importing:
-        rows = _records(_read(path), context, authorization.workspace_id)
+        rows = _records(_read(path), context, authorization.workspace_id, assign_legacy=assign_legacy)
         count = len(rows)
     else:
         # Paginate only authorized records; reject oversized exports, never emit a silent subset.
@@ -154,9 +163,18 @@ def preview(service, context, request):
     checks = {"file_digest": _digest(path)}
     if not importing:
         checks["records"] = [[memory.id, memory.revision] for memory in rows]
+    assignments = []
+    if importing:
+        owner = {"user_id": context.user_id, "workspace_id": authorization.workspace_id, "agent_id": context.agent_id}
+        assignments = [
+            {"record_index": index, "source_id": row.get("id"),
+             "content": row["content"], "session_id": row.get("session_id"),
+             "fields": {field: value for field, value in owner.items() if row.get(field) in (None, "")}}
+            for index, row in enumerate(rows) if any(row.get(field) in (None, "") for field in owner)
+        ]
     return service.previews.prepare(context, request, "transfer", {
-        "direction": args["direction"], "file_handle": args["file_handle"],
-    }, after={"name": path.name, "records": count}, checks=checks,
+        "direction": args["direction"], "file_handle": args["file_handle"], "assign_legacy": assign_legacy,
+    }, after={"name": path.name, "records": count, "ownership_assignments": assignments}, checks=checks,
        effects={"count": count, "coverage": COVERAGE, "overwrite": path.exists() and not importing,
                 "embedding": "recomputed on explicit import; may load configured local model"})
 
@@ -173,14 +191,19 @@ def apply(service, context, proposal, *, on_external_effect):
     if importing:
         if not authorization.can_contribute():
             raise PermissionError("contribute capability revoked")
-        rows = _records(_read(path), context, authorization.workspace_id)
+        if payload.get("assign_legacy") and proposal["selection_handle"] is not None:
+            raise PermissionError("legacy assignment requires the native own project")
+        rows = _records(_read(path), context, authorization.workspace_id,
+                        assign_legacy=payload.get("assign_legacy") is True)
         mapping, stored = {}, 0
         allowed = {field.name for field in fields(Memory)} - {"id", "revision", "embedding", "content_hash", "supersedes_id"}
         for row in rows:
             predecessor = row.get("supersedes_id")
             values = {key: value for key, value in row.items() if key in allowed}
-            values.update(user_id=context.user_id, workspace_id=authorization.workspace_id,
-                          agent_id=context.agent_id, session_id=context.session_id)
+            for field, value in (("user_id", context.user_id), ("workspace_id", authorization.workspace_id),
+                                 ("agent_id", context.agent_id)):
+                if values.get(field) in (None, ""):
+                    values[field] = value
             memory = Memory(**values)
             memory.content_hash = _content_hash(memory.content)
             memory.supersedes_id = mapping.get(predecessor)

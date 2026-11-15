@@ -9,7 +9,8 @@ from luminary_memory.hermes.provider import LuminaryMemoryProvider, _apply_min_s
 
 def _init_provider(tmp_path):
     p = LuminaryMemoryProvider()
-    p.initialize("s1", hermes_home=str(tmp_path), platform="cli", agent_identity="test")
+    p.initialize("s1", hermes_home=str(tmp_path), platform="cli", agent_identity="test",
+                 user_id="test-user", agent_workspace="test-workspace")
     return p
 
 

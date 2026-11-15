@@ -163,12 +163,30 @@ class InspectorSQL:
         fields = ("user_id", "workspace_id", "agent_id", "session_id")
         live = self.get(memory_id) if memory_id is not None else None
         scope = {field: getattr(live, field) for field in fields} if live else None
-        for snapshot in (before, after):
-            if snapshot is None:
-                continue
-            if scope is None and all(field in snapshot for field in fields[:3]):
-                scope = {field: snapshot.get(field) for field in fields}
-            if scope is not None and any(field in snapshot and snapshot[field] != scope[field] for field in fields):
+        if scope is None:
+            for snapshot in (before, after):
+                if snapshot is None:
+                    continue
+                if scope is None and all(field in snapshot for field in fields[:3]):
+                    scope = {field: snapshot.get(field) for field in fields}
+        if scope is not None:
+            current_scope = scope
+
+            # The current owner is authoritative. A pre-image may describe the
+            # previous owner of a sanctioned transition (legacy assignment), but
+            # only when the post-image proves the final ownership. Fields a
+            # snapshot omits are simply not compared.
+            def disagrees(snapshot):
+                return any(
+                    field in snapshot and snapshot[field] != current_scope[field] for field in fields
+                )
+
+            final = after is not None and not disagrees(after)
+            for snapshot in (before, after):
+                if snapshot is None or not disagrees(snapshot):
+                    continue
+                if snapshot is before and final:
+                    continue
                 raise PermissionError("audit snapshot scope disagrees with resource ownership")
         scope = scope or dict.fromkeys(fields)
         json_placeholder = "?::jsonb" if hasattr(self, "_psycopg") else "?"
@@ -180,72 +198,92 @@ class InspectorSQL:
                    *(scope[field] for field in fields)))
         self._commit()
 
-    def _prune_ledger(self, table: str, max_rows: int, scope, include_global: bool) -> int:
-        """Delete oldest scoped rows beyond a hard row cap.
+    def _ledger_scope(self, table, scope, include_global):
+        from luminary_memory.scope import normalize_scope
 
-        The cap is deterministic and keeps the newest rows, so current-session
-        continuity and recent audit remain available. 0 disables pruning.
+        if table not in {"episodes", "memory_events", "memory_evidence"}:
+            raise ValueError("unknown retention ledger")
+        alias = "m" if table == "memory_evidence" else "e"
+        normalized = normalize_scope(scope)
+        # Ledger maintenance narrows: only the supplied owner fields match. A
+        # partial scope must never widen to another owner, and it must not match
+        # nothing either, or retention would silently stop for that owner.
+        clauses = [f"{alias}.{field} = ?" for field in normalized]
+        params = list(normalized.values())
+        where = " AND ".join(clauses)
+        if not normalized:
+            # An unbound local pass retains its own namespace, not every owner's.
+            if not include_global:
+                where = " AND ".join(
+                    f"({alias}.{field} IS NULL OR {alias}.{field} = '')"
+                    for field in ("user_id", "workspace_id", "agent_id", "session_id")
+                )
+        elif include_global:
+            global_clause = " AND ".join(
+                f"({alias}.{field} IS NULL OR {alias}.{field} = '')"
+                for field in ("user_id", "workspace_id", "agent_id", "session_id")
+            )
+            where = f"({where}) OR ({global_clause})"
+        where = where or "1=1"
+        if table == "memory_evidence":
+            # Evidence without an owning memory has no verifiable scope.
+            where = f"EXISTS (SELECT 1 FROM memories m WHERE m.id=e.memory_id AND {where})"
+        return where, params
+
+    def ledger_status(self, table, max_rows, scope=None, include_global=False):
+        """Return scoped row count, effective cap and overflow.
+
+        A nonpositive cap disables retention: cap is None and overflow is zero.
+        Unowned evidence is excluded because its scope cannot be established.
         """
-        from luminary_memory.scope import scope_sql
-
-        cap = max(0, int(max_rows))
-        if cap == 0:
-            return 0
-        where, params = scope_sql(
-            scope, alias="e", include_global=include_global, active_only=False
-        )
-        total = int(self._sql(
+        where, params = self._ledger_scope(table, scope, include_global)
+        count = int(self._sql(
             f"SELECT COUNT(*) FROM {table} e WHERE {where}", tuple(params)
         ).fetchone()[0])
-        excess = total - cap
-        if excess <= 0:
+        cap = max(0, int(max_rows)) or None
+        return {"count": count, "cap": cap,
+                "overflow": max(0, count - cap) if cap is not None else 0}
+
+    @atomic_backend
+    def _prune_ledger(self, table: str, max_rows: int, scope, include_global: bool) -> int:
+        """Delete oldest eligible rows; referenced records may exceed the cap."""
+        status = self.ledger_status(table, max_rows, scope, include_global)
+        excess = status["overflow"]
+        if not excess:
             return 0
-        order = "e.created_at ASC, e.id ASC"
-        if table == "episodes" and not hasattr(self, "_psycopg"):
-            order = "e.created_at ASC, e.rowid ASC"
-        self._sql(
+        where, params = self._ledger_scope(table, scope, include_global)
+        if table == "episodes":
+            # References may cross scopes, and historical references also
+            # matter: never infer authorization to break another record.
+            protected = (
+                "NOT EXISTS (SELECT 1 FROM memories m WHERE m.source_id=e.id) AND "
+                "NOT EXISTS (SELECT 1 FROM memory_evidence me WHERE me.source_id=e.id) AND "
+                "NOT EXISTS (SELECT 1 FROM claims c WHERE c.source_episode_id=e.id) AND "
+                "NOT EXISTS (SELECT 1 FROM claim_evidence ce WHERE ce.source_episode_id=e.id)"
+            )
+        else:
+            protected = (
+                "NOT EXISTS (SELECT 1 FROM memories m WHERE m.id=e.memory_id "
+                "AND m.status IN ('active', 'conflicted')) AND "
+                "NOT EXISTS (SELECT 1 FROM claims c WHERE c.memory_id=e.memory_id "
+                "AND c.status IN ('active', 'conflicted'))"
+            )
+        cursor = self._sql(
             f"DELETE FROM {table} WHERE id IN "
-            f"(SELECT e.id FROM {table} e WHERE {where} ORDER BY {order} LIMIT ?)",
-            (*params, excess),
-        )
-        self._commit()
-        return excess
-
-    def prune_episodes(self, max_rows: int, scope=None, include_global: bool = True) -> int:
-        return self._prune_ledger("episodes", max_rows, scope, include_global)
-
-    def prune_events(self, max_rows: int, scope=None, include_global: bool = True) -> int:
-        return self._prune_ledger("memory_events", max_rows, scope, include_global)
-
-    def prune_evidence(self, max_rows: int, scope=None, include_global: bool = True) -> int:
-        """Prune evidence by its owning memory's scope; evidence has no scope columns."""
-        from luminary_memory.scope import scope_sql
-
-        cap = max(0, int(max_rows))
-        if cap == 0:
-            return 0
-        memory_where, params = scope_sql(
-            scope, alias="m", include_global=include_global, active_only=False
-        )
-        where = f"e.memory_id IN (SELECT m.id FROM memories m WHERE {memory_where})"
-        if scope is None and include_global:
-            # Orphaned evidence has no owner left to scope it; only an
-            # unscoped/global lifecycle pass may reclaim it.
-            where = f"(e.memory_id IS NULL OR {where})"
-        total = int(self._sql(
-            f"SELECT COUNT(*) FROM memory_evidence e WHERE {where}", tuple(params)
-        ).fetchone()[0])
-        excess = total - cap
-        if excess <= 0:
-            return 0
-        self._sql(
-            "DELETE FROM memory_evidence WHERE id IN "
-            f"(SELECT e.id FROM memory_evidence e WHERE {where} "
+            f"(SELECT e.id FROM {table} e WHERE ({where}) AND {protected} "
             "ORDER BY e.created_at ASC, e.id ASC LIMIT ?)",
             (*params, excess),
         )
-        self._commit()
-        return excess
+        return cursor.rowcount
+
+    def prune_episodes(self, max_rows: int, scope=None, include_global: bool = False) -> int:
+        return self._prune_ledger("episodes", max_rows, scope, include_global)
+
+    def prune_events(self, max_rows: int, scope=None, include_global: bool = False) -> int:
+        return self._prune_ledger("memory_events", max_rows, scope, include_global)
+
+    def prune_evidence(self, max_rows: int, scope=None, include_global: bool = False) -> int:
+        return self._prune_ledger("memory_evidence", max_rows, scope, include_global)
 
     def inspector_get(self, key, default=None):
         row = self._sql("SELECT value FROM inspector_metadata WHERE key = ?", (key,)).fetchone()

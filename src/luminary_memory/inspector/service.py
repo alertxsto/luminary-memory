@@ -76,6 +76,16 @@ class InspectorService:
                     data = getattr(queries, operation)(self, context, request)
                     status = "empty" if "items" in data and not data["items"] else "ok"
                     return self.result(context, request, status=status, data=data)
+                if operation == "legacy_inventory":
+                    if request.selection_handle is not None:
+                        raise PermissionError("legacy inventory requires the native own project")
+                    items = self.previews.legacy_inventory(context)
+                    return self.result(context, request, status="ok" if items else "empty",
+                                       data={"items": items})
+                if operation == "maintenance_suggestions":
+                    from luminary_memory.inspector import llm_maintenance
+                    data = llm_maintenance.list_suggestions(self, context, request)
+                    return self.result(context, request, status="ok" if data["items"] else "empty", data=data)
                 if operation == "preview_change":
                     data = self.previews.preview_change(context, request)
                     return self.result(context, request, data=data)
@@ -102,6 +112,10 @@ class InspectorService:
                 return self._failure(context, request, "unknown_outcome",
                     "The operation may have changed data, files or settings; completion is unconfirmed. "
                     "Inspect the selected destination, current settings and Activity before retrying.")
+            from luminary_memory.inspector.transfer import LegacyAssignmentRequired
+            if isinstance(error, LegacyAssignmentRequired):
+                return self._failure(context, request, "denied",
+                    "Import contains unowned fields; request an owner-assignment preview to adopt them.")
             if isinstance(error, PermissionError):
                 return self._failure(context, request, "denied", "Access is not authorized for this context.")
             if isinstance(error, (Conflict, ContentRevisionConflict)):

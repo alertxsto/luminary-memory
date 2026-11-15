@@ -1,0 +1,551 @@
+{
+  "n": 40,
+  "backend": "sqlite",
+  "latency": {
+    "fake": {
+      "engine": {
+        "name": "fake-deterministic",
+        "model": null,
+        "threads": null
+      },
+      "dataset": {
+        "name": "synthetic",
+        "seed": 42,
+        "memories": 40
+      },
+      "initialization_ms": 3.8777429981564637,
+      "cold_ingest_ms": 19.386432999453973,
+      "scenarios": {
+        "postgres vector search": {
+          "semantic": {
+            "first_ms": 7.019564000074752,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 6.660413500867435,
+              "p95": 13.309957951969409,
+              "mean": 7.682497980240441
+            }
+          },
+          "keyword": {
+            "first_ms": 1.1630529988906346,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.6263249997573439,
+              "p95": 0.6402368018825655,
+              "mean": 0.5532163101815968
+            }
+          },
+          "temporal": {
+            "first_ms": 0.7234920012706425,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.5188215000089258,
+              "p95": 0.5484337008965667,
+              "mean": 0.5206094099048642
+            }
+          },
+          "graph": {
+            "first_ms": 0.6655290017079096,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.2375425010541221,
+              "p95": 0.26924950107058976,
+              "mean": 0.24171696990379132
+            }
+          },
+          "e2e": {
+            "first_ms": 13.65504199930001,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 12.118444501538761,
+              "p95": 23.56062264971115,
+              "mean": 13.434860660163395
+            }
+          }
+        },
+        "deploy target staging": {
+          "semantic": {
+            "first_ms": 6.502488999103662,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 6.499348501165514,
+              "p95": 12.887754999974277,
+              "mean": 7.203870579869545
+            }
+          },
+          "keyword": {
+            "first_ms": 0.848269002744928,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.6368659996951465,
+              "p95": 0.6524898517454858,
+              "mean": 0.6382714899882558
+            }
+          },
+          "temporal": {
+            "first_ms": 0.5649239974445663,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.5155270009709056,
+              "p95": 0.5533775991352741,
+              "mean": 0.5200779101141961
+            }
+          },
+          "graph": {
+            "first_ms": 0.7342889985011425,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.593162501900224,
+              "p95": 0.642791900827433,
+              "mean": 0.6014236201372114
+            }
+          },
+          "e2e": {
+            "first_ms": 13.093648998619756,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 12.829100500312052,
+              "p95": 25.16980300024443,
+              "mean": 14.189907900108665
+            }
+          }
+        },
+        "sanitize FTS": {
+          "semantic": {
+            "first_ms": 6.5742010010581,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 5.963486499240389,
+              "p95": 12.939086302139913,
+              "mean": 7.067889899772126
+            }
+          },
+          "keyword": {
+            "first_ms": 0.4736810005852021,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.31695799953013193,
+              "p95": 0.34540359993116,
+              "mean": 0.32153065996681107
+            }
+          },
+          "temporal": {
+            "first_ms": 0.5483180029841606,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.882472502780729,
+              "p95": 1.1053802487367648,
+              "mean": 0.9020009801679407
+            }
+          },
+          "graph": {
+            "first_ms": 0.7103349998942576,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.3573400008463068,
+              "p95": 0.4005855989817063,
+              "mean": 0.3195723899989389
+            }
+          },
+          "e2e": {
+            "first_ms": 11.10302400047658,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 11.307802000374068,
+              "p95": 15.374476202123311,
+              "mean": 11.92679738978768
+            }
+          }
+        }
+      }
+    },
+    "real": {
+      "engine": {
+        "name": "fastembed",
+        "model": "BAAI/bge-small-en-v1.5",
+        "threads": 1
+      },
+      "dataset": {
+        "name": "synthetic",
+        "seed": 42,
+        "memories": 40
+      },
+      "initialization_ms": 6.049375999282347,
+      "cold_ingest_ms": 789.7720800028765,
+      "scenarios": {
+        "postgres vector search": {
+          "semantic": {
+            "first_ms": 24.190694999560947,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 25.735744000485283,
+              "p95": 35.42609794913005,
+              "mean": 26.57549663017562
+            }
+          },
+          "keyword": {
+            "first_ms": 0.5847490028827451,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.3856919993268093,
+              "p95": 0.41478954954072833,
+              "mean": 0.3894054899501498
+            }
+          },
+          "temporal": {
+            "first_ms": 0.7003150021773763,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.49358950127498247,
+              "p95": 0.9466912984862574,
+              "mean": 0.6235838599968702
+            }
+          },
+          "graph": {
+            "first_ms": 0.8207719984056894,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.3688969991344493,
+              "p95": 0.453755149464996,
+              "mean": 0.3779111398762325
+            }
+          },
+          "e2e": {
+            "first_ms": 48.02328499863506,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 32.3433430003206,
+              "p95": 45.97879680113692,
+              "mean": 34.11464960023295
+            }
+          }
+        },
+        "deploy target staging": {
+          "semantic": {
+            "first_ms": 25.333859000966186,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 24.34869150056329,
+              "p95": 30.984460148829378,
+              "mean": 25.171795379901596
+            }
+          },
+          "keyword": {
+            "first_ms": 0.7288279994099867,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.6253889987419825,
+              "p95": 0.6516005998491892,
+              "mean": 0.6270611801301129
+            }
+          },
+          "temporal": {
+            "first_ms": 0.5513249998330139,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.48634150152793154,
+              "p95": 0.5114415520438342,
+              "mean": 0.4867780597851379
+            }
+          },
+          "graph": {
+            "first_ms": 0.7044289995974395,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.5894794994674157,
+              "p95": 0.6296720473983441,
+              "mean": 0.5861713301419513
+            }
+          },
+          "e2e": {
+            "first_ms": 34.34419100085506,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 30.842488500638865,
+              "p95": 34.45987294853694,
+              "mean": 31.26378624005156
+            }
+          }
+        },
+        "sanitize FTS": {
+          "semantic": {
+            "first_ms": 27.791843000159133,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 27.123047999339178,
+              "p95": 27.74000744884688,
+              "mean": 27.20150516990543
+            }
+          },
+          "keyword": {
+            "first_ms": 0.4563449983834289,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.35325150201970246,
+              "p95": 0.36133469875494484,
+              "mean": 0.3544543900352437
+            }
+          },
+          "temporal": {
+            "first_ms": 0.5628899998555426,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.4948094992869301,
+              "p95": 0.5049592522482271,
+              "mean": 0.4933968702243874
+            }
+          },
+          "graph": {
+            "first_ms": 0.5212249998294283,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 0.2257390005979687,
+              "p95": 0.23829940146242734,
+              "mean": 0.22689581990562147
+            }
+          },
+          "e2e": {
+            "first_ms": 32.40114999789512,
+            "warmups": 10,
+            "samples": 100,
+            "warm_ms": {
+              "p50": 33.915093499672366,
+              "p95": 37.19254864972754,
+              "mean": 34.38974115979363
+            }
+          }
+        }
+      }
+    }
+  },
+  "quality": {
+    "protocol": "independent_gold_v2",
+    "cost": {
+      "correct_answers": 3,
+      "correct_answer_definition": "all relevant rows returned, no wrong rows, status ok",
+      "construction_ms": 260.0550329989346,
+      "query_ms": 208.58135699745617,
+      "wall_ms_per_correct_answer": 156.21212999879694,
+      "provider_usage": null,
+      "construction_usd": null,
+      "query_usd": null,
+      "usd_per_correct_answer": null
+    },
+    "cases": 7,
+    "answer_cases": 4,
+    "no_answer_cases": 3,
+    "recall@10": 1.0,
+    "mrr": 1.0,
+    "precision@10": 0.875,
+    "abstention_accuracy": 0.3333333333333333,
+    "unsupported_answer_rate": 0.6666666666666666,
+    "wrong_hit_rate": 0.25,
+    "wrong_hit_rows": 1,
+    "source_grounded_rate": 1.0,
+    "cross_scope_leakage": 0,
+    "case_results": [
+      {
+        "key": "corrected_location",
+        "query": "Di mana gudang suku cadang sekarang?",
+        "expected_ids": [
+          1
+        ],
+        "retrieved_ids": [
+          1
+        ],
+        "wrong_hit_ids": [],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.6300669209788053,
+        "hit_count": 1
+      },
+      {
+        "key": "shipment_departure",
+        "query": "When does the polar research shipment leave?",
+        "expected_ids": [
+          4
+        ],
+        "retrieved_ids": [
+          4,
+          5
+        ],
+        "wrong_hit_ids": [
+          5
+        ],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.7838686527872777,
+        "hit_count": 1
+      },
+      {
+        "key": "own_recipe",
+        "query": "What spices are in Nara's soup recipe?",
+        "expected_ids": [
+          6
+        ],
+        "retrieved_ids": [
+          6
+        ],
+        "wrong_hit_ids": [],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.7604027671843169,
+        "hit_count": 1
+      },
+      {
+        "key": "weekly_report",
+        "query": "Hari apa laporan mingguan sebaiknya dikirim?",
+        "expected_ids": [
+          9
+        ],
+        "retrieved_ids": [
+          9
+        ],
+        "wrong_hit_ids": [],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.7508455834522827,
+        "hit_count": 1
+      },
+      {
+        "key": "other_user_private",
+        "query": "What spice does Bima use in soup?",
+        "expected_ids": [],
+        "retrieved_ids": [
+          6
+        ],
+        "wrong_hit_ids": [
+          6
+        ],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.5810819048446706,
+        "hit_count": 0
+      },
+      {
+        "key": "other_workspace_budget",
+        "query": "What is the marine expedition budget?",
+        "expected_ids": [],
+        "retrieved_ids": [],
+        "wrong_hit_ids": [],
+        "status": "abstain",
+        "abstained": true,
+        "reason": "low_confidence_or_ambiguous",
+        "confidence": 0.25,
+        "hit_count": 0
+      },
+      {
+        "key": "unknown_delivery",
+        "query": "Berapa biaya pengiriman suku cadang?",
+        "expected_ids": [],
+        "retrieved_ids": [
+          1,
+          3,
+          9
+        ],
+        "wrong_hit_ids": [
+          1,
+          3,
+          9
+        ],
+        "status": "ok",
+        "abstained": false,
+        "reason": null,
+        "confidence": 0.6222064039786431,
+        "hit_count": 0
+      }
+    ]
+  },
+  "evaluation": {
+    "dataset": {
+      "type": "meta",
+      "format": "luminary-memory-gold",
+      "version": 1,
+      "name": "distinct-holdout-v1",
+      "language": [
+        "en",
+        "id"
+      ],
+      "purpose": "holdout; not used to select thresholds",
+      "label_provenance": "synthetic cases and labels created for this holdout; not independently human-verified",
+      "sha256": "a0f0ff777ce031163966d4304e480c068dd6b96a3540333d7c402052df419c98"
+    },
+    "dataset_path": "benchmarks/gold_holdout.jsonl",
+    "engine": {
+      "name": "fastembed",
+      "model": "BAAI/bge-small-en-v1.5",
+      "threads": 1
+    },
+    "evaluation_clock": {
+      "anchor": "2026-10-10T00:00:00+00:00",
+      "policy": "rebase newest fixture timestamp to run time"
+    },
+    "runtime": {
+      "python": "3.12.15",
+      "numpy": "2.5.4",
+      "fastembed": "0.9.1"
+    },
+    "config": {
+      "embedding_model": "BAAI/bge-small-en-v1.5",
+      "embedding_dim": 384,
+      "rrf_k": 60,
+      "strategy_weights": {
+        "semantic": 0.4,
+        "keyword": 0.3,
+        "graph": 0.2,
+        "temporal": 0.1
+      },
+      "dedup_jaccard_threshold": 0.85,
+      "recall_cliff_threshold": 0.45,
+      "recall_min_score": 0.0,
+      "importance_recall_boost": 1.0,
+      "strict_recall": true,
+      "scope_include_global": false,
+      "abstention_min_confidence": 0.34,
+      "abstention_min_margin": 0.04,
+      "evidence_required": true,
+      "rule_auto_replace": false,
+      "query_planner": true,
+      "query_planner_keyword_threshold": 0.9,
+      "ingest_whitelist": [],
+      "importance_auto": true,
+      "max_memories": 1000
+    },
+    "git_revision": "c4095f5b35eb8c601852f73c0f289bfa9a4b998f",
+    "label_provenance": "synthetic cases and labels created for this holdout; not independently human-verified"
+  }
+}

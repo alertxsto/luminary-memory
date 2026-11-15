@@ -35,14 +35,47 @@ def native(tmp_path, monkeypatch):
     )
     request = {"agent": "pi", "workspace": str(tmp_path), "session_id": "session-a"}
     # Owner-typed bridge commands use a separate trusted launcher channel.
+    monkeypatch.setenv("LUMINARY_BRIDGE_CONTEXT", json.dumps(request))
     monkeypatch.setenv("LUMINARY_BRIDGE_SOURCE", json.dumps({
         **{key: request[key] for key in ("agent", "workspace", "session_id")}, "kind": "operator",
     }))
     yield client, request
     client.close()
 
+def test_native_context_must_match_request_before_read(native, monkeypatch):
+    client, request = native
+    client.ingest("private memory", enrich=False)
+    monkeypatch.delenv("LUMINARY_BRIDGE_CONTEXT")
+    with pytest.raises(PermissionError):
+        dispatch({**request, "action": "activity"}, client=client)
+    monkeypatch.setenv("LUMINARY_BRIDGE_CONTEXT", json.dumps({**request, "session_id": "other"}))
+    with pytest.raises(PermissionError):
+        dispatch({**request, "action": "activity"}, client=client)
 
-def test_committed_counts_and_forget_stop_recall(native):
+
+def test_scoped_global_reads_require_explicit_owner_setting(native):
+    from luminary_memory.types import Memory
+
+    client, _ = native
+    global_id = client.backend.add(Memory(content="local global fact"))
+    assert client.get(global_id) is None
+    shared = MemoryClient(settings=Settings(scope_include_global=True), backend=client.backend,
+                          engine=Engine(), scope=client.scope)
+    assert shared.get(global_id).content == "local global fact"
+    assert global_id in {memory.id for memory in shared.list()}
+
+
+def test_unscoped_client_cannot_get_or_mutate_tenant_memory(native):
+    client, _ = native
+    memory_id = client.ingest("tenant-only fact", enrich=False)
+    local = MemoryClient(settings=client.settings, backend=client.backend, engine=Engine())
+    assert local.get(memory_id) is None
+    with pytest.raises(PermissionError):
+        local.delete(memory_id)
+    assert client.get(memory_id).content == "tenant-only fact"
+
+
+def test_committed_counts_and_forget_stop_recall(native, monkeypatch):
     client, request = native
     remembered = dispatch({**request, "action": "remember", "text": "Deploy target is staging"},
                           client=client)
@@ -53,9 +86,11 @@ def test_committed_counts_and_forget_stop_recall(native):
     assert duplicate["status"] == "duplicate"
     mid = remembered["memories"][0]["id"]
     # A new session can use the same durable workspace memory.
+    monkeypatch.setenv("LUMINARY_BRIDGE_CONTEXT", json.dumps({**request, "session_id": "session-b"}))
     recalled = dispatch({**request, "session_id": "session-b", "action": "recall",
                          "query": "Deploy target staging"}, client=client)
     assert [row["id"] for row in recalled["memories"]] == [mid]
+    monkeypatch.setenv("LUMINARY_BRIDGE_CONTEXT", json.dumps(request))
     assert dispatch({**request, "action": "forget", "memory_id": mid}, client=client)["deleted"] == 1
     assert dispatch({**request, "action": "recall", "query": "Deploy target staging"},
                     client=client)["memories"] == []
@@ -187,11 +222,15 @@ def test_bridge_accepts_other_supported_harness_identity(native, monkeypatch):
             "agent": "another-supported-host", "workspace": request["workspace"],
             "session_id": request["session_id"], "kind": "operator",
         }))
+        monkeypatch.setenv("LUMINARY_BRIDGE_CONTEXT", json.dumps({
+            **request, "agent": "another-supported-host",
+        }))
         response = dispatch({
             **request, "agent": "another-supported-host", "action": "remember",
             "text": "Other host deploys to staging",
         }, client=other)
         assert response["stored"] == 1
+        monkeypatch.setenv("LUMINARY_BRIDGE_CONTEXT", json.dumps(request))
         assert dispatch({**request, "action": "activity"}, client=client)["memories"] == []
     finally:
         other.close()
@@ -213,12 +252,13 @@ def _inspect_native(native, operation="events", **arguments):
         operation=operation, arguments=arguments, request_id="activity-test"))
 
 
-def test_actual_recall_activity_never_claims_a_save_or_observed_injection(native):
+def test_actual_recall_activity_never_claims_a_save_or_observed_injection(native, monkeypatch):
     import json
 
     client, request = native
     mid = dispatch({**request, "action": "remember", "text": "Deploy target is staging"},
                    client=client)["memories"][0]["id"]
+    monkeypatch.setenv("LUMINARY_BRIDGE_CONTEXT", json.dumps({**request, "session_id": "session-b"}))
     response = dispatch({**request, "session_id": "session-b", "action": "recall",
                          "query": "Deploy target staging QUERY_SECRET"}, client=client)
     assert [row["id"] for row in response["memories"]] == [mid]
@@ -758,3 +798,39 @@ def test_setup_uninstall_removes_entries(tmp_path, monkeypatch):
     assert run_setup("opencode", home=tmp_path, uninstall=True) == 0
     assert json.loads(_strip_jsonc(config.read_text()))["plugins"] == ["other-plugin"]
     assert "opencode" not in json.loads(bridge.read_text())["agents"]
+
+
+def test_legacy_inventory_and_owner_confirmed_assignment(native):
+    from luminary_memory.inspector.contracts import ConsoleRequest
+    from luminary_memory.inspector.identity import resolve_context
+    from luminary_memory.inspector.service import InspectorService
+    from luminary_memory.types import Memory
+
+    client, request = native
+    backend = client.backend
+    legacy = backend.add(Memory(content="legacy fact", user_id=client.scope["user_id"]))
+    foreign = backend.add(Memory(content="foreign fact", user_id="other"))
+    context = resolve_context(client, {
+        "user_id": client.scope["user_id"], "workspace": request["workspace"],
+        "workspace_id": client.scope["workspace_id"], "agent_id": "pi",
+        "session_id": request["session_id"], "host_id": "host", "profile_id": "default",
+    }, initialize=True)
+    service = InspectorService(client)
+    inventory = service.previews.legacy_inventory(context)
+    assert [row["memory_id"] for row in inventory] == [legacy]
+    assert backend.get(legacy).workspace_id is None
+    preview = service.execute(context, ConsoleRequest(operation="preview_change", request_id="p",
+        arguments={"kind": "assign_legacy", "memory_id": legacy, "expected_revision": backend.get(legacy).revision}))
+    assert preview.status == "ok"
+    denied = service.execute(context, ConsoleRequest(operation="mutate", request_id="m",
+        arguments={"preview_id": preview.data["preview_id"], "confirmation_receipt": "forged"}))
+    assert denied.status == "denied"
+    receipt = service.confirm(context, preview.data["preview_id"])
+    result = service.execute(context, ConsoleRequest(operation="mutate", request_id="m",
+        arguments={"preview_id": preview.data["preview_id"], "confirmation_receipt": receipt}))
+    assert result.status == "ok"
+    assert client.get(legacy).content == "legacy fact"
+    denied_foreign = service.execute(context, ConsoleRequest(operation="preview_change", request_id="p2",
+        arguments={"kind": "assign_legacy", "memory_id": foreign, "expected_revision": backend.get(foreign).revision}))
+    assert denied_foreign.status == "denied"
+    assert backend.get(foreign).user_id == "other"

@@ -7,7 +7,51 @@ The proposed **0.3.5** bump is deferred; source versions remain **0.3.4**.
 Nothing here authorizes a release. These notes do not claim platform acceptance,
 post-publication registry proof, or release readiness.
 
+### Changed
+
+- The Python client now defaults to `strict_recall` and `evidence_required`.
+  An unsupported question abstains instead of returning a topically adjacent
+  row, and a fact without stored evidence is not returned. Permissive recall is
+  still available through the same settings, now opt-in. Legacy rows without a
+  usable evidence quote disappear from results until repaired; see the
+  ownership and evidence migration notes.
+
+- Recall no longer lets ineligible rows consume a strategy cutoff: candidates
+  are over-fetched and, when a page is saturated, re-read before answering.
+  A candidate found only by keyword or graph is scored against the question
+  itself, an unsupported lexical hit can no longer suppress a supported
+  paraphrase, and confidence gates eligibility while the configured fusion
+  weights and importance boost keep deciding order. When every strategy fails,
+  recall reports `unavailable` instead of an abstention, and the CLI exits
+  non-zero with an error instead of "no relevant memories found".
+
 ### Added
+
+- Calibration-independent holdout baseline: `benchmarks/baselines/gold-holdout-real-v1.json`
+  records the real-model run over `gold_holdout.jsonl` with separate fake and
+  real latency arms (10 warmups, 100 samples) and an explicit cost block. It
+  reports the honest current state — abstention `0.33`, wrong-hit `0.25` — with
+  USD cost unknown and wall time per correct answer recorded instead.
+
+- `pi install npm:luminary-memory-pi` now provisions its own Python bridge: the
+  package postinstall creates the version-matched managed venv under
+  `~/.luminary/venvs/<version>` and records it in `~/.luminary/bridge.json`.
+  Hosts that skip lifecycle scripts provision on the first session instead and
+  report an actionable warning instead of a silent failure. An explicit
+  `LUMINARY_PYTHON` is never overridden. The pi inspector renders a Zentui-style
+  dense ledger (numbered sections, single accent rail, hairline dividers,
+  width-aware key line) over the same authorized controller and confirmation
+  flow. The overlay decodes raw terminal sequences, so navigation, section
+  jumps and record actions keep working even when the host does not forward
+  normalized key names.
+
+- Scoped reads now fail closed on incomplete identities; unscoped local reads
+  are limited to fully unowned rows, and cross-scope global reads default off.
+  Native bridge requests require matching launcher-provided context. Existing
+  partial ownership is not assigned automatically: trusted owners can inventory
+  and preview assignment, and native transfer requires an explicit assignment
+  opt-in for missing owner fields. Direct import rejects records outside its
+  target ownership. See [migration guidance](docs/api.md#ownership-and-legacy-migration).
 
 - One-command managed native setup for OpenCode, pi, and omp through the
   existing POSIX/PowerShell installers. Mutating setup provisions an isolated
@@ -31,6 +75,33 @@ post-publication registry proof, or release readiness.
   `requires_hermes` floor and SPDX license, and ships its own disclosure README.
 
 ### Fixed
+
+- Recall can answer a question asked in the language the memory was written in.
+  The default embedding model was English-only (`BAAI/bge-small-en-v1.5`), so an
+  Indonesian question about an Indonesian memory scored below the semantic floor
+  and abstained while the same question phrased with the stored word answered.
+  The default is now the multilingual
+  `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` with its own
+  measured floor (`0.39`) and abstention gate (`0.27`). The English-only model
+  keeps its `0.635` floor, so pinning it restores the previous behaviour.
+
+- A memory saved through the agent tool is no longer stored with confidence
+  `0.0`. Confidence is part of the recall score, so a verified memory written by
+  the tool could never clear the abstention gate: it was stored, listed, and
+  unreachable. Confidence now follows the evidence origin (`operator` `1.0`,
+  `user` `0.9`, `curated_user` `0.8`), and a model-proposed memory still cannot
+  claim full confidence.
+
+- Changing the embedding model no longer silently de-indexes the store. Recall
+  skips rows whose vector width does not match the query vector, so a model
+  change left every existing memory permanently unmatchable with no signal. The
+  new `luminary-memory reindex` command re-embeds the store, repairs rows whose
+  grounding confidence was stored as `0.0`, and recall logs a one-time warning
+  when it detects vectors from a previous model.
+
+- The embedding cache no longer defaults to a temporary directory. fastembed's
+  default cache lives under `/tmp`, so the model was re-downloaded after every
+  reboot and could fill a tmpfs. The default is now `~/.luminary/models`.
 
 - Source setup validates actual bridge version/capabilities instead of treating
   executable existence as health. Repeat mutating setup repairs/reuses the

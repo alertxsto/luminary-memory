@@ -10,10 +10,16 @@ from typing import TYPE_CHECKING
 from luminary_memory.backends import get_backend
 from luminary_memory.backends.inspector import atomic_client
 from luminary_memory.budget import truncate
-from luminary_memory.config import Settings, semantic_support_floor
+from luminary_memory.config import (
+    DEFAULT_ABSTENTION_CONFIDENCE,
+    EVIDENCE_CONFIDENCE,
+    Settings,
+    semantic_support_floor,
+)
 from luminary_memory.embeddings.fastembed import FastembedEngine
 from luminary_memory.ingest.llm import LLMEnricher, NoopEnricher
 from luminary_memory.ingest.whitelist import WhitelistFilter
+from luminary_memory.lifecycle.validity import is_current
 from luminary_memory.scope import memory_matches_scope, normalize_scope
 from luminary_memory.types import Memory, RecallResult
 
@@ -59,6 +65,31 @@ def _snapshot(memory: Memory | None) -> dict | None:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+_DIMENSION_MISMATCH_WARNED = False
+
+
+def _warn_dimension_mismatch(stored: int, current: int) -> None:
+    """Tell the operator once that stored vectors predate the current model."""
+    global _DIMENSION_MISMATCH_WARNED
+    if _DIMENSION_MISMATCH_WARNED:
+        return
+    _DIMENSION_MISMATCH_WARNED = True
+    logger.warning(
+        "stored embeddings are %d-dimensional but the configured model produces %d; "
+        "those rows cannot match until you run `luminary-memory reindex`",
+        stored,
+        current,
+    )
+
+
+def _has_usable_embedding(memory: Memory) -> bool:
+    """True when the row carries a real vector, not a test-double constant."""
+    embedding = memory.embedding or []
+    return len(embedding) >= 16 and len(
+        {round(float(value), 7) for value in embedding[:16]}
+    ) > 1
 
 
 def _clean_embedding(value) -> list[float] | None:
@@ -259,7 +290,7 @@ class MemoryClient:
         visible global row into a row that a tenant can rewrite, retract, or
         delete.
         """
-        if self.scope and not memory_matches_scope(
+        if not memory_matches_scope(
             memory,
             self.scope,
             include_global=False,
@@ -275,7 +306,7 @@ class MemoryClient:
         from the read visibility predicate prevents recall from changing a
         shared row's access count or importance on behalf of one tenant.
         """
-        return not self.scope or memory_matches_scope(
+        return memory_matches_scope(
             memory,
             self.scope,
             include_global=False,
@@ -1038,7 +1069,7 @@ class MemoryClient:
     def get(self, id: int, scope: dict | None = None) -> Memory | None:
         memory = self.backend.get(id)
         effective_scope = self._scope_for(scope)
-        if memory is not None and effective_scope and not memory_matches_scope(
+        if memory is not None and not memory_matches_scope(
             memory,
             effective_scope,
             include_global=bool(getattr(self.settings, "scope_include_global", True)),
@@ -1231,14 +1262,7 @@ class MemoryClient:
             raise ValueError("offset must be >= 0")
         eff_limit: int | None = None if n == 0 else n
         effective_scope = self._scope_for(scope)
-        # An unbound client is an administrative/library view: list/count and
-        # lifecycle diagnostics must still be able to inspect the whole store.
-        # Recall paths pass their scope directly to candidate generation, where
-        # an empty scope remains global-only so an agent never receives another
-        # tenant's row merely because identity was omitted.
-        include_global = bool(getattr(self.settings, "scope_include_global", True))
-        if not effective_scope:
-            include_global = False
+        include_global = bool(self.settings.scope_include_global)
         recent = getattr(self.backend, "recent", None)
         if recent is not None:
             try:
@@ -1249,8 +1273,7 @@ class MemoryClient:
                     include_global=include_global,
                 )
             except TypeError:
-                if not effective_scope:
-                    return recent(limit=eff_limit, offset=o)
+                pass
         # fallback for backends without SQL pagination
         from luminary_memory.recall.temporal import _parse_dt
 
@@ -1345,6 +1368,70 @@ class MemoryClient:
             "newest": created[-1] if created else None,
             "avg_importance": round(avg_importance, 3),
             "top_tags": dict(top_tags),
+        }
+
+    def reindex_embeddings(self, batch_size: int = 32) -> dict[str, int]:
+        """Re-embed every stored row with the configured model.
+
+        Changing ``embedding_model`` changes the vector width, and recall skips
+        any row whose width does not match the query vector. Without this pass a
+        model change silently de-indexes the whole store: the rows are still
+        there, they just never match again.
+
+        The pass is store-wide on purpose. Vectors are a derived index, not
+        content, so a migration has to cover rows outside the caller's scope or
+        those rows stay invisible to their own owners.
+        """
+        rows = self.backend.all()
+        reindexed = 0
+        unchanged = 0
+        failed = 0
+        repaired = 0
+        width = len(self.engine.embed("probe"))
+        for start in range(0, len(rows), max(1, batch_size)):
+            batch = rows[start : start + max(1, batch_size)]
+            for memory in batch:
+                content = str(memory.content or "").strip()
+                if not content:
+                    failed += 1
+                    continue
+                # Rows written before the grounding-confidence fix carry 0.0
+                # even though their evidence was verified, which keeps them
+                # below the abstention gate forever. Repair them in the same
+                # pass so one command brings an old store up to date.
+                origin = (memory.metadata or {}).get("native_evidence", {}).get("origin")
+                if origin in EVIDENCE_CONFIDENCE and float(memory.confidence or 0.0) <= 0.0:
+                    memory.confidence = EVIDENCE_CONFIDENCE[origin]
+                    self.backend.update(memory)
+                    repaired += 1
+                current = _clean_embedding(memory.embedding)
+                if current is not None and len(current) == width:
+                    unchanged += 1
+                    continue
+                try:
+                    vector = _clean_embedding(self.engine.embed(content))
+                except Exception:
+                    logger.warning(
+                        "reindex failed for memory %s (vector left unchanged)",
+                        memory.id,
+                        exc_info=True,
+                    )
+                    failed += 1
+                    continue
+                if vector is None:
+                    failed += 1
+                    continue
+                memory.embedding = vector
+                self.backend.update(memory)
+                reindexed += 1
+        return {
+            "total": len(rows),
+            "reindexed": reindexed,
+            "unchanged": unchanged,
+            "failed": failed,
+            "confidence_repaired": repaired,
+            "dim": width,
+            "model": self.settings.embedding_model,
         }
 
     def count(self) -> int:
@@ -1682,88 +1769,10 @@ class MemoryClient:
         return rows if effective_limit is None else rows[:effective_limit]
 
     def run_maintenance(self, review_all: bool = True) -> dict:
-        """LLM-driven store maintenance: review memories and prune/update stale facts.
+        """Generate scoped maintenance proposals without changing memories."""
+        from luminary_memory.inspector.llm_maintenance import generate
 
-        Sends the current store (or a recent slice when ``review_all`` is
-        false) to the configured LLM enricher, which decides per memory:
-        ``keep`` (unchanged), ``update`` (new content), or ``delete``
-        (obsolete/contradicted/duplicate). Applies the decisions and returns
-        a summary dict.
-
-        Requires ``ingest_llm`` (an LLM enricher); no-ops otherwise.
-        """
-        from luminary_memory.ingest.llm import _parse_enrichment_payload
-
-        if self.enricher is None or isinstance(self.enricher, NoopEnricher):
-            return {"skipped": "no LLM enricher configured (set ingest_llm)"}
-
-        # Maintenance can update/delete rows. Do not send compatibility-visible
-        # global rows to a tenant's curator; mutation guards alone would make
-        # the result dependent on swallowed PermissionErrors and would expose
-        # shared data to an LLM unnecessarily.
-        memories = self._mutable_memories(limit=0 if review_all else 500)
-        if not memories:
-            return {"reviewed": 0, "deleted": 0, "updated": 0}
-
-        raw = self.enricher.review_memories(memories)
-        data = _parse_enrichment_payload(raw)
-        actions = data.get("actions")
-        if not isinstance(actions, list):
-            return {"reviewed": len(memories), "deleted": 0, "updated": 0, "error": "bad LLM response"}
-
-        deleted = updated = skipped = 0
-        by_id = {m.id: m for m in memories}
-        for act in actions:
-            if not isinstance(act, dict):
-                continue
-            try:
-                mid = int(act.get("id"))
-            except (TypeError, ValueError):
-                continue
-            if mid not in by_id:
-                continue
-            action = act.get("action")
-            if action not in {"delete", "update"}:
-                continue
-            current = by_id[mid]
-            raw_evidence = act.get("evidence_quote")
-            evidence_quote = str(raw_evidence).strip() if raw_evidence else None
-            source_id = str(act.get("source_id")).strip() if act.get("source_id") else None
-            new_content = act.get("content")
-            grounded_evidence = bool(
-                evidence_quote
-                and (
-                    evidence_quote in current.content
-                    or (isinstance(new_content, str) and evidence_quote in new_content)
-                )
-            )
-            if getattr(self.settings, "evidence_required", False):
-                is_core = any(tag in {"core", "rule"} for tag in (current.tags or []))
-                if not (grounded_evidence or source_id) or (is_core and not bool(act.get("confirmed", False))):
-                    skipped += 1
-                    continue
-            if action == "delete":
-                try:
-                    self.delete(int(mid))
-                    deleted += 1
-                except Exception:  # noqa: BLE001, S110
-                    pass
-            elif action == "update" and isinstance(new_content, str) and new_content.strip():
-                try:
-                    m = current
-                    m.content = new_content.strip()
-                    if grounded_evidence:
-                        m.evidence_quote = evidence_quote
-                    if source_id:
-                        m.source_id = source_id
-                    self.update(m)
-                    updated += 1
-                except Exception:  # noqa: BLE001, S110
-                    pass
-        result = {"reviewed": len(memories), "deleted": deleted, "updated": updated}
-        if getattr(self.settings, "evidence_required", False):
-            result["skipped"] = skipped
-        return result
+        return generate(self, review_all=review_all)
 
     def export(self, path, include_embeddings: bool = True) -> dict:
         """Export all memories to *path* (versioned JSON)."""
@@ -1902,54 +1911,66 @@ class MemoryClient:
         use_planner = bool(getattr(self.settings, "query_planner", True))
         planner_threshold = float(getattr(self.settings, "query_planner_keyword_threshold", 0.9))
 
+        # Eligibility is decided before a strategy's top-N cutoff, so the
+        # fetch is over-sampled rather than asking each strategy for exactly
+        # the caller's page size.
         eff = output_limit
-        temporal_limit = (eff * 2) if eff is not None else None
         enabled = None
 
         strategies: list[list[tuple]] = []
         # Order matters for planner temporal guard: keyword first.
-        strat_fns = [
-            (
-                "semantic",
-                lambda: semantic_recall(
-                    self.backend,
-                    self.engine,
-                    query_for_retrieval,
-                    limit=eff,
-                    scope=effective_scope,
-                    include_global=include_global,
+        def _strategy_calls(limit: int | None) -> list[tuple[str, object]]:
+            # `limit=None` means "as many as the source can supply"; the
+            # bounded pass uses it only when a saturated page hid an eligible
+            # candidate.
+            return [
+                (
+                    "semantic",
+                    lambda: semantic_recall(
+                        self.backend,
+                        self.engine,
+                        query_for_retrieval,
+                        limit=limit,
+                        scope=effective_scope,
+                        include_global=include_global,
+                    ),
                 ),
-            ),
-            (
-                "keyword",
-                lambda: keyword_recall(
-                    self.backend,
-                    query_for_retrieval,
-                    limit=eff,
-                    scope=effective_scope,
-                    include_global=include_global,
+                (
+                    "keyword",
+                    lambda: keyword_recall(
+                        self.backend,
+                        query_for_retrieval,
+                        limit=limit,
+                        scope=effective_scope,
+                        include_global=include_global,
+                    ),
                 ),
-            ),
-            (
-                "temporal",
-                lambda: temporal_recall(
-                    self.backend,
-                    limit=temporal_limit,
-                    scope=effective_scope,
-                    include_global=include_global,
+                (
+                    "temporal",
+                    lambda: temporal_recall(
+                        self.backend,
+                        limit=limit,
+                        scope=effective_scope,
+                        include_global=include_global,
+                    ),
                 ),
-            ),
-            (
-                "graph",
-                lambda: graph_recall(
-                    self.backend,
-                    query_for_retrieval,
-                    limit=eff,
-                    scope=effective_scope,
-                    include_global=include_global,
+                (
+                    "graph",
+                    lambda: graph_recall(
+                        self.backend,
+                        query_for_retrieval,
+                        limit=limit,
+                        scope=effective_scope,
+                        include_global=include_global,
+                    ),
                 ),
-            ),
-        ]
+            ]
+
+        # Over-fetch: ineligible rows (expired, wrong tag, missing evidence)
+        # must not consume a strategy's cutoff and hide an eligible answer.
+        fetch_limit = None if eff is None else min(max(eff * 8, eff + 16), 500)
+        strat_fns = _strategy_calls(fetch_limit)
+        strategy_errors: dict[str, str] = {}
 
         # If planner is enabled, compute which strategies are active.
         # We need keyword_top_score to decide temporal, so run in two passes.
@@ -1962,8 +1983,11 @@ class MemoryClient:
             kw_rows: list[tuple] = []
             try:
                 kw_rows = strat_map["keyword"] = strat_fns[1][1]()
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 -- reported, never silent
+                strategy_errors["keyword"] = type(exc).__name__
                 kw_rows = strat_map["keyword"] = []
+            kw_rows = [row for row in kw_rows if row and is_current(row[0])]
+            strat_map["keyword"] = kw_rows
             top_kw = float(kw_rows[0][1]) if kw_rows else None
             enabled = _plan(query_for_retrieval, keyword_top_score=top_kw, planner=True,
                             keyword_threshold=planner_threshold)
@@ -1976,16 +2000,18 @@ class MemoryClient:
                     continue
                 try:
                     strat_map[name] = fn()
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001 -- reported, never silent
+                    strategy_errors[name] = type(exc).__name__
                     strat_map[name] = []
             # Restore fixed order for fusion
             for name, _ in strat_fns:
                 strategies.append(strat_map.get(name, []))
         else:
-            for _name, fn in strat_fns:
+            for name, fn in strat_fns:
                 try:
                     strategies.append(fn())
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001 -- reported, never silent
+                    strategy_errors[name] = type(exc).__name__
                     strategies.append([])
 
         # Scope/tag/status filtering happens before fusion and before any
@@ -2039,8 +2065,10 @@ class MemoryClient:
             }
             return bool(quote and content and (quote in content or native_user))
 
+        recall_now = datetime.now(UTC)
+
         def _is_current(memory: Memory) -> bool:
-            if memory.status != "active" and not (include_conflicted and memory.status == "conflicted"):
+            if not is_current(memory, now=recall_now, include_conflicted=include_conflicted):
                 return False
             if not memory_matches_scope(
                 memory,
@@ -2051,30 +2079,7 @@ class MemoryClient:
                 return False
             if allowed_ids is not None and memory.id not in allowed_ids:
                 return False
-            if is_noise_memory(memory.content):
-                return False
-            now = datetime.now(UTC)
-            if memory.valid_from:
-                try:
-                    valid_from = datetime.fromisoformat(memory.valid_from)
-                    if valid_from.tzinfo is None:
-                        valid_from = valid_from.replace(tzinfo=UTC)
-                    if valid_from.astimezone(UTC) > now:
-                        return False
-                except (TypeError, ValueError):
-                    # A malformed validity window cannot safely establish
-                    # that a memory is current; strict recall fails closed.
-                    return False
-            if memory.valid_to:
-                try:
-                    valid_to = datetime.fromisoformat(memory.valid_to)
-                    if valid_to.tzinfo is None:
-                        valid_to = valid_to.replace(tzinfo=UTC)
-                    if valid_to.astimezone(UTC) < now:
-                        return False
-                except (TypeError, ValueError):
-                    return False
-            return True
+            return not is_noise_memory(memory.content)
 
         def _hydrate(memories: list[Memory]) -> list[Memory]:
             """Turn lean backend fallback rows into complete public objects."""
@@ -2100,16 +2105,42 @@ class MemoryClient:
                 and not _has_required_evidence(row[0])
             )
 
-        filtered_strategies: list[list[tuple]] = []
-        for strat in strategies:
-            filtered_strategies.append([
+        def _eligible(rows: list[tuple]) -> list[tuple]:
+            return [
                 row
-                for row in strat
+                for row in rows
                 if row
                 and _is_current(row[0])
                 and (not evidence_required or _has_required_evidence(row[0]))
-            ])
-        strategies = filtered_strategies
+            ]
+
+        raw_strategies = [list(rows) for rows in strategies]
+        strategies = [_eligible(rows) for rows in raw_strategies]
+
+        # A strategy page can be saturated by ineligible rows (expired, wrong
+        # tag, missing evidence). When the eligible set is still short, ask the
+        # strategy once more without a limit instead of answering from a
+        # truncated pool. Strategies the planner disabled stayed empty and are
+        # not re-enabled here.
+        if (
+            eff is not None
+            and sum(len(rows) for rows in strategies) < eff
+            and any(
+                fetch_limit is not None and len(rows) >= fetch_limit
+                for rows in raw_strategies
+            )
+        ):
+            for index, (name, fn) in enumerate(_strategy_calls(None)):
+                if not raw_strategies[index]:
+                    continue
+                try:
+                    widened = fn()
+                except Exception as exc:  # noqa: BLE001 -- reported, never silent
+                    strategy_errors[name] = type(exc).__name__
+                    continue
+                if len(widened) > len(raw_strategies[index]):
+                    raw_strategies[index] = widened
+                    strategies[index] = _eligible(widened)
 
         # Conflict rows are intentionally excluded from normal candidate
         # generation. An explicit diagnostic request may include them, but
@@ -2182,6 +2213,14 @@ class MemoryClient:
                 scored.sort(key=lambda x: -x[1])
 
         if not scored:
+            if strategy_errors and all(not rows for rows in strategies):
+                return RecallResult(
+                    memories=[],
+                    scores=[],
+                    strategies_hit=strategies_hit,
+                    status="unavailable",
+                    reason="all_strategies_failed",
+                )
             if evidence_required and evidence_candidates_seen:
                 return RecallResult(
                     memories=[],
@@ -2290,10 +2329,7 @@ class MemoryClient:
             semantic_score = float(signals.get("semantic", 0.0))
             # Constant/degenerate vectors are common in test doubles and do
             # not constitute semantic evidence.
-            emb = memory.embedding or []
-            usable_embedding = len(emb) >= 16 and len(
-                {round(float(value), 7) for value in emb[:16]}
-            ) > 1
+            usable_embedding = _has_usable_embedding(memory)
             if not usable_embedding:
                 semantic_score = 0.0
             semantic_score = max(0.0, min(1.0, semantic_score))
@@ -2358,6 +2394,34 @@ class MemoryClient:
                 return 0.0
             return len(query_tokens & _token_set(memory.content)) / len(query_tokens)
 
+        # A candidate found by keyword or graph but outside the semantic page
+        # still gets its true similarity to the question. A zero here would make
+        # a supported paraphrase look unsupported.
+        unscored = [
+            memory
+            for memory, _ in scored
+            if memory.id is not None and "semantic" not in raw_scores.get(memory.id, {})
+        ]
+        if unscored:
+            try:
+                query_vector = self.engine.embed(query_for_retrieval)
+            except Exception:  # noqa: BLE001 -- semantic signal stays absent
+                query_vector = None
+            if query_vector:
+                norm = math.sqrt(sum(value * value for value in query_vector))
+                if norm:
+                    for memory in unscored:
+                        embedding = memory.embedding or []
+                        if len(embedding) != len(query_vector):
+                            _warn_dimension_mismatch(len(embedding), len(query_vector))
+                            continue
+                        vector_norm = math.sqrt(sum(value * value for value in embedding))
+                        if not vector_norm:
+                            continue
+                        dot = sum(a * b for a, b in zip(embedding, query_vector))
+                        similarity = max(0.0, min(1.0, dot / (vector_norm * norm)))
+                        raw_scores.setdefault(memory.id, {})["semantic"] = similarity
+
         confidence_by_id = {m.id: _signal_confidence(m) for m, _ in scored if m.id is not None}
         # A weakly-grounded row is redundant next to a strongly-grounded one:
         # it adds no answer the store can stand behind, only noise. Measured on
@@ -2366,7 +2430,8 @@ class MemoryClient:
         # alone ranks the row 0.7098 against the answer's 0.9206. Drop rows
         # whose lexical overlap is thin when a well-grounded answer exists.
         strong_lexical = any(
-            _lexical_coverage(memory) >= 0.5 for memory, _ in scored
+            _lexical_coverage(memory) >= 0.5 and confidence_by_id.get(memory.id, 0.0) > 0.0
+            for memory, _ in scored
         )
         if strong_lexical:
             kept = [
@@ -2382,6 +2447,12 @@ class MemoryClient:
         if strict_policy:
             min_conf = float(getattr(self.settings, "abstention_min_confidence", 0.34))
             min_margin = float(getattr(self.settings, "abstention_min_margin", 0.04))
+            # The calibrated gate is only meaningful for rows whose embedding is
+            # real. A row without a usable vector is scored from lexical signals
+            # that have no calibrated scale, so it keeps the conservative gate
+            # instead of inheriting a lower one measured on dense similarity.
+            if scored and not _has_usable_embedding(scored[0][0]):
+                min_conf = max(min_conf, DEFAULT_ABSTENTION_CONFIDENCE)
             candidate_floor = max(min_conf, top_confidence * 0.55)
             scored = [
                 (memory, score)
@@ -2400,8 +2471,19 @@ class MemoryClient:
             scored.sort(key=lambda pair: confidence_by_id.get(pair[0].id, 0.0), reverse=True)
             top_confidence = confidence_by_id.get(scored[0][0].id, 0.0)
             second_confidence = confidence_by_id.get(scored[1][0].id, 0.0) if len(scored) > 1 else 0.0
+            # The margin rule exists to stop an arbitrary pick between two
+            # candidates that neither one supports. When the runner-up clears
+            # the semantic floor on its own, the query has two answers rather
+            # than an ambiguous one, and returning both is the honest result.
+            second_supported = (
+                len(scored) > 1
+                and float(raw_scores.get(scored[1][0].id or -1, {}).get("semantic", 0.0))
+                >= semantic_floor
+            )
             if top_confidence < min_conf or (
-                top_confidence < 0.6 and top_confidence - second_confidence < min_margin
+                top_confidence < 0.6
+                and top_confidence - second_confidence < min_margin
+                and not second_supported
             ):
                 return RecallResult(
                     memories=[],
@@ -2411,6 +2493,10 @@ class MemoryClient:
                     reason="low_confidence_or_ambiguous",
                     confidence=top_confidence,
                 )
+        # Confidence decides eligibility; the configured weighted fusion and
+        # importance boost decide order among the eligible candidates.
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+
         # Adaptive relevance cutoff (cliff detection): walk the fused scores
         # from the top and cut at the first steep drop (>= cliff_threshold,
         # default 45% relative drop between consecutive candidates). This

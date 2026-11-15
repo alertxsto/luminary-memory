@@ -30,7 +30,7 @@ def keyword_recall(
     query: str,
     limit: int | None = 10,
     scope: dict | None = None,
-    include_global: bool = True,
+    include_global: bool = False,
 ) -> list[tuple]:
     if limit is not None and int(limit) == 0:
         return []

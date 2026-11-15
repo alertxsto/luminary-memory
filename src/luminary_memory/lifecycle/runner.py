@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -20,7 +22,7 @@ def run_lifecycle(
     settings: Settings | None = None,
     semantic: bool | None = None,
     scope: dict | None = None,
-    include_global: bool = True,
+    include_global: bool = False,
 ) -> dict[str, int]:
     min_importance = float(settings.prune_min_importance) if settings else 0.2
     consolidate_threshold = float(
@@ -157,3 +159,49 @@ def run_lifecycle(
     }
     logger.info("run_lifecycle %s (%.1fs)", result, time.monotonic() - start)
     return result
+
+
+def run_safe_retention(
+    backend: MemoryBackend,
+    settings: Settings,
+    scope: dict | None = None,
+    include_global: bool = False,
+) -> dict:
+    """Run a bounded, store-coordinated retention pass when due.
+
+    The persisted deadline and all mutations share the backend transaction,
+    so separate host processes cannot run overlapping passes for this store.
+    """
+    identity = json.dumps([scope or {}, include_global], sort_keys=True, separators=(",", ":"))
+    key = "safe_retention:" + hashlib.sha256(identity.encode()).hexdigest()
+    interval = max(0, int(settings.retention_interval_seconds))
+    now = time.time()
+    ledgers = (
+        ("episodes", "episode_max_rows", backend.prune_episodes),
+        ("memory_events", "event_max_rows", backend.prune_events),
+        ("memory_evidence", "evidence_max_rows", backend.prune_evidence),
+    )
+    with backend.transaction():
+        last = backend.inspector_get(key)
+        if isinstance(last, (int, float)) and now - last < interval:
+            return {"status": "not_due"}
+        result = {
+            "status": "completed",
+            "cleanup": cleanup_expired(backend, scope=scope, include_global=include_global, limit=100),
+            "ledgers": {},
+        }
+        for table, setting, prune_ledger in ledgers:
+            cap = max(0, int(getattr(settings, setting, 0) or 0))
+            before = backend.ledger_status(table, cap, scope, include_global)
+            removed = 0
+            if before["overflow"]:
+                bounded_cap = max(cap, before["count"] - 100)
+                removed = prune_ledger(bounded_cap, scope=scope, include_global=include_global)
+            status = backend.ledger_status(table, cap, scope, include_global)
+            status["pruned"] = removed
+            result["ledgers"][table] = status
+            if status["overflow"]:
+                logger.warning("retention overflow table=%s count=%d cap=%s overflow=%d",
+                               table, status["count"], status["cap"], status["overflow"])
+        backend.inspector_put(key, now)
+        return result

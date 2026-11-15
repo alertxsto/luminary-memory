@@ -29,6 +29,15 @@ same session, but it is not a semantic memory, is not returned by normal
 recall, and does not count as a durable fact. Only a grounded curated summary
 or an explicit write enters the durable memory path.
 
+Scope predicates require the complete user, workspace, and agent identity for
+scoped durable reads. An omitted session spans sessions of that identity; an
+explicit session narrows the read. Unscoped local reads match only fully
+unowned records. Cross-scope access to fully unowned records is opt-in and
+does not grant mutation rights. Incomplete legacy ownership is not assigned
+at startup; see [ownership migration](api.md#ownership-and-legacy-migration).
+These application boundaries assume a trusted deployment owner, not a
+hostile process running under the same OS account.
+
 ## Ingest
 
 1. **Whitelist filter**, rejects disallowed text before it reaches any index.

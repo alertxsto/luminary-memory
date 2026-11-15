@@ -18,6 +18,20 @@ and Promise domain APIs. The older Luminary npm `0.3.1` adapter targets V1;
 standalone desktop app. Desktop/web wrappers must render native extensions,
 custom messages or tool results; terminal widgets are not portable.
 
+For store operations the native launcher supplies `LUMINARY_BRIDGE_CONTEXT`
+separately from the model request. The bridge requires its agent, absolute
+workspace, and session to match before opening the store. Missing, malformed,
+or mismatched context is rejected; `version` is a database-free exception.
+Evidence for a native remember request uses a separate launcher-provided
+`LUMINARY_BRIDGE_SOURCE` channel. These process-environment channels rely on
+the native host and the OS account being trusted; they do not authenticate
+against a hostile process running as the same user. Custom bridge launchers
+must provide the matching context rather than relying on request JSON alone.
+
+Successful native writes can report the due safe-retention result in the
+response's `retention` field. See [safe retention](api.md#safe-retention) for
+the status and ledger overflow fields.
+
 ## Native plugin packages
 
 Official **Luminary-maintained** package sources are available for pi, OpenCode,
@@ -54,9 +68,17 @@ curl -fsSL https://raw.githubusercontent.com/alertxsto/luminary-memory/main/inst
 The **installer**, not native npm installation, provisions a uv-managed Python
 3.12 bridge under `~/.luminary/venvs/<version>` and uv under `~/.luminary/bin`.
 It validates runtime version/capabilities and installs matching native packages,
-user-wide by default. Native packages alone never install Python. No manual
-venv/interpreter export or persistent PATH/profile edit is needed; the installed
-host must supply its supported runtime.
+user-wide by default. No manual venv/interpreter export or persistent
+PATH/profile edit is needed; the installed host must supply its supported runtime.
+
+The pi package is the exception: from unreleased source it provisions its own
+version-matched bridge. Its postinstall runs the same provisioning script the
+installer uses, and because npm 12 blocks dependency install scripts, the
+extension also repairs the bridge once at runtime when a call finds no usable
+interpreter. Successful provisioning writes the shared
+`~/.luminary/bridge.json` record, so the inspector and memory tools use the
+same interpreter. OpenCode and omp packages still rely on the installer or an
+explicit `LUMINARY_PYTHON`.
 
 Schema-1 `~/.luminary/bridge.json` keeps per-agent `python`, `version`, and `mode`.
 Both memory and inspector use **explicit `LUMINARY_PYTHON` > selected agent's

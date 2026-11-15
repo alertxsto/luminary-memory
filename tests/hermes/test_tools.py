@@ -15,7 +15,8 @@ class _FakeEngine:
 
 def _init_provider(tmp_path, **overrides):
     p = LuminaryMemoryProvider()
-    p.initialize("s1", hermes_home=str(tmp_path), platform="cli", agent_identity="test")
+    p.initialize("s1", hermes_home=str(tmp_path), platform="cli", agent_identity="test",
+                 user_id="test-user", agent_workspace="test-workspace")
     p._config.update(overrides)
     p._client.engine = _FakeEngine()
     return p

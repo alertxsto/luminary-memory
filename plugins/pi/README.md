@@ -124,11 +124,18 @@ there is a package-detail route. A registry install does not prove indexing.
 ```
 
 Use an actual returned memory ID for `forget`. The bare command opens the
-inspector: a Zentui-style framed surface with numbered sections, an accent rail
-on the selected row, a compact key-help line, and live status. It renders only
-that overlay; it never replaces pi's editor, transcript, or footer. `compact`
-keeps the inline activity widget, and `close` dismisses the panel. Headless and
-RPC sessions receive structured state instead of drawing. The model tool is
+inspector: one dense ledger with a numbered section strip, a single accent rail
+on the selected row, hairline dividers, and a key line that shortens with the
+terminal. It renders only that overlay; it never replaces pi's editor,
+transcript, or footer. `compact` keeps the inline activity widget, and `close`
+dismisses the panel. Headless and RPC sessions receive structured state instead
+of drawing.
+
+Keys: `↑/↓` or `j/k` move, `Enter` or `a` opens the selected record's actions,
+`1`-`4` jump to a section, `Tab`/`Shift+Tab` (or `←/→`) cycle, `/` filters,
+`r` reloads, `c` switches to the compact widget, `esc` or `q` closes. Raw
+terminal sequences are decoded by the overlay as well, so control still works
+when pi does not forward its normalized key names. The model tool is
 `luminary_memory`. Commands emit structured `luminary_activity` messages
 without starting a model turn; UI status/dialogs require pi's native UI.
 

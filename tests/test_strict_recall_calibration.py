@@ -12,7 +12,13 @@ from __future__ import annotations
 import math
 
 from luminary_memory.api import MemoryClient
-from luminary_memory.config import Settings, semantic_support_floor
+from luminary_memory.config import (
+    DEFAULT_ABSTENTION_CONFIDENCE,
+    DEFAULT_EMBEDDING_MODEL,
+    Settings,
+    abstention_confidence_floor,
+    semantic_support_floor,
+)
 
 DIM = 16
 
@@ -132,3 +138,44 @@ def test_floor_resolution_is_model_scoped():
     assert semantic_support_floor("BAAI/bge-small-en-v1.5") == 0.635
     assert semantic_support_floor("someone/unknown-embedding") == 0.78
     assert semantic_support_floor(None) == 0.78
+
+
+def test_default_model_is_multilingual_and_calibrated():
+    # An English-only default cannot answer a question asked in the language the
+    # user actually writes in, so the shipped default has to be multilingual and
+    # has to carry its own measured floor and abstention gate.
+    assert DEFAULT_EMBEDDING_MODEL == (
+        "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+    )
+    assert semantic_support_floor(DEFAULT_EMBEDDING_MODEL) == 0.39
+    assert abstention_confidence_floor(DEFAULT_EMBEDDING_MODEL) == 0.27
+
+
+def test_abstention_gate_is_model_scoped():
+    # The gate is the score of a candidate that only just clears the floor, so a
+    # model whose supports sit lower needs a lower gate. An unmeasured model
+    # keeps the conservative value.
+    assert abstention_confidence_floor("BAAI/bge-small-en-v1.5") == 0.34
+    assert abstention_confidence_floor("someone/unknown-embedding") == (
+        DEFAULT_ABSTENTION_CONFIDENCE
+    )
+    assert abstention_confidence_floor(None) == DEFAULT_ABSTENTION_CONFIDENCE
+
+
+def test_multilingual_floor_answers_a_paraphrase_the_english_floor_rejects(tmp_path):
+    # cos(query, fact) = 0.47 is below the English model's 0.635 floor but above
+    # the multilingual model's 0.39 floor. The same evidence must answer on the
+    # model that was measured for it.
+    client = _client(
+        tmp_path,
+        model="sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+        query_vector=_unit(0.47, 0.30, 0.83),
+    )
+    try:
+        _seed(client)
+        result = client.recall("Current deployment destination", strict=True)
+
+        assert result.status == "ok"
+        assert [memory.content for memory in result.memories] == [FACT]
+    finally:
+        client.close()

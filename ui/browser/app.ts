@@ -63,6 +63,13 @@ const dialogs: NativeDialogs = {
 };
 
 async function transfer(direction: 'import' | 'export') {
+  const epoch = controller.contextVersion;
+  let assignLegacy = false;
+  if (direction === 'import') {
+    const choice = await dialogs.select('Import partial-owner records?', ['Do not assign legacy owners', 'Assign missing ownership to this native owner']);
+    if (!choice || !controller.activeContext || controller.contextVersion !== epoch) return;
+    assignLegacy = choice === 'Assign missing ownership to this native owner';
+  }
   let body: Blob | string = '';
   if (direction === 'import') {
     const input = element('input'); input.type = 'file'; input.accept = '.json,application/json';
@@ -72,14 +79,16 @@ async function transfer(direction: 'import' | 'export') {
     if (file.size > 4 * 1024 * 1024) { await dialogs.show('File too large', 'Transfer accepts at most 4 MiB; no file was uploaded.'); return; }
     body = file;
   }
+  if (!controller.activeContext || controller.contextVersion !== epoch) return;
   const response = await fetch('/api/file?mode=' + (direction === 'import' ? 'read' : 'write'), {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/octet-stream', 'X-Luminary-CSRF': csrf }, body,
   });
   if (!response.ok) throw new Error('File selection failed');
   const registered = await response.json() as ConsoleResult;
   const handle = registered.data?.file_handle;
+  if (!controller.activeContext || controller.contextVersion !== epoch) return;
   if (registered.status !== 'ok' || typeof handle !== 'string') { await dialogs.show('File unavailable', registered.error?.message || registered.status); return; }
-  await controller.preview('transfer_preview', { direction, file_handle: handle }, 'transfer_commit');
+  await controller.preview('transfer_preview', { direction, file_handle: handle, ...(assignLegacy ? { assign_legacy: true } : {}) }, 'transfer_commit');
   const result = await controller.commit(preview => dialogs.confirm('Confirm data transfer', JSON.stringify(preview, null, 2)));
   if (direction === 'export' && result?.status === 'ok') {
     const downloaded = await fetch('/api/download/' + encodeURIComponent(handle), { headers: { 'X-Luminary-CSRF': csrf }, credentials: 'same-origin' });

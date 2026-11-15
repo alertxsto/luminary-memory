@@ -1,6 +1,7 @@
 """Optional operator config file for native integrations and the CLI."""
 
 import getpass
+import json
 import os
 from pathlib import Path
 
@@ -119,6 +120,12 @@ def test_file_cannot_redirect_itself(tmp_path, monkeypatch):
 def test_dispatch_loads_file_before_constructing_settings(tmp_path, monkeypatch):
     config = _write(tmp_path / "luminary.env", "LUMINARY_INGEST_LLM=true\n")
     monkeypatch.setenv(CONFIG_FILE_ENV, str(config))
+    identity = {
+        "agent": "pi",
+        "workspace": str(tmp_path.resolve()),
+        "session_id": "config-file",
+    }
+    monkeypatch.setenv("LUMINARY_BRIDGE_CONTEXT", json.dumps(identity))
     scope = {
         "workspace_id": os.path.normcase(str(tmp_path.resolve())),
         "user_id": getpass.getuser(),

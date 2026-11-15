@@ -57,11 +57,11 @@
 - Integration tests run against a real Postgres service in CI
   (`.github/workflows/ci.yml`); run them locally with `LUMINARY_PG_DSN`
   (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
-- Schema initialization backfills legacy hashes, collapses exact active
-  duplicates while rehoming derived references, and installs the same scoped
-  unique invariant as SQLite. Unique-conflict recovery rolls back the failed
-  transaction and closes its lookup snapshot, which matters for long-lived
-  writer connections.
+- Startup schema initialization installs the scoped unique invariant without
+  backfilling hashes or collapsing legacy rows. Ownership migration is explicit;
+  see [ownership migration](api.md#ownership-and-legacy-migration).
+  Unique-conflict recovery rolls back the failed transaction and closes its
+  lookup snapshot, which matters for long-lived writer connections.
 
 ## Choosing
 

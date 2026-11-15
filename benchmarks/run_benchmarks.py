@@ -1,10 +1,4 @@
-"""Run pipeline latency plus an independently labelled accuracy suite.
-
-The old harness used ``client.search(query)`` as its own relevance label. That
-can only measure agreement with the implementation under test. This runner
-keeps synthetic latency measurements separate and evaluates retrieval against
-``gold_micro.jsonl`` labels authored outside the retriever.
-"""
+"""Measure labelled retrieval quality and separate fake/real latency arms."""
 
 from __future__ import annotations
 
@@ -19,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from benchmarks.gold import anchor_time, load_gold, rebase_timestamps
-from benchmarks.metrics import mrr, percentiles, recall_at_k
+from benchmarks.metrics import cost_per_correct_answer, mrr, percentiles, recall_at_k
 from benchmarks.synthetic import generate_memories
 
 
@@ -89,6 +83,7 @@ def _scope_kwargs(scope: dict) -> dict:
 
 def _evaluate_gold(client, memories: list[dict], cases: list[dict]) -> dict:
     id_by_key: dict[str, int] = {}
+    construction_start = time.perf_counter()
     for item in memories:
         scope = dict(item.get("scope") or {})
         memory_id = client.ingest(
@@ -105,6 +100,7 @@ def _evaluate_gold(client, memories: list[dict], cases: list[dict]) -> dict:
         if memory_id is None:
             raise RuntimeError(f"gold fixture was rejected: {item['key']}")
         id_by_key[item["key"]] = memory_id
+    construction_ms = (time.perf_counter() - construction_start) * 1000
 
     case_results: list[dict] = []
     answer_cases = [case for case in cases if case.get("relevant")]
@@ -120,17 +116,23 @@ def _evaluate_gold(client, memories: list[dict], cases: list[dict]) -> dict:
     returned_count = 0
     answer_cases_with_wrong_hit = 0
     wrong_hit_rows = 0
+    query_ms = 0.0
+    correct_answers = 0
 
     for case in cases:
         scope = dict(case.get("scope") or {})
         expected = {id_by_key[key] for key in case.get("relevant") or []}
+        query_start = time.perf_counter()
         result = client.recall(case["query"], limit=10, scope=scope, strict=True)
+        query_ms += (time.perf_counter() - query_start) * 1000
         retrieved = [memory.id for memory in result.memories if memory.id is not None]
         hits = set(retrieved) & expected
         # A grounded row that does not answer the question is a quality
         # failure. Evidence grounding alone must not read as relevance.
         wrong_hits = [memory_id for memory_id in retrieved if memory_id not in expected]
         if expected:
+            if hits == expected and not wrong_hits and result.status == "ok":
+                correct_answers += 1
             retrieved_relevant.append(recall_at_k(retrieved, expected, 10))
             mrr_values.append(mrr(retrieved, expected))
             precision_values.append(len(hits) / max(1, len(retrieved)))
@@ -174,6 +176,19 @@ def _evaluate_gold(client, memories: list[dict], cases: list[dict]) -> dict:
 
     return {
         "protocol": "independent_gold_v2",
+        "cost": {
+            "correct_answers": correct_answers,
+            "correct_answer_definition": "all relevant rows returned, no wrong rows, status ok",
+            "construction_ms": construction_ms,
+            "query_ms": query_ms,
+            "wall_ms_per_correct_answer": cost_per_correct_answer(
+                construction_ms, query_ms, correct_answers
+            ),
+            "provider_usage": None,
+            "construction_usd": None,
+            "query_usd": None,
+            "usd_per_correct_answer": None,
+        },
         "cases": len(cases),
         "answer_cases": len(answer_cases),
         "no_answer_cases": len(no_answer_cases),
@@ -199,27 +214,77 @@ def _evaluate_gold(client, memories: list[dict], cases: list[dict]) -> dict:
     }
 
 
+def _latency_arm(kind: str, directory: Path, n: int) -> dict:
+    from luminary_memory.api import MemoryClient
+    from luminary_memory.config import Settings
+    from luminary_memory.ingest.llm import NoopEnricher
+    from luminary_memory.recall.graph import graph_recall
+    from luminary_memory.recall.keyword import keyword_recall
+    from luminary_memory.recall.semantic import semantic_recall
+    from luminary_memory.recall.temporal import temporal_recall
+
+    start = time.perf_counter()
+    engine, engine_name, model_name = _gold_engine(kind)
+    settings = Settings(backend="sqlite", db_path=str(directory / f"latency-{kind}.db"),
+                        strict_recall=True, evidence_required=True, rule_auto_replace=False)
+    client = MemoryClient(settings=settings, engine=engine, enricher=NoopEnricher())
+    initialization_ms = (time.perf_counter() - start) * 1000
+    try:
+        synthetic = generate_memories(n=n, seed=42)
+        start = time.perf_counter()
+        client.ingest_batch([item["content"] for item in synthetic],
+                            tags=[item["tags"] for item in synthetic])
+        ingest_ms = (time.perf_counter() - start) * 1000
+        scenarios = {}
+        for query in ("postgres vector search", "deploy target staging", "sanitize FTS"):
+            operations = {
+                "semantic": lambda: semantic_recall(client.backend, client.engine, query, limit=10),
+                "keyword": lambda: keyword_recall(client.backend, query, limit=10),
+                "temporal": lambda: temporal_recall(client.backend, limit=10),
+                "graph": lambda: graph_recall(client.backend, query, limit=10),
+                "e2e": lambda: client.recall(query, limit=10),
+            }
+            scenarios[query] = {}
+            for name, operation in operations.items():
+                start = time.perf_counter()
+                operation()
+                first_ms = (time.perf_counter() - start) * 1000
+                for _ in range(10):
+                    operation()
+                samples = []
+                for _ in range(100):
+                    start = time.perf_counter()
+                    operation()
+                    samples.append((time.perf_counter() - start) * 1000)
+                scenarios[query][name] = {
+                    "first_ms": first_ms, "warmups": 10, "samples": 100,
+                    "warm_ms": percentiles(samples),
+                }
+        return {
+            "engine": {"name": engine_name, "model": model_name,
+                       "threads": getattr(engine, "threads", None)},
+            "dataset": {"name": "synthetic", "seed": 42, "memories": n},
+            "initialization_ms": initialization_ms,
+            "cold_ingest_ms": ingest_ms,
+            "scenarios": scenarios,
+        }
+    finally:
+        client.close()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run luminary-memory accuracy/latency benchmarks")
-    ap.add_argument("--n", type=int, default=500, help="Synthetic memories for latency smoke")
+    ap.add_argument("--n", type=int, default=500, help="Synthetic memories for latency")
     ap.add_argument("--backend", choices=["sqlite"], default="sqlite")
-    ap.add_argument(
-        "--engine",
-        choices=["fake", "real"],
-        default="fake",
-        help=(
-            "Embedding engine for gold evaluation. Latency smoke always uses "
-            "the deterministic fake engine so its numbers stay comparable."
-        ),
-    )
-    ap.add_argument(
-        "--gold-set",
-        type=Path,
-        default=Path(__file__).with_name("gold_micro.jsonl"),
-        help="Versioned JSONL fixture with independent relevance labels",
-    )
-    ap.add_argument("--report", type=str, default="/tmp/bench.json", help="Output JSON report path")
+    ap.add_argument("--engine", choices=["fake", "real"], default="fake",
+                    help="Embedding engine for gold evaluation")
+    ap.add_argument("--latency-engine", choices=["fake", "real", "both"], default="fake",
+                    help="Latency arm; real loads the configured FastEmbed model")
+    ap.add_argument("--gold-set", type=Path, default=Path(__file__).with_name("gold_holdout.jsonl"))
+    ap.add_argument("--report", type=str, default="/tmp/bench.json")
     args = ap.parse_args()
+    if args.n < 1:
+        ap.error("--n must be positive")
 
     from luminary_memory.api import MemoryClient
     from luminary_memory.config import Settings
@@ -227,108 +292,59 @@ def main() -> None:
 
     meta, gold_memories, gold_cases = load_gold(args.gold_set)
     with tempfile.TemporaryDirectory(prefix="luminary-bench-") as temp_dir:
-        db_path = Path(temp_dir) / "bench.db"
-        settings = Settings(
-            db_path=str(db_path),
-            strict_recall=True,
-            evidence_required=True,
-            rule_auto_replace=False,
-        )
-        client = MemoryClient(settings=settings, engine=_FakeEngine(), enricher=NoopEnricher())
+        directory = Path(temp_dir)
+        arms = ("fake", "real") if args.latency_engine == "both" else (args.latency_engine,)
+        latency = {kind: _latency_arm(kind, directory, args.n) for kind in arms}
+        gold_settings = Settings(backend="sqlite", db_path=str(directory / "gold.db"),
+                                 strict_recall=True, evidence_required=True, rule_auto_replace=False)
+        anchor = anchor_time(gold_memories)
+        if anchor is not None:
+            gold_memories = rebase_timestamps(gold_memories, datetime.now(UTC) - anchor)
+        start = time.perf_counter()
+        gold_engine, engine_name, model_name = _gold_engine(args.engine)
+        gold_client = MemoryClient(settings=gold_settings, engine=gold_engine, enricher=NoopEnricher())
+        initialization_ms = (time.perf_counter() - start) * 1000
         try:
-            synthetic = generate_memories(n=args.n, seed=42)
-            start = time.perf_counter()
-            client.ingest_batch(
-                [item["content"] for item in synthetic],
-                tags=[item["tags"] for item in synthetic],
-            )
-            ingest_ms = (time.perf_counter() - start) * 1000
-
-            queries = ["postgres vector search", "deploy target staging", "sanitize FTS"]
-            latencies: dict[str, list[float]] = {
-                "semantic": [], "keyword": [], "temporal": [], "graph": [], "e2e": []
-            }
-            from luminary_memory.recall.graph import graph_recall
-            from luminary_memory.recall.keyword import keyword_recall
-            from luminary_memory.recall.semantic import semantic_recall
-            from luminary_memory.recall.temporal import temporal_recall
-
-            for query in queries:
-                for name, fn in [
-                    ("semantic", lambda q=query: semantic_recall(client.backend, client.engine, q, limit=10)),
-                    ("keyword", lambda q=query: keyword_recall(client.backend, q, limit=10)),
-                    ("temporal", lambda q=query: temporal_recall(client.backend, limit=10)),
-                    ("graph", lambda q=query: graph_recall(client.backend, q, limit=10)),
-                ]:
-                    start = time.perf_counter()
-                    fn()
-                    latencies[name].append((time.perf_counter() - start) * 1000)
-                start = time.perf_counter()
-                client.recall(query, limit=10)
-                latencies["e2e"].append((time.perf_counter() - start) * 1000)
-
-            # Evaluate on a clean store. Mixing the latency corpus into the
-            # gold corpus would make precision depend on synthetic distractor
-            # rows and would obscure the independent labels.
-            gold_settings = Settings(
-                db_path=str(Path(temp_dir) / "gold.db"),
-                strict_recall=True,
-                evidence_required=True,
-                rule_auto_replace=False,
-            )
-            gold_engine, engine_name, model_name = _gold_engine(args.engine)
-            anchor = anchor_time(gold_memories)
-            evaluation_anchor = None
-            if anchor is not None:
-                gold_memories = rebase_timestamps(gold_memories, datetime.now(UTC) - anchor)
-                evaluation_anchor = anchor.isoformat()
-            gold_client = MemoryClient(
-                settings=gold_settings,
-                engine=gold_engine,
-                enricher=NoopEnricher(),
-            )
-            try:
-                gold_quality = _evaluate_gold(gold_client, gold_memories, gold_cases)
-            finally:
-                gold_client.close()
-            report = {
-                "n": args.n,
-                "backend": args.backend,
-                "ingest_ms": ingest_ms,
-                "latency_ms": {key: percentiles(values) for key, values in latencies.items()},
-                "quality": gold_quality,
-                "evaluation": {
-                    "dataset": meta,
-                    "engine": {"name": engine_name, "model": model_name},
-                    "evaluation_clock": {
-                        "anchor": evaluation_anchor,
-                        "policy": (
-                            "fixture timestamps rebased so the newest observed_at "
-                            "equals run time; relative ages are preserved"
-                        ),
-                    },
-                    "runtime": {
-                        "python": platform.python_version(),
-                        "numpy": _module_version("numpy"),
-                        "fastembed": _module_version("fastembed"),
-                    },
-                    "latency_engine": "fake-deterministic",
-                    "config": {
-                        "strict_recall": True,
-                        "evidence_required": True,
-                        "rule_auto_replace": False,
-                    },
-                    "git_revision": _git_revision(),
-                    "labels_are_system_generated": False,
-                },
-            }
+            gold_quality = _evaluate_gold(gold_client, gold_memories, gold_cases)
         finally:
-            client.close()
-
+            gold_client.close()
+        cost = gold_quality["cost"]
+        cost["construction_ms"] += initialization_ms
+        cost["wall_ms_per_correct_answer"] = cost_per_correct_answer(
+            cost["construction_ms"], cost["query_ms"], cost["correct_answers"]
+        )
+        report = {
+            "n": args.n,
+            "backend": args.backend,
+            "latency": latency,
+            "quality": gold_quality,
+            "evaluation": {
+                "dataset": meta,
+                "dataset_path": str(args.gold_set),
+                "engine": {"name": engine_name, "model": model_name,
+                           "threads": getattr(gold_engine, "threads", None)},
+                "evaluation_clock": {"anchor": anchor.isoformat() if anchor else None,
+                                     "policy": "rebase newest fixture timestamp to run time"},
+                "runtime": {"python": platform.python_version(), "numpy": _module_version("numpy"),
+                            "fastembed": _module_version("fastembed")},
+                "config": {
+                    key: getattr(gold_settings, key)
+                    for key in (
+                        "embedding_model", "embedding_dim", "rrf_k", "strategy_weights",
+                        "dedup_jaccard_threshold", "recall_cliff_threshold", "recall_min_score",
+                        "importance_recall_boost", "strict_recall", "scope_include_global",
+                        "abstention_min_confidence", "abstention_min_margin", "evidence_required",
+                        "rule_auto_replace", "query_planner", "query_planner_keyword_threshold",
+                        "ingest_whitelist", "importance_auto", "max_memories",
+                    )
+                },
+                "git_revision": _git_revision(),
+                "label_provenance": meta.get("label_provenance", "unknown"),
+            },
+        }
     output = Path(args.report)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2))
-    print(f"Benchmark n={args.n} backend={args.backend}")
     print(json.dumps(report, indent=2))
 
 

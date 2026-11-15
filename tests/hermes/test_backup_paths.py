@@ -5,7 +5,8 @@ from luminary_memory.hermes.provider import LuminaryMemoryProvider
 
 def test_backup_paths_default_empty(tmp_path):
     p = LuminaryMemoryProvider()
-    p.initialize("s1", hermes_home=str(tmp_path))
+    p.initialize("s1", hermes_home=str(tmp_path), user_id="test-user",
+                 agent_workspace="test-workspace", agent_identity="test")
     paths = p.backup_paths()
     assert paths == [], f"expected no backup paths for default config, got {paths}"
     p.shutdown()
@@ -14,7 +15,8 @@ def test_backup_paths_default_empty(tmp_path):
 def test_backup_paths_override_outside_home(tmp_path):
     outside = tmp_path.parent / "outside.db"
     p = LuminaryMemoryProvider()
-    p.initialize("s1", hermes_home=str(tmp_path))
+    p.initialize("s1", hermes_home=str(tmp_path), user_id="test-user",
+                 agent_workspace="test-workspace", agent_identity="test")
     p._config["db_path"] = str(outside)
     paths = p.backup_paths()
     assert paths == [str(outside)], f"expected [outside.db], got {paths}"

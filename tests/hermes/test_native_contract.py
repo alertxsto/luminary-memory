@@ -72,7 +72,8 @@ def test_profile_secret_beats_global_or_legacy_key(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "agent.secret_scope", scoped)
     monkeypatch.setenv("LUMINARY_LLM_API_KEY", "wrong-process-profile")
     provider = LuminaryMemoryProvider()
-    provider.initialize("s1", hermes_home=str(tmp_path), agent_identity="profile-a")
+    provider.initialize("s1", hermes_home=str(tmp_path), agent_identity="profile-a",
+                        user_id="native-owner", agent_workspace="native-workspace")
     try:
         assert provider._build_settings(provider._resolve_db_path()).llm_api_key == "native-scoped-key"
     finally:

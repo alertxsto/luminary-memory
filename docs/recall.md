@@ -52,6 +52,11 @@ the query planner may skip a low-value strategy after inspecting the keyword
 signal. Strict provider/CLI paths can abstain when evidence is weak or
 ambiguous.
 
+Scoped reads require a complete user, workspace, and agent identity. An omitted
+session spans that identity's durable records, not other owners. Fully unowned
+records are excluded from scoped reads by default; partial legacy ownership is
+not a global grant. See [ownership migration](api.md#ownership-and-legacy-migration).
+
 ### 1. Semantic
 
 Embedding similarity between the query and stored memories. Handles paraphrasing, synonyms, and conceptual matches.
@@ -163,7 +168,8 @@ the memory. A weak signal is not evidence:
 - The semantic support floor is **calibrated per embedding model**, because the
   cosine value that separates "answers the question" from "topically adjacent"
   depends on the model. `config.semantic_support_floor()` returns the measured
-  floor for the configured model — `0.635` for the default
+  floor for the configured model — `0.39` for the default
+  `sentence-transformers/paraphrase-multilingual-mpnet-base-v2`, `0.635` for
   `BAAI/bge-small-en-v1.5` — and `0.78` for any model without a measurement.
   An unmeasured model therefore can only abstain more, never answer more.
 - Confidence stays a bounded public `[0,1]` score, and a candidate is dropped

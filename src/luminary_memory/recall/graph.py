@@ -120,7 +120,7 @@ def graph_recall(
     query: str,
     limit: int | None = 10,
     scope: dict | None = None,
-    include_global: bool = True,
+    include_global: bool = False,
 ) -> list[tuple]:
     query_ents = _query_entities(query)
     if not query_ents:

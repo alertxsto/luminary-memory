@@ -28,6 +28,14 @@ Strategies fuse via **weighted RRF (semantic 0.4, keyword 0.3, graph 0.2, tempor
 
 **Core and recall are different surfaces.** The Hermes provider separately loads owner-designated `core` rules (the DB-backed `MEMORY.md`) and deduplicates them against query retrieval. Native OpenCode, pi, and omp adapters return only relevant, evidence-bearing recall; a core tag cannot turn abstention into success. Their historical reference stays outside system instructions and the persistent transcript. Hermes can also expose bounded exact-session continuity without turning raw conversation into durable memory.
 
+**Unreleased scope compatibility:** Scoped reads require the complete user,
+workspace, and agent identity; missing fields are not wildcards. Unscoped
+local clients see only fully unowned local records. Global records are not
+included in scoped reads by default. Legacy partial ownership is not assigned
+on startup; review the [migration guidance](docs/api.md#ownership-and-legacy-migration)
+before changing it. Scope is an application boundary, not authentication
+against another process running as the same OS user.
+
 ---
 
 ## Quickstart
@@ -266,8 +274,8 @@ Every setting has a `LUMINARY_*` env var or a `Settings` object.
 | `pg_hnsw_index` | `LUMINARY_PG_HNSW_INDEX` | `false` |
 | `pg_hnsw_m` | `LUMINARY_PG_HNSW_M` | `16` |
 | `pg_hnsw_ef_construction` | `LUMINARY_PG_HNSW_EF_CONSTRUCTION` | `64` |
-| `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` |
-| `embedding_dim` | `LUMINARY_EMBEDDING_DIM` | `384` |
+| `embedding_model` | `LUMINARY_EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` |
+| `embedding_dim` | `LUMINARY_EMBEDDING_DIM` | `768` |
 | `ingest_llm` | `LUMINARY_INGEST_LLM` | `false` |
 | `rrf_k` | `LUMINARY_RRF_K` | `60` |
 | `strategy_weights` | `LUMINARY_WEIGHT_{SEMANTIC,KEYWORD,GRAPH,TEMPORAL}` | `0.4 / 0.3 / 0.2 / 0.1` |

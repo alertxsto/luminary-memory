@@ -1,8 +1,12 @@
 # Security Policy
 
-## Data privacy guarantee
+## Data privacy
 
-luminary-memory is **local by design**. All memories are stored on the machine where the library runs — SQLite files or your own PostgreSQL instance. No data is sent to any third-party service, and no network calls are made for storage or retrieval (the only optional network activity is an LLM enrichment step, which you configure explicitly and remains disabled by default).
+By default, memories and embeddings are stored in a local SQLite database. The database is not encrypted by Luminary.
+
+Network access can occur when the configured embedding model is downloaded, when PostgreSQL is hosted on another machine, or when an explicitly configured LLM enrichment, maintenance, or explanation request is sent to its endpoint. An uncached model is not guaranteed to work offline.
+
+Scope checks separate records within the application. They do not protect a store from another process running with the same operating-system owner's permissions. Use separate stores and trusted identities when different users must be isolated.
 
 ## Reporting a vulnerability
 
@@ -20,8 +24,9 @@ If you discover a security issue, please report it privately rather than opening
 
 ## Security considerations
 
-- The default SQLite backend stores embeddings and content in plaintext on disk. Protect the file with filesystem permissions (`0600` recommended — the Hermes provider writes `config.json` with `0600`).
-- The pgvector backend requires a PostgreSQL instance — secure it with a strong password and network access control.
+- Protect the SQLite database, its `-wal` and `-shm` files, and any backups or exports with filesystem permissions. Luminary stores memory content and embeddings in plaintext; `0600` is recommended for private files.
+- Retracting or forgetting a memory removes it from ordinary active recall but retains history and source material. Backups, exports, host transcripts, and data already sent to an external provider are outside that operation.
+- Secure PostgreSQL with a least-privileged role, strong credentials, and network access controls. Application scope is not a replacement for database authorization.
 - Never commit a live database file or credentials to version control. `REPORT-*.md`, `.commandcode/`, and generated `docs/api/` are gitignored.
 - PyPI publishing uses **Trusted Publisher (OIDC)** — no API tokens in the repo. A leaked token in `~/.pypirc` should be deleted from PyPI account settings.
-- The optional LLM enrichment step sends turn content to the configured endpoint. It is **disabled by default**; only enable `ingest_llm`/`auto_maintain` with a trusted provider.
+- LLM enrichment sends turn content to the configured endpoint. It is disabled by default; only enable `ingest_llm`/`auto_maintain` with a trusted provider. Inspector explanations are separately requested and disclose their destination before confirmation.

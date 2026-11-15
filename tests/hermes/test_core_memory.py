@@ -18,7 +18,8 @@ class _FakeEngine:
 
 def _init_provider(tmp_path, **overrides):
     p = LuminaryMemoryProvider()
-    p.initialize("s1", hermes_home=str(tmp_path), platform="cli", agent_identity="test")
+    p.initialize("s1", hermes_home=str(tmp_path), platform="cli", agent_identity="test",
+                 user_id="test-user", agent_workspace="test-workspace")
     p._config.update(overrides)
     p._client.engine = _FakeEngine()
     return p
@@ -30,6 +31,20 @@ def _seed_core(p, texts):
     for t in texts:
         p._client.ingest(t, tags=[tag], source="test")
 
+
+def test_expired_core_does_not_consume_top_n(tmp_path):
+    p = _init_provider(tmp_path)
+    p._client.settings.core_top_n = 1
+    _seed_core(p, ["obsolete deployment instruction", "current deployment instruction"])
+    rows = p._client.backend.by_tag_top(p._core_tag(), 10, scope=p._client.scope, include_global=False)
+    p._client.backend.conn.execute(
+        "UPDATE memories SET valid_to=? WHERE id=?", ("2020-01-01T00:00:00+00:00", rows[0].id)
+    )
+    p._client.backend.conn.commit()
+    block = p._build_core_memory()
+    assert "obsolete deployment instruction" not in block
+    assert "current deployment instruction" in block
+    p.shutdown()
 
 def test_system_prompt_includes_core_block(tmp_path):
     p = _init_provider(tmp_path)
@@ -148,6 +163,7 @@ def test_core_list_respects_provider_scope(tmp_path):
         platform="cli",
         agent_identity="test",
         user_id="alice",
+        agent_workspace="test-workspace",
     )
     p._client.engine = _FakeEngine()
     p._client.ingest("alice scoped core", tags=[p._core_tag()])
@@ -156,7 +172,8 @@ def test_core_list_respects_provider_scope(tmp_path):
         engine=_FakeEngine(),
         enricher=NoopEnricher(),
     )
-    other.ingest("bob scoped core", tags=[p._core_tag()], user_id="bob")
+    other.ingest("bob scoped core", tags=[p._core_tag()], user_id="bob",
+                 workspace_id="test-workspace", agent_id="test")
 
     data = json.loads(p.handle_tool_call("luminary_core_list", {}))
     contents = {row["content"] for row in data["core"]}

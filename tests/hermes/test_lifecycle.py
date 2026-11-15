@@ -7,7 +7,9 @@ from luminary_memory.hermes.provider import LuminaryMemoryProvider
 
 def _make_provider(tmp_path, **cfg_overrides):
     p = LuminaryMemoryProvider()
-    p.initialize("sess1", hermes_home=str(tmp_path), platform="cli", **cfg_overrides)
+    identity = {"user_id": "test-user", "agent_workspace": "test-workspace", "agent_identity": "test"}
+    identity.update(cfg_overrides)
+    p.initialize("sess1", hermes_home=str(tmp_path), platform="cli", **identity)
     return p
 
 
@@ -65,7 +67,8 @@ def test_initialize_does_not_load_embedding_model(tmp_path, monkeypatch):
         raise AssertionError("embedding must not be computed in initialize()")
 
     monkeypatch.setattr(FastembedEngine, "embed", _no_embed)
-    p.initialize("s1", hermes_home=str(tmp_path))
+    p.initialize("s1", hermes_home=str(tmp_path), user_id="test-user",
+                 agent_workspace="test-workspace", agent_identity="test")
     p.shutdown()
 
 

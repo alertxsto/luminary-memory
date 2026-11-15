@@ -359,9 +359,8 @@ class SQLiteBackend(InspectorSQL, MemoryBackend):
     ) -> list[dict]:
         """Return newest episode rows under the requested scope.
 
-        Unlike memory recall, session continuity must never widen an identity
-        boundary. Callers therefore opt into global compatibility explicitly;
-        the provider uses exact scope matching for its current session ledger.
+        Episode continuity always matches every identity field exactly;
+        global-memory sharing does not grant access to another session ledger.
         """
         try:
             effective_limit = max(0, int(limit))
@@ -373,8 +372,9 @@ class SQLiteBackend(InspectorSQL, MemoryBackend):
         where, params = scope_sql(
             scope,
             alias="e",
-            include_global=bool(include_global),
+            include_global=False,
             active_only=False,
+            exact_session=True,
         )
         rows = self.conn.execute(
             "SELECT e.id, e.content, e.source, e.metadata, e.user_id, "
@@ -583,7 +583,7 @@ class SQLiteBackend(InspectorSQL, MemoryBackend):
         limit: int | None = 100,
         offset: int = 0,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> list[Memory]:
         """Most-recent-first pagination at the SQL level (None = unlimited)."""
         o = max(0, int(offset))
@@ -607,7 +607,7 @@ class SQLiteBackend(InspectorSQL, MemoryBackend):
         top_n: int,
         min_importance: float = 0.0,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> list[Memory]:
         """Top-N memories by importance (desc), then access count (desc).
 
@@ -635,7 +635,7 @@ class SQLiteBackend(InspectorSQL, MemoryBackend):
         tag: str,
         top_n: int,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> list[Memory]:
         """Return a stable insertion-ordered slice of memories carrying *tag*.
 
@@ -665,7 +665,7 @@ class SQLiteBackend(InspectorSQL, MemoryBackend):
         self,
         limit: int | None = None,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
         include_observed: bool = False,
     ) -> list[tuple[int, str, int]]:
         """Lightweight rows (id, created_at, access_count) for temporal scoring.
@@ -686,7 +686,7 @@ class SQLiteBackend(InspectorSQL, MemoryBackend):
     def scan_embeddings(
         self,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> tuple[list[int], list[list[float]]]:
         """Lightweight (id, embedding) pairs for vectorized scans.
 
@@ -722,7 +722,7 @@ class SQLiteBackend(InspectorSQL, MemoryBackend):
     def scan_embeddings_matrix(
         self,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> tuple[list[int], np.ndarray]:
         """(id list, N×D float32 matrix) for batched cosine scans.
 
@@ -796,7 +796,7 @@ class SQLiteBackend(InspectorSQL, MemoryBackend):
         query: str,
         limit: int | None = 10,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> list[tuple[Memory, float]]:
         if limit is not None and int(limit) == 0:
             return []
@@ -860,7 +860,7 @@ class SQLiteBackend(InspectorSQL, MemoryBackend):
         vec: list[float],
         limit: int | None = 10,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> list[tuple[Memory, float]]:
         if limit is not None and int(limit) == 0:
             return []
@@ -929,7 +929,7 @@ class SQLiteBackend(InspectorSQL, MemoryBackend):
         tags: list[str],
         match: str = "any",
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> set[int]:
         if not tags:
             return set()

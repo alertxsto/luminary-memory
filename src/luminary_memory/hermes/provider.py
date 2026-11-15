@@ -24,6 +24,7 @@ from agent.memory_provider import MemoryProvider  # present only in hermes runti
 
 from luminary_memory.api import MemoryClient
 from luminary_memory.config import Settings
+from luminary_memory.lifecycle.validity import is_current
 from luminary_memory.recall.filters import is_noise_memory
 from luminary_memory.scope import memory_matches_scope
 
@@ -117,6 +118,8 @@ class LuminaryMemoryProvider(MemoryProvider):
         self._retain_gate = threading.RLock()
         self._accepting_retains = False
         self._retain_queue: queue.Queue = queue.Queue()
+        self._usage_lock = threading.Lock()
+        self._usage_reported = {}
         self._writer_thread: threading.Thread | None = None
         self._shutdown_lock = threading.RLock()
         self._session_turns: list[str] = []
@@ -225,6 +228,30 @@ class LuminaryMemoryProvider(MemoryProvider):
                 self._log.error("Activity persistence unavailable (%s)", type(exc).__name__)
         return trace
 
+    def _log_usage(self, client) -> None:
+        """Emit redacted deltas from cumulative transport usage."""
+        enricher = getattr(client, "enricher", None)
+        snapshot = getattr(enricher, "usage_snapshot", None)
+        if not callable(snapshot):
+            return
+        keys = ("calls", "attempts", "prompt_tokens", "completion_tokens", "total_tokens")
+        with self._usage_lock:
+            current = snapshot()
+            previous = self._usage_reported.setdefault(enricher, {})
+            delta = {}
+            changed = False
+            for key in keys:
+                value = current.get(key)
+                if type(value) is not int or value < 0:
+                    delta[key] = None
+                    continue
+                old = previous.get(key, 0)
+                delta[key] = value - old if value >= old else value
+                changed |= delta[key] != 0
+                previous[key] = value
+            if changed:
+                self._log_event("llm.usage", operation="llm_usage", status="ok", usage=delta)
+
     # ------------------------------------------------------------------ #
     # Lifecycle
     # ------------------------------------------------------------------ #
@@ -286,6 +313,10 @@ class LuminaryMemoryProvider(MemoryProvider):
             }.items()
             if value
         }
+        if len(self._scope) != 3 or not str(session_id or "").strip() or any(
+            not str(value).strip() for value in self._scope.values()
+        ):
+            raise ValueError("trusted user, workspace, agent, and session identity are required")
         self._status_callback = kwargs.get("status_callback")
         init_started = time.perf_counter()
         init_trace = self._log_event(
@@ -704,43 +735,45 @@ class LuminaryMemoryProvider(MemoryProvider):
                 self._turn_counter = 0
 
     def on_session_end(self, messages) -> None:
-        """Flush buffered turns; optionally run LLM store maintenance."""
+        """Drain writes, run safe retention, and optionally propose maintenance."""
         if not self._client or self._shutting_down.is_set():
             return
-        self._flush_session_turns()
-        if self._config.get("auto_maintain", False) and self._config.get("ingest_llm", False):
+        from luminary_memory.lifecycle.runner import run_safe_retention
+
+        with self._retain_gate:
+            self._flush_session_turns()
+            # Retention failure changes durable state, so it stays visible to
+            # the host; LLM maintenance below is best effort instead.
+            if not self._wait_for_retain_queue(timeout=10.0):
+                self._log_event("retention.failed", operation="retention", status="error",
+                                reason="retain_queue_timeout", level=logging.ERROR)
+                raise TimeoutError("retain queue did not drain before retention")
             try:
-                # The writer queue must be committed before maintenance reads
-                # the store.  Otherwise a maintenance pass can delete/update
-                # a stale snapshot and race a queued retain.
-                if not self._wait_for_retain_queue(timeout=10.0):
-                    self._log_event(
-                        "maintenance.skipped",
-                        operation="maintenance",
-                        status="skipped",
-                        reason="retain_queue_timeout",
-                    )
-                    return
-                result = self._client.run_maintenance()
-                self._log_event(
-                    "maintenance.completed",
-                    operation="maintenance",
-                    status="ok",
-                    result={
-                        str(key): value
-                        for key, value in (result or {}).items()
-                        if isinstance(value, (str, int, float, bool)) or value is None
-                    },
+                result = run_safe_retention(
+                    self._client.backend, self._client.settings, scope=self._client.scope,
+                    include_global=False,
                 )
+                self._log_event("retention.completed", operation="retention",
+                                status=result["status"], result=result)
             except Exception as exc:
-                self._log_event(
-                    "maintenance.failed",
-                    operation="maintenance",
-                    status="error",
-                    error_type=type(exc).__name__,
-                    level=logging.ERROR,
-                )
-                logging.getLogger(__name__).exception("LLM maintenance failed")
+                self._log_event("retention.failed", operation="retention", status="error",
+                                error_type=type(exc).__name__, level=logging.ERROR)
+                raise
+            if self._config.get("auto_maintain", False) and self._config.get("ingest_llm", False):
+                try:
+                    result = self._client.run_maintenance()
+                    status = "error" if result.get("error") else "skipped" if result.get("skipped") else "ok"
+                    self._log_event(
+                        "maintenance.failed" if status == "error" else "maintenance.completed",
+                        operation="maintenance", status=status,
+                        result={key: result[key] for key in ("reviewed", "proposed", "skipped", "error")
+                                if key in result},
+                    )
+                except Exception as exc:  # noqa: BLE001 -- maintenance is best effort
+                    self._log_event("maintenance.failed", operation="maintenance", status="error",
+                                    error_type=type(exc).__name__, level=logging.ERROR)
+                finally:
+                    self._log_usage(self._client)
 
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
         """Flush the old session, then rebind to the new one."""
@@ -1234,7 +1267,10 @@ class LuminaryMemoryProvider(MemoryProvider):
                 for memory in candidates
                 if getattr(memory, "id", None) is not None
             }
-            raw = client.enricher.review_turn(review_text, candidates)
+            try:
+                raw = client.enricher.review_turn(review_text, candidates)
+            finally:
+                self._log_usage(client)
             from luminary_memory.ingest.llm import parse_turn_review_payload
 
             parsed = parse_turn_review_payload(
@@ -1532,7 +1568,10 @@ class LuminaryMemoryProvider(MemoryProvider):
                     )
                     return
 
-                enriched = client.enricher.enrich(content)
+                try:
+                    enriched = client.enricher.enrich(content)
+                finally:
+                    self._log_usage(client)
                 enrichment_error = getattr(enriched, "error", None)
                 if enrichment_error:
                     log_event(
@@ -1778,71 +1817,35 @@ class LuminaryMemoryProvider(MemoryProvider):
         if top_n <= 0 or budget <= 0:
             return []
         by_tag = getattr(self._client.backend, "by_tag_top", None)
-        if by_tag is not None:
-            try:
-                candidates = by_tag(
-                    tag,
-                    top_n,
-                    scope=getattr(self._client, "scope", None),
-                    include_global=bool(getattr(self._client.settings, "scope_include_global", True)),
-                )
-            except TypeError:
-                candidates = [
-                    m
-                    for m in (self._client.list(limit=0) or [])
-                    if tag in (m.tags or [])
-                    and memory_matches_scope(
-                        m,
-                        self._client.scope,
-                        include_global=bool(
-                            getattr(self._client.settings, "scope_include_global", True)
-                        ),
-                    )
-                    and getattr(m, "status", "active") == "active"
-                ]
-                candidates.sort(
-                    key=lambda m: int(getattr(m, "id", 0) or 0),
-                )
-                candidates = candidates[:top_n]
-        else:
-            candidates = [
-                m for m in (self._client.list(limit=0) or [])
-                if tag in (m.tags or [])
-                and memory_matches_scope(
-                    m,
-                    self._client.scope,
-                    include_global=bool(
-                        getattr(self._client.settings, "scope_include_global", True)
-                    ),
-                )
-                and getattr(m, "status", "active") == "active"
-            ]
-            candidates.sort(key=lambda m: int(getattr(m, "id", 0) or 0))
-            candidates = candidates[:top_n]
-
-        candidates = [
-            m
-            for m in candidates
-            if memory_matches_scope(
-                m,
-                self._client.scope,
-                include_global=bool(getattr(self._client.settings, "scope_include_global", True)),
-            )
-            and getattr(m, "status", "active") == "active"
-        ]
-
+        include_global = bool(getattr(self._client.settings, "scope_include_global", True))
         picked = []
         total = 0
-        for memory in candidates:
-            content = str(getattr(memory, "content", "") or "").strip()
-            if not content:
-                continue
-            if total + len(content) > budget:
-                # A large top-ranked rule must not hide smaller valid rules.
-                continue
-            picked.append(memory)
-            total += len(content)
-        return picked
+        fetched = 0
+        window = max(16, top_n * 2)
+        while True:
+            if by_tag is not None:
+                candidates = by_tag(tag, window, scope=self._client.scope, include_global=include_global)
+            else:
+                candidates = sorted(
+                    (m for m in (self._client.list(limit=0) or []) if tag in (m.tags or [])),
+                    key=lambda m: int(m.id or 0),
+                )
+            for memory in candidates[fetched:]:
+                if not memory_matches_scope(memory, self._client.scope, include_global=include_global):
+                    continue
+                if not is_current(memory):
+                    continue
+                content = str(memory.content or "").strip()
+                if not content or total + len(content) > budget:
+                    continue
+                picked.append(memory)
+                total += len(content)
+                if len(picked) >= top_n:
+                    return picked
+            if by_tag is None or len(candidates) < window:
+                return picked
+            fetched = len(candidates)
+            window *= 2
 
     def _core_identifiers(self):
         """Return (set of core ids, set of core content hashes).

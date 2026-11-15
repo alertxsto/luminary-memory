@@ -45,7 +45,7 @@ def temporal_recall(
     limit: int | None = 10,
     half_life_hours: float = HALF_LIFE_HOURS,
     scope: dict | None = None,
-    include_global: bool = True,
+    include_global: bool = False,
 ) -> list[tuple]:
     now = datetime.now(UTC)
 

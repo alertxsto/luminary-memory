@@ -373,6 +373,7 @@ def test_handshake_does_not_execute_workspace_shadow_package(isolated, monkeypat
     monkeypatch.chdir(workspace)
     result = setup.handshake(Path(sys.executable), "pi", workspace)
     assert result["version"]["ok"] is True
+    assert result["core"]["ok"] is True
     assert not marker.exists(), "setup handshake must not import workspace code"
 
 

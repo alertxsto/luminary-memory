@@ -58,7 +58,7 @@ def semantic_recall(
     query: str,
     limit: int | None = 10,
     scope: dict | None = None,
-    include_global: bool = True,
+    include_global: bool = False,
 ) -> list[tuple]:
     if limit is not None and int(limit) == 0:
         return []
@@ -124,7 +124,7 @@ def _expand_query(
     query: str,
     max_extra: int = 8,
     scope: dict | None = None,
-    include_global: bool = True,
+    include_global: bool = False,
 ) -> str:
     """Expand a short query with related entity names from the graph.
 
@@ -158,7 +158,7 @@ def _expand_with_entities(
     words: list[str],
     max_extra: int,
     scope: dict | None = None,
-    include_global: bool = True,
+    include_global: bool = False,
 ) -> str:
     try:
         from luminary_memory.recall.graph import _exec, _query_entities
@@ -202,7 +202,7 @@ def _expand_with_rules(
     query: str,
     words: list[str],
     scope: dict | None = None,
-    include_global: bool = True,
+    include_global: bool = False,
 ) -> str:
     """Append up to two content tokens from an important memory when topics overlap.
 

@@ -9,7 +9,7 @@ from typing import Any
 
 from luminary_memory.backends.base import MemoryBackend
 from luminary_memory.backends.inspector import InspectorSQL, atomic_backend
-from luminary_memory.scope import normalize_scope, scope_sql
+from luminary_memory.scope import scope_sql
 from luminary_memory.types import Memory
 
 logger = logging.getLogger(__name__)
@@ -583,21 +583,11 @@ class PGVectorBackend(InspectorSQL, MemoryBackend):
         if effective_limit == 0:
             return []
 
-        normalized = normalize_scope(scope)
-        clauses: list[str] = []
-        params: list[str] = []
-        for field in ("user_id", "workspace_id", "agent_id", "session_id"):
-            value = normalized.get(field)
-            if include_global:
-                if value is None:
-                    clauses.append(f"(e.{field} IS NULL OR e.{field} = '')")
-                else:
-                    clauses.append(f"(e.{field} = %s OR e.{field} IS NULL OR e.{field} = '')")
-                    params.append(value)
-            elif value is not None:
-                clauses.append(f"e.{field} = %s")
-                params.append(value)
-        where = " AND ".join(clauses) or "TRUE"
+        where, params = scope_sql(
+            scope, alias="e", include_global=False,
+            active_only=False, exact_session=True,
+        )
+        where = where.replace("?", "%s")
 
         cur = self.conn.cursor()
         cur.execute(
@@ -825,7 +815,7 @@ class PGVectorBackend(InspectorSQL, MemoryBackend):
         limit: int | None = 100,
         offset: int = 0,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> list[Memory]:
         """Most-recent-first pagination at the SQL level (None = unlimited)."""
         cur = self.conn.cursor()
@@ -852,7 +842,7 @@ class PGVectorBackend(InspectorSQL, MemoryBackend):
         top_n: int,
         min_importance: float = 0.0,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> list[Memory]:
         """Return complete memories for strict recall fallback/core loading."""
         cur = self.conn.cursor()
@@ -870,7 +860,7 @@ class PGVectorBackend(InspectorSQL, MemoryBackend):
         tag: str,
         top_n: int,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> list[Memory]:
         """Return a stable insertion-ordered slice carrying *tag*.
 
@@ -893,7 +883,7 @@ class PGVectorBackend(InspectorSQL, MemoryBackend):
         query: str,
         limit: int | None = 10,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> list[tuple[Memory, float]]:
         import re
 
@@ -935,7 +925,7 @@ class PGVectorBackend(InspectorSQL, MemoryBackend):
         vec: list[float],
         limit: int | None = 10,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> list[tuple[Memory, float]]:
         if limit is not None and int(limit) == 0:
             return []
@@ -979,7 +969,7 @@ class PGVectorBackend(InspectorSQL, MemoryBackend):
         tags: list[str],
         match: str = "any",
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> set[int]:
         if not tags:
             return set()

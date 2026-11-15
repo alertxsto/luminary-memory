@@ -29,7 +29,7 @@ def expired_candidates(memories, now=None):
         except (TypeError, ValueError, OverflowError):
             logger.warning("skipping TTL cleanup for memory %s with invalid timestamp or TTL", memory.id)
             continue
-        if expiry < now.timestamp():
+        if expiry <= now.timestamp():
             candidates.append(memory)
     return candidates
 
@@ -39,7 +39,8 @@ def cleanup_expired(
     backend: MemoryBackend,
     now: datetime | None = None,
     scope: dict | None = None,
-    include_global: bool = True,
+    include_global: bool = False,
+    limit: int | None = None,
 ) -> int:
     if now is None:
         now = datetime.now(UTC)
@@ -48,6 +49,8 @@ def cleanup_expired(
         memory for memory in backend.all()
         if memory_matches_scope(memory, scope, include_global=include_global, active_only=True)
     ], now=now)
+    if limit is not None:
+        candidates = candidates[:max(0, limit)]
     for memory in candidates:
         try:
             backend.record_event("expire", memory.id, before={"content": memory.content, "status": memory.status})

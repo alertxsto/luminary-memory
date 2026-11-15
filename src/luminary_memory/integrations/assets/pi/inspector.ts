@@ -6,6 +6,7 @@ import { InspectorController } from '../common/console-controller.js';
 import { createInspectorTransport } from '../common/inspector-transport.js';
 import { inspectorActions, inspectorRows, inspectorRowContent, inspectorContextLine, confirmTerminalText, runInspectorAction, type NativeDialogs } from '../common/console-actions.js';
 import { ZentuiInspectorView } from './zentui-view.js';
+import { createHostKeyMatcher } from './host-keys.js';
 import type { InspectorIntent } from '../common/terminal-view.js';
 
 export function registerPiInspector(pi: ExtensionAPI) {
@@ -65,13 +66,27 @@ export function registerPiInspector(pi: ExtensionAPI) {
     clearWidget?.(); clearWidget = undefined;
     ctx.ui.setWidget('luminary-inspector', undefined);
     while (live()) {
-      const intent = await ctx.ui.custom<InspectorIntent>((tui, theme, _keys, done) => {
+      const intent = await ctx.ui.custom<InspectorIntent>((tui, theme, keybindings, done) => {
         close = () => done({ type: 'close' });
-        const component = new ZentuiInspectorView(view, matchesKey, truncateToWidth, (role, text) => theme.fg(role, text), done, () => tui.requestRender(), () => tui.terminal.rows);
-        const unsubscribe = view.subscribe(() => tui.requestRender());
-        return { render: width => component.render(width), handleInput: data => component.handleInput(data), handleMouse: event => component.handleMouse(event), invalidate: () => component.invalidate(), dispose: unsubscribe };
+        // The host injects its own keybinding manager; `matchesKey` from the TUI
+        // package uses different names across releases, so the injected manager
+        // decides first and the raw sequences in the view act as a fallback.
+        const key = createHostKeyMatcher(keybindings, (data, name) => {
+          try { return matchesKey(data, name as Parameters<typeof matchesKey>[1]) } catch { return false }
+        });
+        let component: ZentuiInspectorView | undefined;
+        const repaint = () => {
+          component?.invalidate();
+          tui.requestRender();
+        };
+        component = new ZentuiInspectorView(
+          view, key, truncateToWidth, (role, text) => theme.fg(role, text), done, repaint, () => tui.terminal.rows,
+        );
+        const unsubscribe = view.subscribe(repaint);
+        return { render: width => component!.render(width), handleInput: data => component!.handleInput(data), handleMouse: event => component!.handleMouse(event), invalidate: () => component!.invalidate(), focus: () => component!.focus(), blur: () => component!.blur(), dispose: unsubscribe };
       });
-      close = undefined; if (!live() || intent.type === 'close') { if (live()) dispose(); return; }
+      // A host may close the panel without an intent (e.g. its own cancel key).
+      if (!live() || !intent || intent.type === 'close') { if (live()) dispose(); return; }
       if (intent.type === 'compact') { await compact(); return; }
       if (intent.type === 'refresh') await view.load();
       else if (intent.type === 'search') await runInspectorAction(view, dialogs, 'Search / filters');

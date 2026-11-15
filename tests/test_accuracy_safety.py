@@ -216,7 +216,17 @@ def test_global_rows_are_readable_but_not_mutable_from_bound_scope(tmp_path):
     global_id = writer.backend.add(Memory(content="shared global policy"))
     writer.close()
 
-    client = _client(tmp_path, scope={"user_id": "alice"})
+    client = _client(
+        tmp_path,
+        scope={"user_id": "alice"},
+        settings=Settings(
+            db_path=str(tmp_path / "memory.db"),
+            strict_recall=True,
+            evidence_required=True,
+            rule_auto_replace=False,
+            scope_include_global=True,
+        ),
+    )
     visible = client.get(global_id)
     assert visible is not None
     visible.content = "alice rewrote global policy"
@@ -244,7 +254,17 @@ def test_scoped_recall_does_not_touch_read_compatible_global_row(tmp_path):
     global_id = writer.backend.add(global_memory)
     writer.close()
 
-    client = _client(tmp_path, scope={"user_id": "alice"})
+    client = _client(
+        tmp_path,
+        scope={"user_id": "alice"},
+        settings=Settings(
+            db_path=str(tmp_path / "memory.db"),
+            strict_recall=True,
+            evidence_required=True,
+            rule_auto_replace=False,
+            scope_include_global=True,
+        ),
+    )
     before = client.backend.get(global_id)
     assert before is not None
     result = client.recall("shared global deployment policy", strict=True)
@@ -764,7 +784,7 @@ def test_strict_maintenance_requires_evidence_and_confirmation(tmp_path):
     # IDs are deterministic in this isolated store.
     assert (first, core) == (1, 2)
     result = client.run_maintenance()
-    assert result["skipped"] == 2
+    assert result["proposed"] == 0
     assert client.get(first).content == "ordinary fact"
     assert client.get(core) is not None
     client.close()

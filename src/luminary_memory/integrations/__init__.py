@@ -8,11 +8,11 @@ import math
 import os
 import re
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
 from luminary_memory.api import MemoryClient
-from luminary_memory.config import Settings, load_config_file
+from luminary_memory.config import EVIDENCE_CONFIDENCE, Settings, load_config_file
+from luminary_memory.lifecycle.validity import is_current as _current
 from luminary_memory.types import Memory
 
 AGENTS = ("opencode", "pi", "omp")
@@ -41,27 +41,6 @@ def _text(request: dict, key: str, *, required: bool = True) -> str:
     return value.strip()
 
 
-def _current(memory: Memory) -> bool:
-    if memory.status != "active":
-        return False
-    now = datetime.now(UTC)
-
-    def date(value: str) -> datetime:
-        parsed = datetime.fromisoformat(value)
-        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
-
-    try:
-        if memory.valid_from and date(memory.valid_from) > now:
-            return False
-        if memory.valid_to and date(memory.valid_to) <= now:
-            return False
-        if memory.ttl_seconds is not None:
-            observed = date(memory.observed_at or memory.created_at)
-            if (now - observed).total_seconds() >= memory.ttl_seconds:
-                return False
-    except (ValueError, TypeError, OverflowError):
-        return False
-    return True
 
 
 def _row(memory: Memory) -> dict:
@@ -106,10 +85,15 @@ def _remember(client: MemoryClient, text: str, session: str, agent: str, **kwarg
     if memory is None:
         raise RuntimeError("committed memory is not visible in its owning scope")
     inserted = memory.source_id == observation
+    retention = None
+    if inserted:
+        from luminary_memory.lifecycle.runner import run_safe_retention
+
+        retention = run_safe_retention(client.backend, client.settings, scope=client.scope)
     return _reply(
         "stored" if inserted else "duplicate",
         f"Stored memory #{mid}." if inserted else f"Memory #{mid} already exists; no new write.",
-        stored=int(inserted), memories=[_row(memory)],
+        stored=int(inserted), memories=[_row(memory)], retention=retention,
     )
 
 
@@ -148,6 +132,25 @@ def _remember_source(request: dict, scope: dict, session: str, text: str) -> dic
     ):
         raise PermissionError("native evidence requires a verified current-user quote")
     return {"origin": "user", "quote": quote}
+
+def _trusted_bridge_context(agent: str, workspace: Path, session: str) -> None:
+    """Check launcher-bound identity, not model request fields, before store access."""
+    raw = os.environ.get("LUMINARY_BRIDGE_CONTEXT", "")
+    if not raw or len(raw.encode("utf-8")) > 16384:
+        raise PermissionError("native bridge context is required")
+    try:
+        context = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise PermissionError("invalid native bridge context") from exc
+    if not isinstance(context, dict) or set(context) != {"agent", "workspace", "session_id"}:
+        raise PermissionError("invalid native bridge context")
+    native_workspace = context["workspace"]
+    if (context["agent"] != agent or context["session_id"] != session
+            or not isinstance(native_workspace, str) or not Path(native_workspace).is_absolute()
+            or os.path.normcase(str(Path(native_workspace).resolve()))
+            != os.path.normcase(str(workspace.resolve()))):
+        raise PermissionError("request does not match native bridge context")
+
 
 
 def _content_key(memory: Memory) -> str:
@@ -313,6 +316,7 @@ def dispatch(request: dict, *, client: MemoryClient | None = None) -> dict:
     if not workspace.is_absolute():
         raise ValueError("workspace must be an absolute path")
     session = _text(request, "session_id")
+    _trusted_bridge_context(agent, workspace, session)
     scope = {
         "workspace_id": os.path.normcase(str(workspace.resolve())),
         "agent_id": agent,
@@ -379,7 +383,7 @@ def dispatch(request: dict, *, client: MemoryClient | None = None) -> dict:
                 client, text, session, agent, tags=tags,
                 source_text=remember_source["quote"],
                 evidence_quote=remember_source["quote"],
-                confidence=1.0 if remember_source["origin"] == "operator" else 0.0,
+                confidence=EVIDENCE_CONFIDENCE[remember_source["origin"]],
                 metadata={"native_evidence": {"origin": remember_source["origin"]}},
             )
         if action == "forget":
@@ -415,7 +419,8 @@ def dispatch(request: dict, *, client: MemoryClient | None = None) -> dict:
                     tag for tag in [*tags, *enriched.tags]
                     if tag.strip().casefold() not in protected_tags
                 )),
-                source_text=user, evidence_quote=claims[0]["evidence_quote"], confidence=0.0,
+                source_text=user, evidence_quote=claims[0]["evidence_quote"],
+                confidence=EVIDENCE_CONFIDENCE["curated_user"],
                 metadata={"claims": claims, "automatic": True,
                           "native_evidence": {"origin": "curated_user"}},
             )

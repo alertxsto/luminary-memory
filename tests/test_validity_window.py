@@ -130,3 +130,32 @@ def test_row_without_a_validity_window_is_still_returned(tmp_path):
         assert CURRENT in [memory.content for memory in result.memories]
     finally:
         client.close()
+
+
+def test_ttl_expired_fact_is_not_recalled_before_lifecycle(tmp_path):
+    client = _client(tmp_path)
+    try:
+        client.settings.ttl_default_seconds = 1
+        client.ingest(CURRENT, source="runbook", observed_at=PAST)
+
+        result = client.recall(CURRENT, strict=True)
+
+        assert CURRENT not in [memory.content for memory in result.memories]
+    finally:
+        client.close()
+
+
+def test_validity_boundary_and_malformed_timestamps_fail_closed():
+    from datetime import UTC, datetime
+
+    from luminary_memory.lifecycle.validity import is_current
+    from luminary_memory.types import Memory
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    assert not is_current(Memory(valid_to=now.isoformat()), now=now)
+    assert not is_current(
+        Memory(observed_at="2025-12-31T23:59:59+00:00", ttl_seconds=1),
+        now=now,
+    )
+    assert not is_current(Memory(observed_at="invalid", ttl_seconds=1), now=now)
+    assert is_current(Memory(valid_from=now.isoformat()), now=now)

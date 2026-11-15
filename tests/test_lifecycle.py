@@ -39,6 +39,31 @@ def test_cleanup_skips_malformed_ttl_timestamp(tmp_path):
     assert b.get(mid) is not None
 
 
+def test_safe_retention_reports_protected_overflow_and_is_scheduled(tmp_path):
+    from luminary_memory.config import Settings
+    from luminary_memory.lifecycle.runner import run_safe_retention
+
+    backend = SQLiteBackend(str(tmp_path / "retention.db"))
+    mid = backend.add(Memory(content="active evidence"))
+    backend.add_evidence(mid, "one")
+    backend.add_evidence(mid, "two")
+    settings = Settings(evidence_max_rows=1)
+    result = run_safe_retention(backend, settings)
+    assert result["status"] == "completed"
+    assert result["ledgers"]["memory_evidence"]["overflow"] == 1
+    assert result["ledgers"]["memory_evidence"]["count"] == 2
+    assert run_safe_retention(backend, settings)["status"] == "not_due"
+    backend.close()
+
+
+def test_cleanup_expires_at_exact_ttl_boundary(tmp_path):
+    backend = SQLiteBackend(str(tmp_path / "boundary.db"))
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    backend.add(Memory(content="expired exactly now", created_at=now.isoformat(), ttl_seconds=0))
+    assert cleanup_expired(backend, now=now) == 1
+    backend.close()
+
+
 def test_cleanup_marks_claims_expired_before_hard_delete(tmp_path):
     b = SQLiteBackend(str(tmp_path / "expired-claim.db"))
     mid = b.add(
@@ -66,7 +91,7 @@ def test_cleanup_marks_claims_expired_before_hard_delete(tmp_path):
     assert claim[1] is None
 
 
-def test_consolidate_merges_near_duplicates(tmp_path):
+def test_consolidate_merges_exact_duplicates(tmp_path):
     b = SQLiteBackend(str(tmp_path / "t.db"))
     base = "postgres vector similarity search with pgvector is fast"
     m1 = Memory(content=base, tags=["database"], access_count=3)
@@ -192,8 +217,8 @@ def _sem_backend(tmp_path, memories, name="sem.db"):
     return b
 
 
-def test_consolidate_semantic_merges_same_meaning_different_words(tmp_path):
-    """Embedding-cosine merges paraphrases that Jaccard would miss."""
+def test_consolidate_semantic_keeps_different_content(tmp_path):
+    """Similar embeddings do not authorize deleting different facts."""
     from luminary_memory.types import Memory
     # two vectors that are near-identical (cosine ~1.0) but texts share no tokens
     v = [1.0, 0.5, 0.25]
@@ -202,18 +227,19 @@ def test_consolidate_semantic_merges_same_meaning_different_words(tmp_path):
                 embedding=[0.98, 0.5, 0.25], access_count=0, tags=[])
     b = _sem_backend(tmp_path, [m1, m2])
     merged = consolidate(b, semantic=True, semantic_threshold=0.9)
-    assert merged == 1
-    assert b.count() == 1
+    assert merged == 0
+    assert b.count() == 2
 
 
-def test_consolidate_semantic_falls_back_to_jaccard_without_embeddings(tmp_path):
-    """Memories without embeddings fall back to Jaccard token overlap."""
+def test_consolidate_keeps_jaccard_near_duplicates_without_embeddings(tmp_path):
+    """Token overlap does not authorize deleting different facts."""
     from luminary_memory.types import Memory
     m1 = Memory(content="postgres index tuning guide", embedding=None, access_count=0, tags=[])
     m2 = Memory(content="postgres index tuning guide for latency", embedding=None, access_count=0, tags=[])
     b = _sem_backend(tmp_path, [m1, m2])
     merged = consolidate(b, semantic=True, threshold=0.6)
-    assert merged == 1  # Jaccard fallback merged them
+    assert merged == 0
+    assert b.count() == 2
 
 
 def test_consolidate_semantic_keeps_unrelated(tmp_path):
@@ -226,8 +252,8 @@ def test_consolidate_semantic_keeps_unrelated(tmp_path):
     assert b.count() == 2
 
 
-def test_consolidate_jaccard_only_when_semantic_false(tmp_path):
-    """semantic=False keeps legacy Jaccard-only behavior."""
+def test_consolidate_jaccard_mode_keeps_near_duplicates(tmp_path):
+    """Even a low similarity threshold cannot authorize deletion."""
     from luminary_memory.types import Memory
     build = lambda: (Memory(content="alpha beta gamma delta", embedding=[1.0, 0.5],
                             access_count=0, tags=[]),
@@ -235,11 +261,74 @@ def test_consolidate_jaccard_only_when_semantic_false(tmp_path):
                             access_count=0, tags=[]))
     a1, a2 = build()
     b = _sem_backend(tmp_path, [a1, a2], "a.db")
-    # Jaccard = 4/5 = 0.8 → threshold 0.7 merges, threshold 0.9 doesn't
-    assert consolidate(b, semantic=False, threshold=0.7) == 1
+    assert consolidate(b, semantic=False, threshold=0.7) == 0
     b1, b2 = build()
     b3 = _sem_backend(tmp_path, [b1, b2], "b.db")
     assert consolidate(b3, semantic=False, threshold=0.9) == 0
+
+
+def test_consolidate_preserves_negated_facts_in_both_modes(tmp_path):
+    for semantic in (True, False):
+        b = _sem_backend(tmp_path, [
+            Memory(content="the deployment is safe today", embedding=[1.0, 0.5]),
+            Memory(content="the deployment is not safe today", embedding=[1.0, 0.5]),
+        ], f"negated-{semantic}.db")
+        assert consolidate(b, semantic=semantic, threshold=0.5) == 0
+        assert len(b.all()) == 2
+        b.close()
+
+
+def test_consolidate_keeps_incompatible_duplicate_metadata(tmp_path):
+    differences = [
+        {"source": "another source"},
+        {"source_id": "another source id"},
+        {"claim_key": "another claim"},
+        {"valid_from": "2025-01-01"},
+        {"valid_to": "2030-01-01"},
+        {"user_id": "another user"},
+        {"evidence_quote": "different evidence"},
+        {"metadata": {"value": "different"}},
+    ]
+    for index, fields in enumerate(differences):
+        b = SQLiteBackend(str(tmp_path / f"incompatible-{index}.db"))
+        b.add(Memory(content="identical fact"))
+        b.add(Memory(content="identical fact", **fields))
+        assert consolidate(b, semantic=False) == 0
+        assert b.count() == 2
+        b.close()
+
+
+def test_consolidate_keeps_conflicting_structured_claims(tmp_path):
+    b = SQLiteBackend(str(tmp_path / "claim-conflict.db"))
+    first = b.add(Memory(content="the project has a release"))
+    second = b.add(Memory(content="the project has a release"))
+    for memory_id, value in ((first, "v1"), (second, "v2")):
+        b.add_claim(memory_id, {
+            "subject": "project", "predicate": "release", "object": value,
+            "evidence_quote": "the project has a release",
+        })
+    assert consolidate(b) == 0
+    assert b.count() == 2
+    b.close()
+
+
+def test_consolidate_keeps_both_rows_when_reference_transfer_fails(tmp_path, monkeypatch):
+    b = SQLiteBackend(str(tmp_path / "failed-rehome.db"))
+    first = b.add(Memory(content="identical fact"))
+    second = b.add(Memory(content="identical fact"))
+    b.add_evidence(second, "supporting evidence", source_id="source")
+
+    def fail_rehome(source_id, target_id):
+        raise RuntimeError("reference transfer failed")
+
+    monkeypatch.setattr(b, "rehome_memory_references", fail_rehome)
+    assert consolidate(b) == 0
+    assert b.get(first) is not None
+    assert b.get(second) is not None
+    assert b.conn.execute(
+        "SELECT COUNT(*) FROM memory_evidence WHERE memory_id = ?", (second,)
+    ).fetchone()[0] == 1
+    b.close()
 
 
 def test_runner_env_semantic_false(monkeypatch, tmp_path):
@@ -317,10 +406,29 @@ def test_run_lifecycle_prunes_episode_and_event_ledgers(tmp_path):
 
     assert result["episodes_pruned"] == 3
     assert result["events_pruned"] == 2
-    assert result["evidence_pruned"] == 3
+    # Evidence that still supports an active record is provenance, not slack.
+    assert result["evidence_pruned"] == 0
     assert b.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == 2
     assert b.conn.execute("SELECT COUNT(*) FROM memory_events").fetchone()[0] == 3
-    assert b.conn.execute("SELECT COUNT(*) FROM memory_evidence").fetchone()[0] == 2
+    assert b.conn.execute("SELECT COUNT(*) FROM memory_evidence").fetchone()[0] == 5
+    status = b.ledger_status("memory_evidence", settings.evidence_max_rows)
+    assert status["overflow"] == 3
+    b.close()
+
+
+def test_retention_prunes_evidence_of_a_retracted_record(tmp_path):
+    from luminary_memory.config import Settings
+    from luminary_memory.lifecycle.runner import run_lifecycle
+
+    b = SQLiteBackend(str(tmp_path / "orphaned-evidence.db"))
+    mid = b.add(Memory(content="withdrawn fact", status="deleted"))
+    for i in range(4):
+        b.add_evidence(mid, f"quote {i}")
+
+    result = run_lifecycle(b, Settings(evidence_max_rows=1, importance_auto=False))
+
+    assert result["evidence_pruned"] == 3
+    assert b.conn.execute("SELECT COUNT(*) FROM memory_evidence").fetchone()[0] == 1
     b.close()
 
 

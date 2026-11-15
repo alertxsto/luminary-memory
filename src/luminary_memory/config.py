@@ -160,26 +160,90 @@ def load_config_file(
     return target
 
 
-DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+# The default model has to read the language the user actually writes in. An
+# English-only encoder scores a correct Indonesian question against a correct
+# English memory below any usable floor, so recall abstains on memories that are
+# plainly there. This multilingual model keeps English quality and adds the
+# languages the user writes in.
+DEFAULT_EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+
+# Vector width per model. ``embedding_dim`` sizes the pgvector column, so it has
+# to follow the model instead of being pinned to one model's width.
+EMBEDDING_MODEL_DIMS = {
+    "BAAI/bge-small-en-v1.5": 384,
+    "sentence-transformers/paraphrase-multilingual-mpnet-base-v2": 768,
+    "intfloat/multilingual-e5-large": 1024,
+}
+DEFAULT_EMBEDDING_DIM = EMBEDDING_MODEL_DIMS[DEFAULT_EMBEDDING_MODEL]
 
 # The cosine score that separates "this memory answers the question" from "this
 # memory is merely topically adjacent" is a property of the embedding model, not
 # of the library. These floors are measured on the controlled gold fixtures
 # (benchmarks/gold_micro.jsonl and gold_extended.jsonl, strict +
 # evidence-required) with every candidate scored against the question as asked.
+# Reproduce or extend them with ``scripts/measure-embedding-floor.py``.
 #
 #   BAAI/bge-small-en-v1.5  answer-bearing cases 0.6439-0.9206
 #                           no-answer cases      0.5427-0.5991
 #
+#   paraphrase-multilingual-mpnet-base-v2
+#                           answer-bearing cases 0.3697-0.8810
+#                           no-answer cases      0.2178-0.4467
+#
 # The gap between those two bands is the only stretch where the floor can sit.
-# 0.635 is its midpoint, so it leaves the same margin on both sides: the highest
-# confident wrong answer (0.5991) stays out and the lowest correct answer
-# (0.6439) stays in.
+# For bge-small-en 0.635 is its midpoint: the highest confident wrong answer
+# (0.5991) stays out and the lowest correct answer (0.6439) stays in.
+#
+# The multilingual model's bands overlap (0.3697-0.4467), so no floor separates
+# them perfectly. 0.39 keeps every no-answer case out and keeps 19 of 21
+# answer-bearing cases in; the two it drops are the weakest paraphrases, which
+# the lexical and graph strategies still reach. Raising it trades recall for
+# precision, lowering it does the reverse.
 #
 # Any model without a measured floor keeps the conservative default, so an
 # unmeasured model can only abstain more, never answer more.
-MEASURED_SEMANTIC_SUPPORT_FLOORS = {DEFAULT_EMBEDDING_MODEL: 0.635}
+MEASURED_SEMANTIC_SUPPORT_FLOORS = {
+    "BAAI/bge-small-en-v1.5": 0.635,
+    "sentence-transformers/paraphrase-multilingual-mpnet-base-v2": 0.39,
+}
 CONSERVATIVE_SEMANTIC_SUPPORT_FLOOR = 0.78
+
+# The abstention gate is the second half of the same calibration. A candidate is
+# dropped below ``abstention_min_confidence``, and that number is only meaningful
+# against the score distribution of one model: the score is
+# ``0.75*support**2 + 0.10*strategy + 0.15*confidence``, so a model whose supports
+# sit lower needs a lower gate or every correct answer is thrown away.
+#
+# Each value is the score of the weakest answer-bearing case on the gold
+# fixtures, rounded down, so the gate never rejects a case the floor accepts.
+# The gate still has to stay above a strategy-only candidate (no semantic
+# support, ``0.10*0.3 + 0.15*0.9 = 0.165``), which is what keeps an off-topic
+# keyword hit from answering.
+MEASURED_ABSTENTION_CONFIDENCE = {
+    "BAAI/bge-small-en-v1.5": 0.34,
+    "sentence-transformers/paraphrase-multilingual-mpnet-base-v2": 0.27,
+}
+DEFAULT_ABSTENTION_CONFIDENCE = 0.34
+
+
+def abstention_confidence_floor(model_name: str | None) -> float:
+    """Return the abstention gate measured for ``model_name``."""
+    return MEASURED_ABSTENTION_CONFIDENCE.get(
+        str(model_name or ""), DEFAULT_ABSTENTION_CONFIDENCE
+    )
+
+# How much a stored memory is grounded in evidence the user actually produced.
+# Recall scores a candidate as ``0.75*support**2 + 0.10*strategy + 0.15*confidence``
+# and abstains below ``abstention_min_confidence`` (0.34 by default), so a
+# verified memory stored at 0.0 could only be recalled when the embedding score
+# alone cleared the gate. That made every tool-saved memory effectively
+# unreachable. The values below keep the ordering (operator > verbatim user
+# quote > machine-selected claim) without zeroing the grounding signal.
+EVIDENCE_CONFIDENCE = {
+    "operator": 1.0,
+    "user": 0.9,
+    "curated_user": 0.8,
+}
 
 
 def semantic_support_floor(model_name: str | None) -> float:
@@ -209,10 +273,22 @@ class Settings:
     pg_dsn: str = field(default_factory=lambda: _settings_env().get("LUMINARY_PG_DSN", "postgresql://localhost/luminary_memory"))
     # embeddings
     embedding_model: str = field(default_factory=lambda: _settings_env().get("LUMINARY_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL))
-    embedding_dim: int = field(default_factory=lambda: _env_int("LUMINARY_EMBEDDING_DIM", 384))
-    # Stable model cache. Empty keeps fastembed's platform default (a temp
-    # directory on Windows), which can be cleared between runs.
-    model_cache_dir: str = field(default_factory=lambda: _settings_env().get("LUMINARY_MODEL_CACHE", ""))
+    embedding_dim: int = field(
+        default_factory=lambda: _env_int(
+            "LUMINARY_EMBEDDING_DIM",
+            EMBEDDING_MODEL_DIMS.get(
+                _settings_env().get("LUMINARY_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
+                DEFAULT_EMBEDDING_DIM,
+            ),
+        )
+    )
+    # Stable model cache. Empty keeps fastembed's platform default, which is a
+    # temp directory on Linux and Windows, so the weights are re-downloaded
+    # after every reboot. Default to a persistent per-user directory instead.
+    model_cache_dir: str = field(
+        default_factory=lambda: _settings_env().get("LUMINARY_MODEL_CACHE", "")
+        or str(Path.home() / ".luminary" / "models")
+    )
     # ingest
     ingest_whitelist: list[str] = field(default_factory=lambda: _env_list("LUMINARY_INGEST_WHITELIST"))
     ingest_llm: bool = field(default_factory=lambda: _env_bool("LUMINARY_INGEST_LLM", False))
@@ -236,20 +312,26 @@ class Settings:
     episode_max_rows: int = field(default_factory=lambda: _env_int("LUMINARY_EPISODE_MAX_ROWS", 10000))
     event_max_rows: int = field(default_factory=lambda: _env_int("LUMINARY_EVENT_MAX_ROWS", 50000))
     evidence_max_rows: int = field(default_factory=lambda: _env_int("LUMINARY_EVIDENCE_MAX_ROWS", 50000))
-    # Safety policy.  Legacy direct clients keep permissive recall unless
-    # enabled, while Hermes/CLI accuracy paths opt into strict abstention.
-    strict_recall: bool = field(default_factory=lambda: _env_bool("LUMINARY_STRICT_RECALL", False))
+    # Safety policy. Conservative by default: an unsupported answer is worse
+    # than an abstention, and evidence gates every returned fact. Callers that
+    # deliberately want permissive recall opt in explicitly.
+    strict_recall: bool = field(default_factory=lambda: _env_bool("LUMINARY_STRICT_RECALL", True))
     scope_include_global: bool = field(
-        default_factory=lambda: _env_bool("LUMINARY_SCOPE_INCLUDE_GLOBAL", True)
+        default_factory=lambda: _env_bool("LUMINARY_SCOPE_INCLUDE_GLOBAL", False)
     )
     abstention_min_confidence: float = field(
-        default_factory=lambda: _env_float("LUMINARY_ABSTENTION_MIN_CONFIDENCE", 0.34)
+        default_factory=lambda: _env_float(
+            "LUMINARY_ABSTENTION_MIN_CONFIDENCE",
+            abstention_confidence_floor(
+                _settings_env().get("LUMINARY_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
+            ),
+        )
     )
     abstention_min_margin: float = field(
         default_factory=lambda: _env_float("LUMINARY_ABSTENTION_MIN_MARGIN", 0.04)
     )
     evidence_required: bool = field(
-        default_factory=lambda: _env_bool("LUMINARY_EVIDENCE_REQUIRED", False)
+        default_factory=lambda: _env_bool("LUMINARY_EVIDENCE_REQUIRED", True)
     )
     # core memory (DB-backed, auto-loaded into the system prompt every session)
     core_tag: str = field(default_factory=lambda: _settings_env().get("LUMINARY_CORE_TAG", "core"))
@@ -257,6 +339,7 @@ class Settings:
     core_budget: int = field(default_factory=lambda: _env_int("LUMINARY_CORE_BUDGET", 8000))
     # lifecycle
     ttl_default_seconds: int | None = field(default_factory=lambda: _env_int("LUMINARY_TTL_DEFAULT_SECONDS", 0) or None)
+    retention_interval_seconds: int = field(default_factory=lambda: _env_int("LUMINARY_RETENTION_INTERVAL_SECONDS", 3600))
     prune_min_importance: float = field(default_factory=lambda: _env_float("LUMINARY_PRUNE_MIN_IMPORTANCE", 0.2))
     consolidate_jaccard_threshold: float = field(default_factory=lambda: _env_float("LUMINARY_CONSOLIDATE_JACCARD_THRESHOLD", 0.9))
     consolidate_semantic: bool = field(default_factory=lambda: _env_bool("LUMINARY_CONSOLIDATE_SEMANTIC", True))
@@ -320,6 +403,7 @@ class Settings:
             "core_top_n": self.core_top_n,
             "core_budget": self.core_budget,
             "ttl_default_seconds": self.ttl_default_seconds,
+            "retention_interval_seconds": self.retention_interval_seconds,
             "prune_min_importance": self.prune_min_importance,
             "consolidate_jaccard_threshold": self.consolidate_jaccard_threshold,
             "consolidate_semantic": self.consolidate_semantic,

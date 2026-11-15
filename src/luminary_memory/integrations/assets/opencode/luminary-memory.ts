@@ -50,7 +50,7 @@ function failure(reason: string, message: string, status = "error"): Reply {
   return { ok: status === "skipped", status, reason, message, context: "", memories: [], stored: 0, deleted: 0 }
 }
 
-function bridge(request: Record<string, unknown>, timeout: number, signal?: AbortSignal, source?: RememberSource): Promise<Reply> {
+function bridge(request: Record<string, unknown>, native: { workspace: string; sessionID: string }, timeout: number, signal?: AbortSignal, source?: RememberSource): Promise<Reply> {
   const payload = JSON.stringify(request)
   if (Buffer.byteLength(payload) > MAX_INPUT_BYTES) {
     return Promise.resolve(failure("input_limit", "Luminary request exceeds the bridge input limit."))
@@ -63,11 +63,11 @@ function bridge(request: Record<string, unknown>, timeout: number, signal?: Abor
     // Executable and arguments remain separate; prompt text is stdin, never shell syntax.
     const executable = resolveBridgePython("opencode", INSTALLED_PYTHON)
     const child = spawn(executable, ["-m", "luminary_memory.integrations", "bridge"], {
-      cwd: String(request.workspace),
+      cwd: native.workspace,
       shell: false,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
-      env: bridgeEnvironment(String(request.agent), String(request.workspace), String(request.session_id), source),
+      env: bridgeEnvironment("opencode", native.workspace, native.sessionID, source),
     })
     const finish = (reply: Reply, kill = false) => {
       if (settled) return
@@ -146,7 +146,8 @@ export default Plugin.define({
     const workspaceFor = async (sessionID: string, signal: AbortSignal) => {
       const session = await ctx.session.get({ sessionID: sessionID as ToolContext["sessionID"] }, { signal })
       // A plugin instance can see sessions outside its setup location.
-      if (session.id !== sessionID || !isAbsolute(session.location.directory)) {
+      if (session.id !== sessionID || !isAbsolute(session.location.directory) ||
+          resolve(session.location.directory) !== resolve(ctx.location.directory)) {
         throw new Error("The native session has no absolute workspace")
       }
       return resolve(session.location.directory)
@@ -221,7 +222,7 @@ export default Plugin.define({
         return Promise.resolve(failure("missing_scope", "A native session ID and absolute workspace are required."))
       }
       return bridge({ ...fields, action, agent: "opencode", workspace, session_id: sessionID },
-        action === "turn" ? 60000 : action === "recall" ? 10000 : 30000, signal, source)
+        { workspace, sessionID }, action === "turn" ? 60000 : action === "recall" ? 10000 : 30000, signal, source)
     }
     const runTool = async (action: string, fields: Record<string, unknown>, context: ToolContext) => {
       const signal = AbortSignal.any([controller.signal, context.signal])

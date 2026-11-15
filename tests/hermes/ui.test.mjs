@@ -113,3 +113,18 @@ test('native effect cleanup and rebind restores a fresh model lifetime', async (
   assert.equal(result.status, 'ok');
   assert.equal(session.state.opened, true);
 });
+
+test('legacy import opt-in is sent explicitly and ownership assignments remain visible for review', async () => {
+  const { createSession } = await load();
+  const calls = [];
+  const session = createSession(async (path, body) => {
+    calls.push({ path, body });
+    return path === '/upload' ? { status: 'ok', data: { file_handle: 'f' } }
+      : { status: 'ok', data: { preview_id: 'p', after: { ownership_assignments: [{ fields: { user_id: 'alice' } }] } } };
+  });
+  session.setContext('a');
+  await session.transfer('import', {}, true);
+  assert.equal(calls[1].body.arguments.assign_legacy, true);
+  assert.equal(session.state.preview.after.ownership_assignments[0].fields.user_id, 'alice');
+  assert.equal(calls.length, 2);
+});

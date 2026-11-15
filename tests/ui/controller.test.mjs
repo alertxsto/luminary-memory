@@ -173,3 +173,59 @@ test('new activity excludes witnessed events and Refresh returns the full recent
   await runInspectorAction(controller, {}, 'Refresh');
   assert.deepEqual(controller.state.data.items.map(row => row.event_id), [9, 7, 6]);
 });
+
+test('legacy assignment reviews partial and target ownership before native confirmation', async () => {
+  const calls = [];
+  const controller = new InspectorController({
+    request: async request => {
+      calls.push(request);
+      return result(request, request.operation === 'legacy_inventory'
+        ? { items: [{ memory_id: 7, revision: 3, content: 'legacy', user_id: 'alice', workspace_id: null }] }
+        : request.operation === 'preview_change'
+          ? { preview_id: 'p', before: { user_id: 'alice', workspace_id: null }, after: { user_id: 'alice', workspace_id: 'work' } }
+          : { audit: 'committed' });
+    },
+    confirm: async () => ({ status: 'ok', data: { confirmation_receipt: 'receipt' } }),
+  });
+  let review = '';
+  const dialogs = { input: async () => undefined, select: async () => '1. #7 legacy', show: async () => {}, confirm: async (_title, message) => { review = message; return true; } };
+  await runInspectorAction(controller, dialogs, 'Review legacy ownership');
+  assert.equal(calls[1].arguments.kind, 'assign_legacy');
+  assert.equal(calls[1].arguments.memory_id, 7);
+  assert.equal(calls[1].arguments.expected_revision, 3);
+  assert.match(review, /alice/);
+  assert.match(review, /work/);
+  assert.equal(calls[2].operation, 'mutate');
+});
+
+test('purge requires a separate explicit expanded preview for shared impact', async () => {
+  const calls = [];
+  const controller = new InspectorController({
+    request: async request => { calls.push(request); return result(request, request.operation === 'preview_change'
+      ? { preview_id: 'p', before: {}, after: {}, effects: { shared: 1 } } : {}); },
+    confirm: async () => ({ status: 'ok', data: { confirmation_receipt: 'receipt' } }),
+  });
+  const dialogs = { input: async () => undefined, select: async () => 'Standard purge', show: async () => {}, confirm: async () => false };
+  await runInspectorAction(controller, dialogs, 'Purge', { id: 8, revision: 2 });
+  assert.equal(calls[0].arguments.kind, 'purge');
+  assert.equal(calls[0].arguments.expand_shared, false);
+  assert.equal(calls.length, 1);
+});
+
+test('maintenance suggestions are previewed and never applied without owner confirmation', async () => {
+  const calls = [];
+  const controller = new InspectorController({
+    request: async request => {
+      calls.push(request);
+      return result(request, request.operation === 'maintenance_suggestions'
+        ? { items: [{ proposal_id: 'proposal-1', memory_id: 4, action: 'correct', proposed_content: 'updated', revision: 2 }] }
+        : { preview_id: 'p', before: { content: 'old' }, after: { content: 'updated' } });
+    },
+  });
+  const dialogs = { input: async () => undefined, select: async () => '1. #4 correct: updated', show: async () => {}, confirm: async () => false };
+  await runInspectorAction(controller, dialogs, 'Review maintenance suggestions');
+  assert.equal(calls[1].arguments.kind, 'maintenance_proposal');
+  assert.equal(calls[1].arguments.proposal_id, 'proposal-1');
+  assert.equal(calls.length, 2);
+  assert.equal(controller.state.status, 'cancelled');
+});

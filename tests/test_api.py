@@ -81,6 +81,31 @@ class _MaintenanceEnricher(LLMEnricher):
         return self.raw
 
 
+class _ProposalEnricher(LLMEnricher):
+    """Propose one action grounded in the candidate's own stored source."""
+
+    def __init__(self, action: str = "delete", content: str = "updated fact"):
+        self.action = action
+        self.content = content
+
+    def enrich(self, text: str) -> EnrichedContent:
+        return EnrichedContent(content=text)
+
+    def review_memories(self, memories: list) -> str:
+        import json
+
+        memory = memories[0]
+        action = {
+            "id": memory.id,
+            "action": self.action,
+            "source_id": memory.source_id,
+            "evidence_quote": memory.evidence_quote,
+        }
+        if self.action == "update":
+            action["content"] = self.content
+        return json.dumps({"actions": [action]})
+
+
 def test_run_maintenance_no_enricher(tmp_path):
     c = MemoryClient(db_path=str(tmp_path / "t.db"), engine=_FakeEngine())
     c.ingest("some fact")
@@ -92,30 +117,37 @@ def test_run_maintenance_empty_store(tmp_path):
     c = MemoryClient(db_path=str(tmp_path / "t.db"), enricher=_MaintenanceEnricher("{}"),
                      engine=_FakeEngine())
     result = c.run_maintenance()
-    assert result == {"reviewed": 0, "deleted": 0, "updated": 0}
+    assert result == {"reviewed": 0, "proposed": 0}
 
 
-def test_run_maintenance_delete_and_update(tmp_path):
-    c = MemoryClient(db_path=str(tmp_path / "t.db"),
-                     enricher=_MaintenanceEnricher(
-                         '{"actions": [{"id": 1, "action": "delete"}, '
-                         '{"id": 2, "action": "update", "content": "new fact"}, '
-                         '{"id": 3, "action": "keep"}]}'
-                     ),
+def test_run_maintenance_proposes_without_mutating(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "t.db"), enricher=_ProposalEnricher("delete"),
                      engine=_FakeEngine())
-    id1 = c.ingest("old fact one")
-    id2 = c.ingest("old fact two")
-    id3 = c.ingest("keep this")
+    mid = c.ingest("old fact one")
+
     result = c.run_maintenance()
-    assert result["reviewed"] == 3
-    assert result["deleted"] == 1
-    assert result["updated"] == 1
-    assert c.get(id1) is None
-    assert c.get(id2).content == "new fact"
-    assert c.get(id3).content == "keep this"
+
+    assert result["reviewed"] == 1
+    assert result["proposed"] == 1
+    # The model's proposal is not authority: the record is untouched until an
+    # owner confirms the preview in the inspector.
+    assert c.get(mid) is not None
+    assert c.get(mid).status == "active"
 
 
-def test_run_maintenance_accepts_string_ids_from_json_llm(tmp_path):
+def test_run_maintenance_update_proposal_keeps_content(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "t.db"),
+                     enricher=_ProposalEnricher("update", "new fact"),
+                     engine=_FakeEngine())
+    mid = c.ingest("old fact two")
+
+    result = c.run_maintenance()
+
+    assert result["proposed"] == 1
+    assert c.get(mid).content == "old fact two"
+
+
+def test_run_maintenance_ignores_non_integer_ids(tmp_path):
     c = MemoryClient(
         db_path=str(tmp_path / "t.db"),
         enricher=_MaintenanceEnricher('{"actions": [{"id": "1", "action": "delete"}]}'),
@@ -125,26 +157,45 @@ def test_run_maintenance_accepts_string_ids_from_json_llm(tmp_path):
 
     result = c.run_maintenance()
 
-    assert result["deleted"] == 1
-    assert c.get(mid) is None
+    assert result["proposed"] == 0
+    assert c.get(mid) is not None
 
 
 def test_run_maintenance_bad_llm_response(tmp_path):
     c = MemoryClient(db_path=str(tmp_path / "t.db"),
                      enricher=_MaintenanceEnricher("not a list"),
                      engine=_FakeEngine())
-    c.ingest("fact")
+    mid = c.ingest("fact")
     result = c.run_maintenance()
     assert result["error"] == "bad LLM response"
+    assert c.get(mid).status == "active"
 
 
 def test_run_maintenance_unknown_id_skipped(tmp_path):
     c = MemoryClient(db_path=str(tmp_path / "t.db"),
                      enricher=_MaintenanceEnricher('{"actions": [{"id": 999, "action": "delete"}]}'),
                      engine=_FakeEngine())
-    c.ingest("fact")
+    mid = c.ingest("fact")
     result = c.run_maintenance()
-    assert result["deleted"] == 0
+    assert result["proposed"] == 0
+    assert c.get(mid) is not None
+
+
+def test_run_maintenance_requires_a_stored_source_quote(tmp_path):
+    c = MemoryClient(
+        db_path=str(tmp_path / "t.db"),
+        enricher=_MaintenanceEnricher(
+            '{"actions": [{"id": 1, "action": "update", "content": "invented", '
+            '"source_id": "forged", "evidence_quote": "invented"}]}'
+        ),
+        engine=_FakeEngine(),
+    )
+    mid = c.ingest("stored fact")
+
+    result = c.run_maintenance()
+
+    assert result["proposed"] == 0
+    assert c.get(mid).content == "stored fact"
 
 
 def test_update_bumps_updated_at_and_reembeds(tmp_path):
@@ -166,33 +217,19 @@ def test_delete_nonexistent_is_graceful(tmp_path):
     assert c.count() == 1
 
 
-def test_run_maintenance_delete_error_swallowed(tmp_path, monkeypatch):
+def test_run_maintenance_never_calls_apply_paths(tmp_path, monkeypatch):
     c = MemoryClient(db_path=str(tmp_path / "t.db"),
-                     enricher=_MaintenanceEnricher('{"actions": [{"id": 1, "action": "delete"}]}'),
+                     enricher=_ProposalEnricher("delete"),
                      engine=_FakeEngine())
     c.ingest("fact to delete")
 
-    def boom_delete(mid):
-        raise RuntimeError("delete failed")
-    monkeypatch.setattr(c, "delete", boom_delete)
+    def boom(*_args, **_kwargs):
+        raise AssertionError("maintenance must not apply a proposal")
+
+    monkeypatch.setattr(c, "delete", boom)
+    monkeypatch.setattr(c, "update", boom)
 
     result = c.run_maintenance()
-    assert result["deleted"] == 0  # error swallowed, not raised
-    assert result["reviewed"] == 1
-    c.close()
-
-
-def test_run_maintenance_update_error_swallowed(tmp_path, monkeypatch):
-    c = MemoryClient(db_path=str(tmp_path / "t.db"),
-                     enricher=_MaintenanceEnricher('{"actions": [{"id": 1, "action": "update", "content": "new"}]}'),
-                     engine=_FakeEngine())
-    c.ingest("old fact")
-
-    def boom_update(m):
-        raise RuntimeError("update failed")
-    monkeypatch.setattr(c, "update", boom_update)
-
-    result = c.run_maintenance()
-    assert result["updated"] == 0
+    assert result["proposed"] == 1
     assert result["reviewed"] == 1
     c.close()

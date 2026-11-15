@@ -1,13 +1,26 @@
+import zlib
+
 from luminary_memory.api import MemoryClient
+from luminary_memory.config import Settings
 from luminary_memory.types import RecallResult
 
 
 class _FakeEngine:
+    """Deterministic bag-of-words embedding.
+
+    ``hash()`` is salted per process, so a hash-bucket embedding made these
+    tests pass or fail depending on PYTHONHASHSEED. crc32 is stable, and summing
+    per-token buckets means texts that share a word share a direction instead of
+    colliding by luck.
+    """
+
     def embed(self, text: str) -> list[float]:
-        # simple hash-embedding so distinct texts produce distinguishable vectors
-        v = [0.0] * 384
-        v[hash(text) % 384] = 1.0
-        return v
+        vector = [0.0] * 384
+        for token in str(text).casefold().split():
+            vector[zlib.crc32(token.encode()) % 384] += 1.0
+        if not any(vector):
+            vector[0] = 1.0
+        return vector
 
 
 def _ingest(c, content, tags=None):
@@ -91,8 +104,15 @@ def test_recall_surfaces_important_rules_in_mixed_store(tmp_path):
 
 
 def test_recall_temporal_surfaces_recent_without_matches(tmp_path):
-    """When no semantic/keyword match, temporal still provides recent context."""
-    c = MemoryClient(db_path=str(tmp_path / "temporal.db"), engine=_FakeEngine())
+    """Permissive callers still get recent context when nothing matches."""
+    c = MemoryClient(
+        settings=Settings(
+            db_path=str(tmp_path / "temporal.db"),
+            strict_recall=False,
+            evidence_required=False,
+        ),
+        engine=_FakeEngine(),
+    )
     rule = _ingest(c, "always use tabs not spaces in this project", tags=["rule"])
     r = c.get(rule)
     r.importance = 0.95

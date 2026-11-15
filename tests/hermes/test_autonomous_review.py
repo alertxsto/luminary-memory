@@ -26,6 +26,8 @@ def _provider(tmp_path, monkeypatch, enricher_type, callbacks=None) -> LuminaryM
         hermes_home=str(tmp_path),
         platform="cli",
         agent_identity="test-agent",
+        user_id="test-user",
+        agent_workspace="test-workspace",
         status_callback=(callbacks if callbacks is not None else []).append,
     )
     provider._client.engine = _FakeEngine()

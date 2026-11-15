@@ -87,6 +87,19 @@ curation for that provider instance. `retain_every_n_turns` only controls when
 the buffered batch enters the durable curation queue; each accepted turn is
 still recorded individually in the exact-session ledger first.
 
+Continuity reads use the provider's exact identity and session; a matching
+session ID alone does not authorize another owner's episodes. Existing rows
+with partial ownership are not automatically assigned when the provider starts.
+See [ownership migration](api.md#ownership-and-legacy-migration) before
+adopting legacy records.
+
+At session boundaries the provider waits for the retain queue before a due
+safe-retention pass. It logs `retention.completed` or `retention.failed` and
+raises on retention failure or queue timeout. The pass reports protected ledger
+overflow rather than treating the configured cap as guaranteed physical removal.
+Provider `llm.usage` events report call and attempt deltas and nullable token
+totals when supplied; they do not report a price.
+
 Luminary does not edit Hermes' native data files or source tree. The runtime
 uses only the provider entry point and the public `MemoryProvider` lifecycle,
 prompt, recall, tool, and turn hooks. If the configured provider cannot be

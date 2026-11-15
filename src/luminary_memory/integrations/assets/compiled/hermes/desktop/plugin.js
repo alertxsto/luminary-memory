@@ -125,11 +125,11 @@ function createSession(send) {
         request_id: crypto.randomUUID()
       });
     },
-    async transfer(direction, file) {
+    async transfer(direction, file, assignLegacy = false) {
       const registered = await run(direction === "import" ? "/upload" : "/export-handle", file ? { file } : {});
       const handle = registered?.data?.file_handle;
       if (registered?.status !== "ok" || typeof handle !== "string") return null;
-      const preview = await api.request("transfer_preview", { direction, file_handle: handle });
+      const preview = await api.request("transfer_preview", { direction, file_handle: handle, ...direction === "import" && assignLegacy ? { assign_legacy: true } : {} });
       return preview ? { handle, preview } : null;
     },
     download(handle) {
@@ -297,6 +297,8 @@ function createInspectorView(React2, useNativeContext, send, subscribeInvalidati
     const [projectChoices, setProjectChoices] = React2.useState([]);
     const [file, setFile] = React2.useState(null), [exportHandle, setExportHandle] = React2.useState("");
     const [download, setDownload] = React2.useState(null);
+    const [assignLegacy, setAssignLegacy] = React2.useState(false), [expandShared, setExpandShared] = React2.useState(false);
+    const [reviewItems, setReviewItems] = React2.useState([]), [reviewKind, setReviewKind] = React2.useState("");
     const [permissionRows, setPermissionRows] = React2.useState([]);
     React2.useEffect(() => model.subscribe(setState), [model]);
     React2.useEffect(() => {
@@ -305,6 +307,10 @@ function createInspectorView(React2, useNativeContext, send, subscribeInvalidati
       setRow(null);
       setContent("");
       setNotice("");
+      setReviewItems([]);
+      setReviewKind("");
+      setAssignLegacy(false);
+      setExpandShared(false);
       model.setContext(native.session || "");
     }, [native.key, native.session]);
     React2.useEffect(() => {
@@ -315,6 +321,10 @@ function createInspectorView(React2, useNativeContext, send, subscribeInvalidati
       setFile(null);
       setExportHandle("");
       setDownload(null);
+      setReviewItems([]);
+      setReviewKind("");
+      setAssignLegacy(false);
+      setExpandShared(false);
     }, [session]);
     React2.useEffect(() => subscribeInvalidation?.(() => {
       model.setContext(session);
@@ -322,6 +332,10 @@ function createInspectorView(React2, useNativeContext, send, subscribeInvalidati
       setContent("");
       setExportHandle("");
       setDownload(null);
+      setReviewItems([]);
+      setReviewKind("");
+      setAssignLegacy(false);
+      setExpandShared(false);
     }), [native.key, session]);
     React2.useEffect(() => {
       if (["denied", "unavailable", "unknown_outcome", "cancelled"].includes(state.result?.status)) {
@@ -331,6 +345,8 @@ function createInspectorView(React2, useNativeContext, send, subscribeInvalidati
         setConflictToken("");
         setExportHandle("");
         setDownload(null);
+        setReviewItems([]);
+        setReviewKind("");
       }
     }, [state.result]);
     React2.useEffect(() => {
@@ -364,6 +380,9 @@ function createInspectorView(React2, useNativeContext, send, subscribeInvalidati
       setTab(next);
       setRow(null);
       setContent("");
+      setReviewItems([]);
+      setReviewKind("");
+      setExpandShared(false);
       model.cancelPreview();
       if (model.state.opened) model.request(TABS.find((item) => item[0] === next)[2], viewArguments(next));
     };
@@ -385,6 +404,15 @@ function createInspectorView(React2, useNativeContext, send, subscribeInvalidati
       ...row?.id !== void 0 ? { memory_id: row.id, expected_revision: row.revision } : {},
       ...args
     });
+    const loadReview = async (operation2, kind) => {
+      setReviewItems([]);
+      setReviewKind("");
+      const result = await model.request(operation2);
+      if (result?.status === "ok") {
+        setReviewItems(Array.isArray(result.data?.items) ? result.data.items : []);
+        setReviewKind(kind);
+      }
+    };
     const detail = async (item) => {
       setRow(null);
       setContent("");
@@ -451,7 +479,10 @@ function createInspectorView(React2, useNativeContext, send, subscribeInvalidati
         button("Preview tags", () => change("tag", { tags: tags.split(",").map((value2) => value2.trim()).filter(Boolean) }), !canAct || !row?.permissions?.edit),
         button("Mark core", () => change("core", { pinned: true }), !canAct || !row?.permissions?.edit),
         button("Remove core", () => change("core", { pinned: false }), !canAct || !row?.permissions?.edit),
-        button("Preview retraction", () => change("retract"), !canAct || !row?.permissions?.retract)
+        button("Preview retraction", () => change("retract"), !canAct || !row?.permissions?.retract),
+        button("Preview purge", () => change("purge", { expand_shared: expandShared }), !canAct || !row?.permissions?.retract),
+        h("label", null, h("input", { type: "checkbox", checked: expandShared, onChange: (event) => setExpandShared(event.target.checked) }), " Explicitly include shared impact in a new purge preview"),
+        !model.shared && button("Review legacy ownership", () => loadReview("legacy_inventory", "legacy"), !canAct)
       )
     );
     if (tab === "activity" && typeof data.replay_context === "string") controls.push(
@@ -487,6 +518,7 @@ function createInspectorView(React2, useNativeContext, send, subscribeInvalidati
       { key: "maintenance", style: { display: "grid", gap: 8 } },
       h("label", null, "Maintenance proposal ", h("select", { value: maintenance, onChange: (event) => setMaintenance(event.target.value), style: inputStyle }, ...["prune", "cleanup_expired"].map((kind) => h("option", { key: kind }, kind)))),
       button("Preview maintenance", () => change(maintenance, {}, "maintenance_preview"), !canAct),
+      button("Review maintenance suggestions", () => loadReview("maintenance_suggestions", "maintenance"), !canAct),
       h(Input, { label: "Conflict-set token from claim details", value: conflictToken, onChange: setConflictToken }),
       button("Preview selected conflict winner", () => change("resolve_conflict", { expected_conflict_set_token: conflictToken }), !canAct || !row || !conflictToken)
     ));
@@ -536,7 +568,8 @@ function createInspectorView(React2, useNativeContext, send, subscribeInvalidati
           setNotice(selected?.size > 4 * 1024 * 1024 ? "Choose a file no larger than 4 MiB." : "");
         }
       })),
-      button("Upload and preview import", () => model.transfer("import", file), !canAct || !file || file.size > 4 * 1024 * 1024),
+      h("label", null, h("input", { type: "checkbox", checked: assignLegacy, onChange: (event) => setAssignLegacy(event.target.checked), disabled: model.shared }), " Explicitly assign missing ownership to this native owner on import"),
+      button("Upload and preview import", () => model.transfer("import", file, assignLegacy && !model.shared), !canAct || !file || file.size > 4 * 1024 * 1024),
       button("Preview export", async () => {
         setExportHandle("");
         const result = await model.transfer("export");
@@ -587,6 +620,18 @@ function createInspectorView(React2, useNativeContext, send, subscribeInvalidati
           data.lineage_map && h("div", null, h("h4", null, "Imported source \u2192 destination IDs"), h(Fields, { value: data.lineage_map }))
         ),
         ...controls,
+        reviewKind && h(
+          "section",
+          { "aria-label": "Owner review candidates" },
+          h("h3", null, reviewKind === "legacy" ? "Partial-owner records" : "Maintenance suggestions"),
+          !reviewItems.length && h("p", null, "No candidates available."),
+          ...reviewItems.map((item, index) => h(
+            "div",
+            { key: item.proposal_id ?? item.memory_id ?? index },
+            h(Json, { value: item }),
+            button("Preview this candidate", () => reviewKind === "legacy" ? model.request("preview_change", { kind: "assign_legacy", memory_id: item.memory_id, expected_revision: item.revision }) : model.request("preview_change", { kind: "maintenance_proposal", proposal_id: item.proposal_id }), !canAct)
+          ))
+        ),
         rows.length > 0 && !["activity", "relations"].includes(tab) && h("ul", { style: { margin: 0, paddingLeft: 20 } }, ...rows.map((item, index) => h(
           "li",
           { key: item.id ?? item.event_id ?? index },
@@ -609,12 +654,20 @@ function createInspectorView(React2, useNativeContext, send, subscribeInvalidati
           model.setSelection(void 0);
           setRow(null);
           setContent("");
+          setReviewItems([]);
+          setReviewKind("");
+          setAssignLegacy(false);
+          setExpandShared(false);
           load();
         }, !canAct),
         ...projectChoices.map((project) => button(String(project.workspace_id || project.project_id), () => {
           model.setSelection(project.selection_handle);
           setRow(null);
           setContent("");
+          setReviewItems([]);
+          setReviewKind("");
+          setAssignLegacy(false);
+          setExpandShared(false);
           load();
         }, !canAct, { key: project.project_id }))
       ),
@@ -626,6 +679,7 @@ function createInspectorView(React2, useNativeContext, send, subscribeInvalidati
         h(Fields, { value: state.preview.before }),
         h("h4", null, "After"),
         h(Fields, { value: state.preview.after }),
+        state.preview.kind === "purge" && h("p", null, "Purge removes identified copies in the active store, not backups, snapshots, exports or other external copies. Physical erasure is not guaranteed. Review all shared impact before confirming."),
         h("h4", null, "Effects"),
         h(Fields, { value: state.preview.effects }),
         h("small", null, `Expires: ${state.preview.expires_at || "server controlled"}`),

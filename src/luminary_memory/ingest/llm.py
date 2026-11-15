@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import re
+import threading
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,32 @@ class EnrichedContent:
     error: str | None = None
 
 
+_REVIEW_INSTRUCTIONS = (
+    "You are a memory curator. Propose keep, update, or delete actions for the "
+    "candidate memories; actions are proposals for owner review, not authorization. "
+    "For update or delete, provide a source_id from the supplied candidate metadata "
+    "and an evidence_quote copied verbatim from its supplied source quote. "
+    "If no appropriate source quote is supplied, do not propose an update or delete. "
+    "A matching quote does not prove the proposed change is semantically correct. "
+    "Return STRICT JSON: {\"actions\": [{\"id\": 1, \"action\": "
+    "\"keep|update|delete\", \"content\": \"replacement for update\", "
+    "\"source_id\": \"episode reference\", \"evidence_quote\": \"verbatim quote\"}]}. "
+    "No extra keys, no markdown."
+)
+
+
+def _review_candidates(memories: list) -> str:
+    items = []
+    for memory in memories:
+        item = {"id": memory.id, "content": str(getattr(memory, "content", ""))[:300]}
+        for name in ("source_id", "evidence_quote"):
+            value = getattr(memory, name, None)
+            if isinstance(value, str) and value:
+                item[name] = value
+        items.append("- " + json.dumps(item, ensure_ascii=False))
+    return "\n".join(items)
+
+
 class LLMEnricher:
     def enrich(self, text: str) -> EnrichedContent:
         raise NotImplementedError
@@ -48,19 +75,7 @@ class LLMEnricher:
         Each memory has ``id`` and ``content``. The default implementation
         calls :meth:`enrich`; subclasses may override for a dedicated prompt.
         """
-        import json as _json
-
-        items = "\n".join(
-            f'- {{"id": {m.id}, "content": {_json.dumps(str(getattr(m, "content", ""))[:300])}}}'
-            for m in memories
-        )
-        prompt = (
-            "Review this memory store. For each item decide: \"keep\", \"update\" "
-            "(with replacement content), or \"delete\" (obsolete, contradicted, or "
-            "duplicate). Return STRICT JSON: {\"actions\": [{\"id\": N, \"action\": "
-            "\"keep|update|delete\", \"content\": \"new content if update\"}]}. "
-            "No extra keys, no markdown.\n\nMemories:\n" + items
-        )
+        prompt = _REVIEW_INSTRUCTIONS + "\n\nMemories:\n" + _review_candidates(memories)
         return self.enrich(prompt).content
 
 
@@ -317,6 +332,53 @@ class OpenAICompatibleEnricher(LLMEnricher):
         # Importance must come from a structured caller value or the normal
         # estimator applied by MemoryClient.
         _ = (rule_keywords, rule_importance, s)
+        self._usage_lock = threading.Lock()
+        self._usage_calls = 0
+        self._usage_attempts = 0
+        self._usage_completed = 0
+        self._usage_tokens = {key: 0 for key in ("prompt_tokens", "completion_tokens", "total_tokens")}
+
+    def usage_snapshot(self) -> dict:
+        """Return cumulative provider usage; incomplete or unavailable totals are None.
+
+        Calls count invocations of the transport; attempts include transport retries.
+        A snapshot taken during an attempt reports token totals as unknown.
+        """
+        with self._usage_lock:
+            pending = self._usage_completed != self._usage_attempts
+            return {
+                "calls": self._usage_calls,
+                "attempts": self._usage_attempts,
+                **{key: None if pending or not self._usage_attempts else value
+                   for key, value in self._usage_tokens.items()},
+            }
+
+    def _record_usage(self, payload) -> None:
+        sources = []
+        if isinstance(payload, dict):
+            if "usage" in payload:
+                sources.append(payload["usage"])
+            data = payload.get("data")
+            if isinstance(data, dict) and "usage" in data:
+                sources.append(data["usage"])
+        values = {}
+        for key in self._usage_tokens:
+            reported = [source.get(key) if isinstance(source, dict) else None for source in sources]
+            value = reported[0] if reported else None
+            if (not isinstance(value, int) or isinstance(value, bool) or value < 0
+                    or any(other != value or type(other) is not int for other in reported)):
+                value = None
+            values[key] = value
+        if (
+            all(values[name] is not None for name in values)
+            and values["prompt_tokens"] + values["completion_tokens"] != values["total_tokens"]
+        ):
+            values["total_tokens"] = None
+        with self._usage_lock:
+            for key, value in values.items():
+                previous = self._usage_tokens[key]
+                self._usage_tokens[key] = previous + value if previous is not None and value is not None else None
+            self._usage_completed += 1
 
     def _call_llm(self, messages: list[dict]) -> str:
         """Call the OpenAI-compatible endpoint, return the assistant content."""
@@ -335,7 +397,12 @@ class OpenAICompatibleEnricher(LLMEnricher):
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        with self._usage_lock:
+            self._usage_calls += 1
         for attempt in range(2):
+            with self._usage_lock:
+                self._usage_attempts += 1
+            usage_payload = None
             try:
                 resp = requests.post(
                     url,
@@ -345,6 +412,7 @@ class OpenAICompatibleEnricher(LLMEnricher):
                 )
                 resp.raise_for_status()
                 payload = resp.json()
+                usage_payload = payload
                 # Some OpenAI-compatible gateways (e.g. the cline gateway) wrap the
                 # standard ChatCompletion shape inside a top-level "data" envelope:
                 #   {"data": {"choices": [...]}}
@@ -364,8 +432,10 @@ class OpenAICompatibleEnricher(LLMEnricher):
 
                     time.sleep(0.3)
                     continue
-                logger.warning("enricher call failed after retry: %s", exc)
+                logger.warning("enricher call failed after retry: %s", type(exc).__name__)
                 raise
+            finally:
+                self._record_usage(usage_payload)
         return ""
 
     def _parse_enrich_response(self, content_str: str, text: str) -> EnrichedContent | None:
@@ -497,13 +567,13 @@ class OpenAICompatibleEnricher(LLMEnricher):
                     len(content_str or ""),
                 )
                 return EnrichedContent(content=text, error="unusable_reply")
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- transport failures become a reported error
                 if attempt == 0:
                     import time
 
                     time.sleep(0.3)
                     continue
-                logger.warning("memory enricher failed: %s", type(exc).__name__, exc_info=True)
+                logger.warning("memory enricher failed: %s", type(exc).__name__)
                 return EnrichedContent(content=text, error=type(exc).__name__)
         return EnrichedContent(content=text, error="unusable_reply")
 
@@ -512,23 +582,13 @@ class OpenAICompatibleEnricher(LLMEnricher):
         if not self.base_url:
             return "{}"
         try:
-            import json as _json
-
-            items = "\n".join(
-                f'- {{"id": {m.id}, "content": {_json.dumps(str(getattr(m, "content", ""))[:300])}}}'
-                for m in memories
-            )
+            items = _review_candidates(memories)
             return self._call_llm(
                 [
                     {
                         "role": "system",
                         "content": (
-                            "You are a memory curator for an AI agent's long-term memory store. "
-                            "Review each memory and decide: \"keep\", \"update\" (provide new "
-                            "content), or \"delete\" (obsolete, contradicted, or duplicate). "
-                            "Return STRICT JSON: {\"actions\": [{\"id\": N, \"action\": "
-                            "\"keep|update|delete\", \"content\": \"new content if update\"}]}. "
-                            "No extra keys, no markdown."
+                            _REVIEW_INSTRUCTIONS
                         ),
                     },
                     {"role": "user", "content": items},

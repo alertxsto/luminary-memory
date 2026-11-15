@@ -22,6 +22,8 @@ def test_shutdown_drains_accepted_retain_before_fence(tmp_path):
         hermes_home=str(tmp_path),
         platform="cli",
         agent_identity="test",
+        user_id="test-user",
+        agent_workspace="test-workspace",
     )
     provider._client.engine = _FakeEngine()
 
@@ -42,7 +44,7 @@ def test_shutdown_drains_accepted_retain_before_fence(tmp_path):
     backend = SQLiteBackend(str(tmp_path / "luminary" / "memory.db"))
     rows = backend.recent(
         limit=None,
-        scope={"agent_id": "test"},
+        scope={"user_id": "test-user", "workspace_id": "test-workspace", "agent_id": "test"},
         include_global=False,
     )
     assert any("delegated: durable preference" in row.content for row in rows)
@@ -56,11 +58,15 @@ def test_reinitialize_clears_parent_lineage(tmp_path):
         hermes_home=str(tmp_path),
         platform="cli",
         parent_session_id="parent-1",
+        user_id="test-user",
+        agent_workspace="test-workspace",
+        agent_identity="test",
     )
     assert provider._parent_session_id == "parent-1"
 
     provider.shutdown()
-    provider.initialize("session-2", hermes_home=str(tmp_path), platform="cli")
+    provider.initialize("session-2", hermes_home=str(tmp_path), platform="cli",
+                        user_id="test-user", agent_workspace="test-workspace", agent_identity="test")
     assert provider._parent_session_id is None
     provider.shutdown()
 
@@ -72,6 +78,8 @@ def test_explicit_tool_path_still_writes_when_native_bridge_is_ignored(tmp_path)
         hermes_home=str(tmp_path),
         platform="cli",
         agent_identity="test",
+        user_id="test-user",
+        agent_workspace="test-workspace",
     )
     provider._client.engine = _FakeEngine()
 

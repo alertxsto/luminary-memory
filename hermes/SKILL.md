@@ -215,7 +215,7 @@ Example, save less often, no indicators:
 | Var | Purpose |
 |-----|---------|
 | `LUMINARY_BACKEND` | `sqlite` / `pgvector` |
-| `LUMINARY_EMBEDDING_MODEL` | ONNX model (default `BAAI/bge-small-en-v1.5`) |
+| `LUMINARY_EMBEDDING_MODEL` | ONNX model (default `sentence-transformers/paraphrase-multilingual-mpnet-base-v2`) |
 | `LUMINARY_HOOK_CHAT_ID` | Chat for the activity hook (defaults to home channel) |
 | `LUMINARY_DB_PATH` | Override store location (hook) |
 

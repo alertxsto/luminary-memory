@@ -56,8 +56,8 @@
   ];
 
   var libraryEmbeddings = [
-    parameter("embedding_model", "str", "BAAI/bge-small-en-v1.5", "Sentence-transformer used for semantic similarity.", "LUMINARY_EMBEDDING_MODEL"),
-    parameter("embedding_dim", "int", "384", "Must match the selected model and pgvector column.", "LUMINARY_EMBEDDING_DIM")
+    parameter("embedding_model", "str", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2", "Sentence-transformer used for semantic similarity. The default is multilingual so a question asked in the user's own language can reach a memory stored in that language.", "LUMINARY_EMBEDDING_MODEL"),
+    parameter("embedding_dim", "int", "768", "Follows embedding_model by default; must match the model output and the pgvector column.", "LUMINARY_EMBEDDING_DIM")
   ];
 
   var libraryRecall = [
@@ -75,7 +75,7 @@
   var safetyParameters = [
     parameter("strict_recall", "bool", "false for library; true in Hermes/CLI", "Permit abstention for weak or ambiguous support.", "LUMINARY_STRICT_RECALL"),
     parameter("scope_include_global", "bool", "true", "Keep intentionally global legacy rows visible to scoped reads.", "LUMINARY_SCOPE_INCLUDE_GLOBAL"),
-    parameter("abstention_min_confidence", "float", "0.34", "Minimum confidence for strict recall.", "LUMINARY_ABSTENTION_MIN_CONFIDENCE"),
+    parameter("abstention_min_confidence", "float", "0.27 / 0.34 by model", "Minimum confidence for strict recall. Follows the configured embedding model.", "LUMINARY_ABSTENTION_MIN_CONFIDENCE"),
     parameter("abstention_min_margin", "float", "0.04", "Minimum top-vs-second score margin.", "LUMINARY_ABSTENTION_MIN_MARGIN"),
     parameter("evidence_required", "bool", "false for library; true in Hermes/CLI", "Require grounded provenance before returning or mutating claims.", "LUMINARY_EVIDENCE_REQUIRED")
   ];
@@ -213,16 +213,17 @@
             ["add", "text, --tags, --source, --db-path, --backend", "added id or rejection"],
             ["recall", "query, --limit, --json", "status, confidence, memories, provenance"],
             ["activity", "--limit, --json", "active durable rows only"],
-            ["list", "--limit, --offset, --json", "recent rows, most recent first"]
+            ["list", "--limit, --offset, --json", "recent rows, most recent first"],
+            ["reindex", "--db-path, --backend", "re-embed the store after a model change"]
           ]),
           tips: ["Use --json when another process or a hook consumes the result.", "activity is not a session transcript reader: it reports persisted active durable rows, not episode-ledger entries or skipped reviews."]
         },
         {
           title: "Backup, restore, and health",
           paragraphs: ["Export/import are versioned JSON operations. Health reports a 0–100 score with duplicate, staleness, importance, graph-density, and size dimensions."],
-          code: "luminary-memory export --path backup.json --no-embeddings\nluminary-memory import --path backup.json\nluminary-memory health --json\nluminary-memory lifecycle",
-          returns: ["Export returns a JSON summary and can omit embedding vectors. Import recomputes missing embeddings.", "Lifecycle returns pass counts; it does not read Hermes episode rows as semantic memories."],
-          tips: ["Take an export before a manual lifecycle or authority repair pass.", "For a store created during mixed-authority operation, run repair in read-only mode before automatic writes."]
+          code: "luminary-memory export --path backup.json --no-embeddings\nluminary-memory import --path backup.json\nluminary-memory reindex\nluminary-memory health --json\nluminary-memory lifecycle",
+          returns: ["Export returns a JSON summary and can omit embedding vectors. Import recomputes missing embeddings.", "Reindex re-embeds every row with the configured model and reports total, reindexed, unchanged, failed, confidence_repaired, dim, and model.", "Lifecycle returns pass counts; it does not read Hermes episode rows as semantic memories."],
+          tips: ["Take an export before a manual lifecycle or authority repair pass.", "Run reindex after changing LUMINARY_EMBEDDING_MODEL: recall skips rows whose vector width does not match the query vector, so without it a model change silently de-indexes the store.", "For a store created during mixed-authority operation, run repair in read-only mode before automatic writes."]
         },
         {
           title: "Hermes activation",
@@ -420,10 +421,11 @@
           title: "Calibrated confidence",
           paragraphs: ["A weak signal is not evidence: one generic token match cannot answer a question the store does not cover. The cosine value that separates a real answer from a topically adjacent memory depends on the embedding model, so the semantic support floor is resolved per model rather than fixed in the library."],
           table: table("Semantic support floor", ["Model", "Floor", "Consequence"], [
-            ["BAAI/bge-small-en-v1.5 (default)", "0.635", "Midpoint of the measured answer/no-answer gap"],
+            ["paraphrase-multilingual-mpnet-base-v2 (default)", "0.39", "Lowest floor that still rejects every no-answer case"],
+            ["BAAI/bge-small-en-v1.5", "0.635", "Midpoint of the measured answer/no-answer gap"],
             ["any model without a measurement", "0.78", "Conservative: can only abstain more, never answer more"]
           ]),
-          tips: ["Switching LUMINARY_EMBEDDING_MODEL to an unmeasured model makes strict recall more conservative, not less.", "Re-measure before lowering a floor for a new model; the gold fixture is the reference."]
+          tips: ["The multilingual default trades a little English recall for language coverage: 0.75 recall@10 against 0.85 for BAAI/bge-small-en-v1.5 on the gold fixtures, with the same wrong-hit rate.", "Switching LUMINARY_EMBEDDING_MODEL to an unmeasured model makes strict recall more conservative, not less.", "Re-measure before lowering a floor for a new model; the gold fixture is the reference."]
         },
         {
           title: "Cutoff, deduplication, and budget",
@@ -507,7 +509,7 @@
         {
           title: "Library settings: embeddings",
           parameters: libraryEmbeddings,
-          warnings: ["embedding_dim must match model output and the database vector column. Model language coverage follows the selected model; the pipeline does not classify durability from vocabulary."]
+          warnings: ["embedding_dim follows embedding_model by default; set it explicitly only when you pin a model the library does not know, and keep it equal to the database vector column.", "Model language coverage follows the selected model; the pipeline does not classify durability from vocabulary. Changing the model changes the vector width, so run luminary-memory reindex afterwards."]
         },
         {
           title: "Library settings: recall",

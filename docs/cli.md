@@ -18,6 +18,11 @@ export LUMINARY_AGENT_ID=coding-agent
 export LUMINARY_SESSION_ID=session-42
 ```
 
+Supply all three owner fields for a scoped read; a partial identity is not a
+wildcard. Without a scope the CLI reads only the fully unowned local namespace.
+See [ownership migration](api.md#ownership-and-legacy-migration) before
+assigning legacy records.
+
 ## Commands
 
 ### activity
@@ -125,8 +130,8 @@ luminary-memory export --path backup.json
 luminary-memory export --path backup.json --no-embeddings
 ```
 
-Exports all memories to a JSON file (backup/migration). `--no-embeddings`
-skips embedding vectors to keep the file small.
+Exports memories visible to the current scope to a JSON file.
+`--no-embeddings` skips embedding vectors to keep the file small.
 
 ### import
 
@@ -134,7 +139,31 @@ skips embedding vectors to keep the file small.
 luminary-memory import --path backup.json
 ```
 
-Imports memories from a JSON export (recomputes embeddings when absent).
+Imports memories from a JSON export (recomputes embeddings when absent). Every
+record must match the target ownership; import rejects a mismatched batch rather
+than assigning missing ownership. Use the trusted owner-confirmed migration
+flow described in the [Python API guide](api.md#ownership-and-legacy-migration).
+
+### reindex
+
+```bash
+luminary-memory reindex
+```
+
+Re-embeds every stored memory with the currently configured
+`LUMINARY_EMBEDDING_MODEL` and prints a JSON summary
+(`total`, `reindexed`, `unchanged`, `failed`, `confidence_repaired`, `dim`,
+`model`).
+
+Run this after changing the embedding model. Recall skips any row whose vector
+width does not match the query vector, so without a reindex a model change
+silently de-indexes the whole store: the rows are still there, they just never
+match again. Recall logs a one-time warning when it detects this state.
+
+`reindex` also repairs rows whose grounding confidence was stored as `0.0` even
+though their evidence was verified. Those rows sit below the abstention gate and
+can never be returned; the repair restores the confidence implied by the
+evidence origin (`operator` `1.0`, `user` `0.9`, `curated_user` `0.8`).
 
 ### stats
 

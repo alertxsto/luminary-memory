@@ -410,16 +410,23 @@ def ensure_venv(version: str, home: Path, *, current: Path | None = None) -> Pat
 
 
 def _bridge_call(python: Path, agent: str, workspace: Path, action: str) -> dict:
-    request = {
-        "agent": agent, "workspace": str(workspace),
-        "session_id": "setup-check", "action": action,
+    identity = {
+        "agent": agent, "workspace": str(workspace.resolve()),
+        "session_id": "setup-check",
     }
+    request = {**identity, "action": action}
+    environment = {
+        key: value for key, value in os.environ.items()
+        if key.upper() not in {"LUMINARY_BRIDGE_CONTEXT", "LUMINARY_BRIDGE_SOURCE"}
+    }
+    if action != "version":
+        environment["LUMINARY_BRIDGE_CONTEXT"] = json.dumps(identity)
     try:
         result = subprocess.run(
             [str(python), "-I", "-m", "luminary_memory.integrations", "bridge"],
             check=False,
             input=json.dumps(request).encode("utf-8"),
-            capture_output=True, timeout=60,
+            capture_output=True, timeout=60, env=environment,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return {"ok": False, "status": "error", "reason": type(exc).__name__, "message": str(exc)}

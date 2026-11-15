@@ -219,7 +219,7 @@ function inspectorContextLine(controller2) {
 function inspectorActions(controller2, row) {
   switch (controller2.state.tab) {
     case "memories":
-      return [...base, "Create memory", ...row?.id !== void 0 ? ["Inspect", "History", "Expand evidence", "Expand source episodes", "Claims / conflicts", "Lineage", ...row.permissions?.edit ? ["Correct", "Tags", "Core designation", ...row.claim_key ? ["Resolve conflict"] : []] : [], ...row.permissions?.retract ? ["Retract"] : []] : []];
+      return [...base, "Create memory", ...!controller2.selectionHandle ? ["Review legacy ownership"] : [], ...row?.id !== void 0 ? ["Inspect", "History", "Expand evidence", "Expand source episodes", "Claims / conflicts", "Lineage", ...row.permissions?.edit ? ["Correct", "Tags", "Core designation", ...row.claim_key ? ["Resolve conflict"] : []] : [], ...row.permissions?.retract ? ["Retract", "Purge"] : []] : []];
     case "activity":
       return [...resourceBase, ...typeof controller2.state.data.replay_context === "string" ? ["Check new activity"] : [], "Event details"];
     case "evidence":
@@ -227,7 +227,7 @@ function inspectorActions(controller2, row) {
     case "relations":
       return [...resourceBase, "Explore entity", "All relations", "Adjacency details", ...typeof row?.memory_id === "number" ? ["Inspect supporting memory"] : []];
     case "maintenance":
-      return [...base, "Preview maintenance", ...row?.id !== void 0 ? ["Inspect", ...row.permissions?.edit && row.claim_key ? ["Resolve conflict"] : []] : []];
+      return [...base, "Preview maintenance", "Review maintenance suggestions", ...row?.id !== void 0 ? ["Inspect", ...row.permissions?.edit && row.claim_key ? ["Resolve conflict"] : []] : []];
     case "sharing":
       return [...resourceBase, "Project information", ...!controller2.selectionHandle ? ["Grant rights", "Revoke rights", "Bind location"] : []];
     case "settings":
@@ -277,7 +277,7 @@ async function runInspectorAction(controller2, nativeDialogs, action2, row, regi
     await controller2.preview(operation, { kind, ...memory !== void 0 ? { memory_id: memory, expected_revision: revision } : {}, ...fields2 }, commit);
     if (!live()) return;
     if (!controller2.state.preview) return;
-    const result = await controller2.commit((preview) => dialogs2.confirm("Confirm Luminary change", JSON.stringify(preview, null, 2)));
+    const result = await controller2.commit((preview) => dialogs2.confirm("Confirm Luminary change", `${kind === "purge" ? "Purge covers identified copies in the active store, not backups, snapshots, exports or external copies; physical erasure is not guaranteed. Review shared impact before confirming.\n\n" : ""}${JSON.stringify(preview, null, 2)}`));
     if (result?.status === "ok" && kind === "correct" && typeof result.data?.memory_id === "number" && live()) await controller2.detail(result.data.memory_id);
   };
   switch (action2) {
@@ -329,6 +329,21 @@ async function runInspectorAction(controller2, nativeDialogs, action2, row, regi
       if (content?.trim()) await change("create", { content });
       break;
     }
+    case "Review legacy ownership": {
+      const result = await controller2.execute("legacy_inventory");
+      if (!live() || result?.status !== "ok") return;
+      const items = Array.isArray(result.data?.items) ? result.data.items : [];
+      if (!items.length) {
+        await dialogs2.show("Legacy ownership", "No assignable partial-owner records in this native scope.");
+        return;
+      }
+      const labels = items.map((item2, index) => `${index + 1}. #${item2.memory_id} ${String(item2.content ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")}`);
+      const choice = await dialogs2.select("Select a partial-owner record to review", labels);
+      const item = choice ? items[labels.indexOf(choice)] : void 0;
+      if (!item || !live()) return;
+      await change("assign_legacy", { memory_id: item.memory_id, expected_revision: item.revision });
+      break;
+    }
     case "Inspect":
       if (memory !== void 0) {
         await controller2.detail(memory);
@@ -357,6 +372,13 @@ async function runInspectorAction(controller2, nativeDialogs, action2, row, regi
     case "Retract":
       await change("retract", {});
       break;
+    case "Purge": {
+      if (memory === void 0) return;
+      const scope = await dialogs2.select("Purge impact: expand only after reviewing shared records", ["Standard purge", "Expand shared impact"]);
+      if (!scope) return;
+      await change("purge", { expand_shared: scope === "Expand shared impact" });
+      break;
+    }
     case "History": {
       if (memory === void 0) return;
       let cursor;
@@ -424,6 +446,20 @@ async function runInspectorAction(controller2, nativeDialogs, action2, row, regi
     case "Preview maintenance": {
       const kind = await dialogs2.select("Manual maintenance proposal", ["prune", "cleanup_expired"]);
       if (kind) await change(kind, {}, "maintenance_preview");
+      break;
+    }
+    case "Review maintenance suggestions": {
+      const result = await controller2.execute("maintenance_suggestions");
+      if (!live() || result?.status !== "ok") return;
+      const items = Array.isArray(result.data?.items) ? result.data.items : [];
+      if (!items.length) {
+        await dialogs2.show("Maintenance suggestions", "No suggestions are available.");
+        return;
+      }
+      const labels = items.map((item2, index) => `${index + 1}. #${item2.memory_id} ${item2.action}: ${String(item2.proposed_content ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")}`);
+      const choice = await dialogs2.select("Select a suggestion to preview", labels);
+      const item = choice ? items[labels.indexOf(choice)] : void 0;
+      if (item && typeof item.proposal_id === "string" && live()) await change("maintenance_proposal", { proposal_id: item.proposal_id });
       break;
     }
     case "Resolve conflict": {
@@ -496,16 +532,19 @@ async function runInspectorAction(controller2, nativeDialogs, action2, row, regi
       break;
     case "Export records":
     case "Import records": {
-      if (!registerFile) {
-        await dialogs2.show("Data transfer unavailable", "This host has no trusted file-selection transport. No file was read or written.");
-        return;
-      }
       const direction = action2 === "Import records" ? "import" : "export";
       const path = await input(direction === "import" ? "Select existing memory-record file (absolute path)" : "Select output memory-record file (absolute path)");
       if (!path) return;
+      let assign_legacy = false;
+      if (direction === "import") {
+        const choice = await dialogs2.select("Import partial-owner records?", ["Do not assign legacy owners", "Assign missing ownership to this native owner"]);
+        if (!choice) return;
+        assign_legacy = choice === "Assign missing ownership to this native owner";
+      }
+      if (!live()) return;
       try {
         const file_handle = await registerFile(path, direction === "import" ? "read" : "write");
-        await change("transfer", { direction, file_handle }, "transfer_preview");
+        await change("transfer", { direction, file_handle, ...assign_legacy ? { assign_legacy: true } : {} }, "transfer_preview");
       } catch {
         await dialogs2.show("File selection failed", "The native server could not register this file. No transfer was committed.");
       }
@@ -599,6 +638,13 @@ var dialogs = {
   }
 };
 async function transfer(direction) {
+  const epoch = controller.contextVersion;
+  let assignLegacy = false;
+  if (direction === "import") {
+    const choice = await dialogs.select("Import partial-owner records?", ["Do not assign legacy owners", "Assign missing ownership to this native owner"]);
+    if (!choice || !controller.activeContext || controller.contextVersion !== epoch) return;
+    assignLegacy = choice === "Assign missing ownership to this native owner";
+  }
   let body = "";
   if (direction === "import") {
     const input = element("input");
@@ -614,6 +660,7 @@ async function transfer(direction) {
     }
     body = file;
   }
+  if (!controller.activeContext || controller.contextVersion !== epoch) return;
   const response = await fetch("/api/file?mode=" + (direction === "import" ? "read" : "write"), {
     method: "POST",
     credentials: "same-origin",
@@ -623,11 +670,12 @@ async function transfer(direction) {
   if (!response.ok) throw new Error("File selection failed");
   const registered = await response.json();
   const handle = registered.data?.file_handle;
+  if (!controller.activeContext || controller.contextVersion !== epoch) return;
   if (registered.status !== "ok" || typeof handle !== "string") {
     await dialogs.show("File unavailable", registered.error?.message || registered.status);
     return;
   }
-  await controller.preview("transfer_preview", { direction, file_handle: handle }, "transfer_commit");
+  await controller.preview("transfer_preview", { direction, file_handle: handle, ...assignLegacy ? { assign_legacy: true } : {} }, "transfer_commit");
   const result = await controller.commit((preview) => dialogs.confirm("Confirm data transfer", JSON.stringify(preview, null, 2)));
   if (direction === "export" && result?.status === "ok") {
     const downloaded = await fetch("/api/download/" + encodeURIComponent(handle), { headers: { "X-Luminary-CSRF": csrf }, credentials: "same-origin" });

@@ -124,7 +124,7 @@ class MemoryBackend(ABC):
         self,
         max_rows: int,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> int:
         """Delete oldest scoped episodes beyond *max_rows*; 0 disables."""
         return 0
@@ -133,7 +133,7 @@ class MemoryBackend(ABC):
         self,
         max_rows: int,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> int:
         """Delete oldest scoped audit events beyond *max_rows*; 0 disables."""
         return 0
@@ -142,7 +142,7 @@ class MemoryBackend(ABC):
         self,
         max_rows: int,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> int:
         """Delete oldest scoped evidence rows beyond *max_rows*; 0 disables."""
         return 0
@@ -189,7 +189,7 @@ class MemoryBackend(ABC):
         query: str,
         limit: int | None,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> list[tuple[Memory, float]]: ...
     @abstractmethod
     def vector_search(
@@ -197,7 +197,7 @@ class MemoryBackend(ABC):
         vec: list[float],
         limit: int | None,
         scope: dict | None = None,
-        include_global: bool = True,
+        include_global: bool = False,
     ) -> list[tuple[Memory, float]]: ...
     @abstractmethod
     def count(self) -> int: ...
