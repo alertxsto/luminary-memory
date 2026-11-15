@@ -4,9 +4,9 @@ The Luminary-maintained development package targets **`@opencode/cli` 2.2.0**
 and **`@opencode/plugin` 2.2.0**. This is an official Luminary package,
 **not** an OpenCode endorsement.
 
-**Source/release boundary:** managed native setup is UNRELEASED; the next
-release is not selected or staged; the proposed 0.3.5 bump is deferred.
-Published 0.3.4 includes the inspector. The 0.3.2 adapter was verified on
+**Source/release boundary:** managed native setup is UNRELEASED and this source
+is version 0.3.5; the registry current is 0.3.4. Published 0.3.4 includes the
+inspector. The 0.3.2 adapter was verified on
 OpenCode 2.1.4; 0.3.1 targets the separate V1 API. Native Web GUI
 contribution discovery remains
 blocked upstream. See the [target matrix](https://github.com/alertxsto/luminary-memory/blob/develop/docs/ROADMAP.md#target-support-matrix)

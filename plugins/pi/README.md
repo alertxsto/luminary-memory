@@ -9,9 +9,9 @@ versions accepted by the root manifest).
 
 ## Install
 
-**Registry current: 0.3.4. Self-provisioning install: UNRELEASED source.** The
-published 0.3.4 package ships only the adapter, so it still needs the manual
-Python step below. From source, installation is one command:
+**Registry current: 0.3.4. This source is 0.3.5, unreleased, and provisions the
+bridge itself.** The published 0.3.4 package ships only the adapter, so it still
+needs the manual Python step below. From source, installation is one command:
 
 ```sh
 pi install npm:luminary-memory-pi@<available-release>

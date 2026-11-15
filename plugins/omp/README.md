@@ -9,8 +9,7 @@ embedded Bun runtime to load extensions.
 
 ## Recommended installer (unreleased source)
 
-**Registry current: 0.3.4. Managed native setup: UNRELEASED.** The next release
-version bump is deferred; 0.3.5 has not been staged. These source
+**Registry current: 0.3.4. This source is 0.3.5, unreleased.** These source
 instructions are not platform acceptance, registry proof, or release readiness.
 Install omp first. Public entry points (`main` may differ from this checkout):
 

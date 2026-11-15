@@ -2,8 +2,8 @@
 
 ## Release status
 
-**Current registry release: 0.3.4. Managed native setup: UNRELEASED source.**
-The proposed 0.3.5 bump is deferred; source versions remain 0.3.4.
+**Current registry release: 0.3.4. This checkout is source version 0.3.5,
+unreleased. Managed native setup: UNRELEASED source.**
 The managed native setup described below is the unreleased source contract, not a
 claim of completed platform acceptance, registry-download proof, or release
 readiness. The published 0.3.4 wheel predates `setup`; its native packages alone
