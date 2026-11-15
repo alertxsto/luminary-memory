@@ -75,13 +75,9 @@ luminary-memory stats
 
 ## One-command install (OpenCode, pi, omp)
 
-**Registry current: 0.3.4. This checkout is source version 0.3.5, unreleased.**
-The 0.3.5 bump is applied in source; nothing here claims publication, registry
-download proof, or release readiness.
-This section describes the source contract, not completed acceptance,
-registry-download proof, or a release-ready claim. The published 0.3.4 wheel
-predates `setup`; use the [advanced current-release instructions](docs/install.md#advanced-manual-current-release-installation)
-for currently published artifacts.
+**Registry current: 0.3.5.** Python and all three native npm packages are
+published at `0.3.5`; the installer below provisions the managed bridge from
+that release.
 
 Install a supported host first. Recommended public installer entry points
 (`main` may differ from this unreleased checkout):
@@ -156,7 +152,7 @@ API or standalone desktop app is assumed. A portable OpenCode agent skill lives
 at [`opencode/SKILL.md`](opencode/SKILL.md); install it under
 `~/.config/opencode/skills/luminary-memory/` or a project's `.opencode/skills/`.
 
-Published `0.3.4` packages include native interactive inspectors for the verified
+Published `0.3.5` packages include native interactive inspectors for the verified
 surfaces: OpenCode CLI/Desktop, pi and omp, Hermes Desktop/dashboard and an
 explicitly launched loopback companion. Managed interpreter setup and shared
 inspector discovery described above remain unreleased source changes.
@@ -186,7 +182,7 @@ pi supports `pi install /absolute/path/to/plugins/pi`; omp supports
 Choose the native package **or** the copied hook, never both.
 
 Registry names are `luminary-memory-pi`, `luminary-memory-opencode`, and
-`luminary-memory-omp`. Python and all three npm `latest` tags are `0.3.4`.
+`luminary-memory-omp`. Python and all three npm `latest` tags are `0.3.5`.
 The npm tarballs are byte-identical to the tagged GitHub release assets,
 and their built resources match the PyPI wheel. Use this coordinated release
 instead of the mismatched npm `0.3.3` builds.

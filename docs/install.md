@@ -2,19 +2,15 @@
 
 ## Release status
 
-**Current registry release: 0.3.4. This checkout is source version 0.3.5,
-unreleased. Managed native setup: UNRELEASED source.**
-The managed native setup described below is the unreleased source contract, not a
-claim of completed platform acceptance, registry-download proof, or release
-readiness. The published 0.3.4 wheel predates `setup`; its native packages alone
-do not provide managed Python setup. Use the advanced 0.3.4 instructions below
-for the currently published artifacts.
+**Current registry release: 0.3.5.** The installer below provisions the managed
+bridge from that release. The advanced manual path remains for hosts that cannot
+run the installer.
 
 ## Recommended installer (OpenCode, pi, omp)
 
 Install a supported host first. Luminary does not install or replace the host.
 The following are the public installer entry points; `main` may differ from
-this unreleased checkout. The next registry release requires an audit and a
+this checkout. A registry release requires an audit and a
 separately authorized publication; these commands are not evidence it is available.
 
 Windows (PowerShell):
@@ -137,12 +133,12 @@ the new installer does not fall back to a copy-adapter compatibility path.
 
 ## Advanced: manual current-release installation
 
-These commands use **published 0.3.4**, not unreleased source. Install the Python
+These commands use **published 0.3.5**. Install the Python
 bridge into an environment you manage, then set the interpreter in the process
 launching the host (the **server** environment for remote OpenCode clients):
 
 ```sh
-python -m pip install "luminary-memory==0.3.4"
+python -m pip install "luminary-memory==0.3.5"
 export LUMINARY_PYTHON=/absolute/path/to/venv/bin/python
 ```
 
@@ -152,14 +148,14 @@ The bridge requires Python 3.11+. The native host supplies its supported runtime
 Choose exactly one host registration:
 
 ```sh
-pi install npm:luminary-memory-pi@0.3.4
-omp plugin install luminary-memory-omp@0.3.4
+pi install npm:luminary-memory-pi@0.3.5
+omp plugin install luminary-memory-omp@0.3.5
 ```
 
 For OpenCode V2, merge into existing `~/.config/opencode/opencode.jsonc`:
 
 ```json
-{"plugins": ["luminary-memory-opencode@0.3.4"]}
+{"plugins": ["luminary-memory-opencode@0.3.5"]}
 ```
 
 Restart the host. `pi list` and `omp plugin list` show their registrations.

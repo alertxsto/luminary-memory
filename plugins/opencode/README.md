@@ -5,7 +5,7 @@ and **`@opencode/plugin` 2.2.0**. This is an official Luminary package,
 **not** an OpenCode endorsement.
 
 **Source/release boundary:** managed native setup is UNRELEASED and this source
-is version 0.3.5; the registry current is 0.3.4. Published 0.3.4 includes the
+is version 0.3.5, which is the registry current. Published 0.3.5 includes the
 inspector. The 0.3.2 adapter was verified on
 OpenCode 2.1.4; 0.3.1 targets the separate V1 API. Native Web GUI
 contribution discovery remains
@@ -14,7 +14,7 @@ for exact scope, lifecycle and release limitations.
 
 ## Recommended installer (unreleased source)
 
-**Registry current: 0.3.4.** The following source contract is not completed
+**Registry current: 0.3.5.** The following source contract is not completed
 platform acceptance, registry proof, or release readiness. Install OpenCode
 first. Public entry points (`main` may differ from this unreleased checkout):
 

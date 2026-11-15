@@ -1,11 +1,8 @@
 # Changelog
 
-## [0.3.5] - unreleased
+## [0.3.5] - 2026-11-15
 
-Source version is **0.3.5** and remains **UNRELEASED**: the registry current is
-still **0.3.4**. Nothing here authorizes a release, and no publication is
-claimed. These notes do not claim platform acceptance,
-post-publication registry proof, or release readiness.
+Coordinated Python and native-plugin release from one source revision.
 
 - Owner-confirmed purge and retention inventory are reachable from the
   inspector: a purge preview lists affected records and shared-episode impact

@@ -153,7 +153,7 @@
       sections: [
         {
           title: "Native setup: source versus registry",
-          paragraphs: ["Registry current is 0.3.4. Managed native setup is UNRELEASED source; the proposed 0.3.5 bump is deferred and no next release has been staged. These instructions are not completed platform acceptance, registry-download proof, or release readiness. The published 0.3.4 wheel predates setup; its manual installation is an advanced alternative below.", "Install OpenCode, pi, or omp first. Luminary does not install or replace the host. The installed host must supply its supported runtime; no separate Node installation is needed when it already does so. The following are public installer entry points; main may differ from this unreleased checkout."],
+          paragraphs: ["Registry current is 0.3.5. The installer provisions the managed bridge from that release; the manual installation below remains for hosts that cannot run it.", "Install OpenCode, pi, or omp first. Luminary does not install or replace the host. The installed host must supply its supported runtime; no separate Node installation is needed when it already does so. The following are public installer entry points; main may differ from this unreleased checkout."],
           tips: ["The full tracked installation guide is docs/install.md. A next registry release requires audit and separately authorized publication."]
         },
         {
@@ -189,7 +189,7 @@
         },
         {
           title: "Project scope and advanced alternatives",
-          paragraphs: ["Native project registration supports pi install --local (project trust required) and OpenCode project config with plural plugins. omp 18.20 help advertises --scope, but the upstream plugin-manager contract says npm/git/link CLI installation stays user-scoped and warns then ignores it. Source setup therefore refuses native omp --project before changes; explicit luminary-memory hook install omp remains a project-local copied alternative.", "For manual published 0.3.4, install Python 3.11+ and luminary-memory==0.3.4 yourself, set LUMINARY_PYTHON in the host/server environment, then register pi install npm:luminary-memory-pi@0.3.4, omp plugin install luminary-memory-omp@0.3.4, or OpenCode {\"plugins\":[\"luminary-memory-opencode@0.3.4\"]}. Keep bridge and native package versions matched.", "Explicit copied installation via luminary-memory hook install pi (or omp/opencode), adding --global for user-wide discovery, remains an advanced alternative. Never load native and copied forms together; keep unrelated extensions. Hermes stays on its separate provider/catalog path, not the Node bridge venv; no upstream catalog PR merge or deployment is claimed."]
+          paragraphs: ["Native project registration supports pi install --local (project trust required) and OpenCode project config with plural plugins. omp 18.20 help advertises --scope, but the upstream plugin-manager contract says npm/git/link CLI installation stays user-scoped and warns then ignores it. Source setup therefore refuses native omp --project before changes; explicit luminary-memory hook install omp remains a project-local copied alternative.", "For manual published 0.3.5, install Python 3.11+ and luminary-memory==0.3.5 yourself, set LUMINARY_PYTHON in the host/server environment, then register pi install npm:luminary-memory-pi@0.3.5, omp plugin install luminary-memory-omp@0.3.5, or OpenCode {\"plugins\":[\"luminary-memory-opencode@0.3.4\"]}. Keep bridge and native package versions matched.", "Explicit copied installation via luminary-memory hook install pi (or omp/opencode), adding --global for user-wide discovery, remains an advanced alternative. Never load native and copied forms together; keep unrelated extensions. Hermes stays on its separate provider/catalog path, not the Node bridge venv; no upstream catalog PR merge or deployment is claimed."]
         },
         {
           title: "Advanced library installation",
@@ -966,10 +966,10 @@
         },
         {
           title: "Current published release snapshot",
-          paragraphs: ["Python and all three npm latest tags are 0.3.4. The npm tarballs are byte-identical to the tagged GitHub assets, and all their built resources match the PyPI wheel. GitHub Actions published through OIDC with signed npm provenance. This coordinated release replaces the mismatched npm 0.3.3 builds without overwriting them. Native inspection remains limited to the verified hosts."],
+          paragraphs: ["Python and all three npm latest tags are 0.3.5. The npm tarballs are byte-identical to the tagged GitHub assets, and all their built resources match the PyPI wheel. GitHub Actions published through OIDC with signed npm provenance. This coordinated release replaces the mismatched npm 0.3.3 builds without overwriting them. Native inspection remains limited to the verified hosts."],
           table: table("Release checks", ["Surface", "Current contract"], [
-            ["Version", "0.3.4 / Python 3.11+"],
-            ["Official Hermes SDK suite", "Passed in the tagged 0.3.4 Publish workflow against the official SDK"],
+            ["Version", "0.3.5 / Python 3.11+"],
+            ["Official Hermes SDK suite", "Passed in the tagged 0.3.5 Publish workflow against the official SDK"],
             ["Standalone workspace check", "Passed locally; unavailable SDK cases skipped and the known Windows POSIX-permission case deselected"],
             ["Inspector scope", "OpenCode CLI/Desktop, pi, omp, Hermes Desktop/dashboard and the explicit loopback companion"],
             ["Blocked targets", "OpenCode Web GUI contribution discovery; Hermes terminal/TUI authority and scope lifecycle"],
@@ -980,13 +980,14 @@
         },
         {
           title: "Unreleased setup work",
-          paragraphs: ["Managed native setup and shared inspector interpreter discovery are source changes, not part of the published 0.3.4 wheel. The proposed 0.3.5 bump is deferred; no next release has been staged. The one-command surface is the installer, not npm installation. No completed platform acceptance, next-release registry-download proof, or release readiness is claimed."],
+          paragraphs: ["Managed native setup and shared inspector interpreter discovery ship in 0.3.5. The one-command surface is the installer, not npm installation; the npm packages alone do not provision Python."],
           tips: ["Use the Quickstart installation sections and tracked docs/install.md for source-versus-registry boundaries, migration, read-only modes, project limitations, and memory-preserving removal."]
         },
         {
           title: "Recent release history",
           paragraphs: ["The release baseline comes from CHANGELOG.md."],
           table: table("Recent shipped changes", ["Release", "Date", "Scope"], [
+            ["0.3.5", "2026-11-15", "Strict recall by default, content-word coverage for short questions, core promotion from every surface, managed native setup, owner-confirmed purge, and multilingual default embeddings."],
             ["0.3.4", "2026-11-14", "Coordinated Python/native artifacts, request-local core baseline separate from recall, bounded ledger retention, and Windows test isolation."],
             ["0.3.3", "2026-11-09", "Native interactive inspectors on verified hosts, owner-scoped sharing and permissions, offline Summary, and an opt-in loopback companion."],
             ["0.3.2", "2026-10-25", "Harness-neutral JSON bridge, native OpenCode V2/pi/omp adapters and Luminary-maintained npm packages."],
