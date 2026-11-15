@@ -221,7 +221,7 @@
         {
           title: "Backup, restore, and health",
           paragraphs: ["Export/import are versioned JSON operations. Health reports a 0–100 score with duplicate, staleness, importance, graph-density, and size dimensions."],
-          code: "luminary-memory export --path backup.json --no-embeddings\nluminary-memory import --path backup.json\nluminary-memory reindex\nluminary-memory health --json\nluminary-memory lifecycle",
+          code: "luminary-memory export --path backup.json --no-embeddings\nluminary-memory import --path backup.json\nluminary-memory reindex\nluminary-memory health --json\nluminary-memory core 12\nluminary-memory core 12 --off\nluminary-memory lifecycle",
           returns: ["Export returns a JSON summary and can omit embedding vectors. Import recomputes missing embeddings.", "Reindex re-embeds every row with the configured model and reports total, reindexed, unchanged, failed, confidence_repaired, dim, and model.", "Lifecycle returns pass counts; it does not read Hermes episode rows as semantic memories."],
           tips: ["Take an export before a manual lifecycle or authority repair pass.", "Run reindex after changing LUMINARY_EMBEDDING_MODEL: recall skips rows whose vector width does not match the query vector, so without it a model change silently de-indexes the store.", "For a store created during mixed-authority operation, run repair in read-only mode before automatic writes."]
         },
