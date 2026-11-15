@@ -31,7 +31,7 @@ def test_version_check_is_readonly_and_rejects_drift(tmp_path, drift):
     before = {name: (tmp_path / name).read_bytes() for name in paths}
     environment = dict(os.environ, PYTHON=sys.executable)
     environment["RELEASE_TAG"] = "v99.0.0" if drift == "tag" else ""
-    result = subprocess.run(["bash", str(ROOT / "scripts/bump-version.sh"), "--check"], check=False, cwd=tmp_path, env=environment,
+    result = subprocess.run([sys.executable, str(ROOT / "scripts/check_versions.py")], check=False, cwd=tmp_path, env=environment,
                             capture_output=True, text=True, timeout=30)
     assert (result.returncode == 0) is (drift is None), result.stdout + result.stderr
     assert {name: (tmp_path / name).read_bytes() for name in paths} == before

@@ -117,7 +117,8 @@ def main() -> None:
         runtime = json.loads(result.stdout)
         assert runtime["version"] == version
         assert Path(runtime["package"]).is_relative_to(Path(runtime["prefix"]))
-        assert Path(runtime["base"]).is_relative_to(home / ".luminary" / "bin" / "python")
+        # macOS resolves /var to /private/var, so compare resolved paths.
+        assert Path(runtime["base"]).is_relative_to((home / ".luminary" / "bin" / "python").resolve()), runtime['base']
         metadata_path = Path(runtime["metadata"])
         installed_at = metadata_path.stat().st_mtime_ns
         setup()

@@ -21,6 +21,8 @@ import os
 import shutil
 import subprocess
 import sys
+
+from tests.posix_shell import posix_bash
 from pathlib import Path
 
 import pytest
@@ -284,6 +286,7 @@ def test_install_script_refuses_activation_without_the_module():
     assert "import luminary_memory.hermes.activation" in script
 
 
+@pytest.mark.skipif(posix_bash() is None, reason="no POSIX bash available")
 def test_install_script_fails_cleanly_without_a_hermes_install(tmp_path):
     """No Hermes means one actionable line, not a traceback and not a half-config."""
     config = tmp_path / "config.yaml"
@@ -292,7 +295,7 @@ def test_install_script_fails_cleanly_without_a_hermes_install(tmp_path):
 
     env = _base_env(HERMES_HOME=str(tmp_path), HERMES_PYTHON=sys.executable)
     result = subprocess.run(
-        ["bash", str(INSTALL_SH), "--no-hook", "--no-skill"],
+        [posix_bash(), str(INSTALL_SH), "--no-hook", "--no-skill"],
         check=False,
         capture_output=True,
         text=True,
@@ -307,10 +310,11 @@ def test_install_script_fails_cleanly_without_a_hermes_install(tmp_path):
     assert config.read_text(encoding="utf-8") == original
 
 
+@pytest.mark.skipif(posix_bash() is None, reason="no POSIX bash available")
 def test_install_script_is_syntactically_valid():
     """A shell syntax error would only surface on a user's machine."""
     result = subprocess.run(
-        ["bash", "-n", str(INSTALL_SH)], check=False, capture_output=True, text=True, timeout=60
+        [posix_bash(), "-n", str(INSTALL_SH)], check=False, capture_output=True, text=True, timeout=60
     )
 
     assert result.returncode == 0, result.stderr
