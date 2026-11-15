@@ -286,7 +286,10 @@ def test_profile_settings_restart_preserves_native_writer_policy(tmp_path, herme
         assert restarted._client.settings.token_budget == 768
         restarted.sync_turn("Orion deploys to staging.", "Recorded the deployment target.")
         restarted._retain_queue.join()
-        assert restarted._client.backend.recent_episodes(scope=restarted._scope, include_global=False) == []
+        assert restarted._client.backend.recent_episodes(
+            scope={**restarted._scope, "session_id": "disabled-session-restart"},
+            include_global=False,
+        ) == []
         assert restarted._client.backend.count() == 0
         assert (homes[1] / "luminary" / "config.json").read_bytes() == sibling_before
         for home in homes:
@@ -306,7 +309,10 @@ def test_profile_settings_restart_preserves_native_writer_policy(tmp_path, herme
         assert enabled._client.settings.token_budget == 1024
         enabled.sync_turn("Orion deploys to staging.", "Recorded the deployment target.")
         enabled._retain_queue.join()
-        episodes = enabled._client.backend.recent_episodes(scope=enabled._scope, include_global=False)
+        episodes = enabled._client.backend.recent_episodes(
+            scope={**enabled._scope, "session_id": "enabled-session"},
+            include_global=False,
+        )
         assert [row["session_id"] for row in episodes] == ["enabled-session"]
         assert enabled._client.backend.count() == 0  # raw turns never bypass the curation gate
     finally:
