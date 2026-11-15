@@ -37,7 +37,7 @@ def posix_bash() -> str | None:
         try:
             probe = subprocess.run(
                 [str(candidate), "-c", "printf ok"],
-                capture_output=True, text=True, timeout=60,
+                check=False, capture_output=True, text=True, timeout=60,
             )
         except OSError:
             continue

@@ -7,13 +7,17 @@ import { spawnSync } from 'node:child_process';
 
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const directory = await mkdtemp(join(tmpdir(), 'luminary packed consumers '));
+// GNU tar reads `D:\...` as an rsh host: "Cannot connect to D: resolve failed".
+// bsdtar has no --force-local flag, so only add it for GNU tar.
+const gnuTar = /GNU tar/.test(spawnSync('tar', ['--version'], { encoding: 'utf8' }).stdout || '');
+const tarFlags = process.platform === 'win32' && gnuTar ? ['--force-local'] : [];
 try {
   for (const agent of ['pi', 'omp', 'opencode']) {
     const manifest = JSON.parse(await readFile(join(project, 'plugins', agent, 'package.json'), 'utf8'));
     const target = join(directory, agent);
     await mkdir(target);
     const archive = join(project, 'artifacts', 'plugins', `${manifest.name}-${manifest.version}.tgz`);
-    const extracted = spawnSync('tar', ['-xzf', archive, '-C', target, '--strip-components=1'], { encoding: 'utf8' });
+    const extracted = spawnSync('tar', [...tarFlags, '-xzf', archive, '-C', target, '--strip-components=1'], { encoding: 'utf8' });
     assert.equal(extracted.status, 0, extracted.stderr || String(extracted.error));
     const packed = JSON.parse(await readFile(join(target, 'package.json'), 'utf8'));
     assert.equal(packed.name, manifest.name);

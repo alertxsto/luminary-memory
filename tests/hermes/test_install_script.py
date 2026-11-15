@@ -21,11 +21,11 @@ import os
 import shutil
 import subprocess
 import sys
-
-from tests.posix_shell import posix_bash
 from pathlib import Path
 
 import pytest
+
+from tests.posix_shell import posix_bash
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_PY = REPO_ROOT / "hermes" / "probes" / "runtime_python.py"
