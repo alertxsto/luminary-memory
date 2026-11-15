@@ -107,7 +107,8 @@ def main() -> None:
         before = sorted(str(path.relative_to(home)) for path in home.rglob("*"))
         setup("--dry-run")
         setup("--check", success=False)
-        assert sorted(str(path.relative_to(home)) for path in home.rglob("*")) == before
+        after = sorted(str(path.relative_to(home)) for path in home.rglob("*"))
+        assert after == before, sorted(set(after) - set(before))
         setup()
         record = json.loads(bridge.read_text(encoding="utf-8"))
         python = Path(record["agents"]["pi"]["python"])
