@@ -397,6 +397,30 @@ or harnesses are not implicitly shared. A shared desktop/web server must bind
 not a remotely authenticated multi-user API. Do not accept caller-selected
 ownership fields directly from an untrusted web request.
 
+## Retract, purge, and retention status
+
+`forget` (and `luminary-memory` `retract`) is a soft delete: the fact leaves
+active recall, and its row, evidence and audit history stay in the store.
+
+Permanent removal is a separate owner-confirmed inspector operation. It routes
+`preview_change` with `kind: "purge"`, the target `memory_id`, and
+`expected_revision`. The preview lists the affected records, shared-episode
+impact, and the copies it cannot verify. Committing with the normal owner
+confirmation removes the memory, its evidence, its source episode (when no
+other record references it), related claims, relations, and cached previews
+inside one transaction. Shared impact requires a fresh preview with
+`expand_shared: true` plus a second confirmation; another owner's linked record
+is never purged.
+
+Purge is honest about its limits: backups, exports, host transcripts, replicas,
+and data already sent to an external provider are outside the active store and
+are not deleted. Physical media are not scrubbed.
+
+Retention keeps the newest bounded rows for episodes, audit events, and
+evidence, but never deletes provenance a live or conflicted fact still
+references; the overflow stays visible through the ledger status
+(`ledger_status` on the backend) instead of being silently dropped.
+
 ## Config file
 
 Native adapters and the CLI load `~/.luminary/luminary.env` before each

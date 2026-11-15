@@ -1,5 +1,25 @@
 # Recall
 
+## Eligibility, over-fetch, and failures
+
+A candidate's owner, status, validity window, TTL, tags, and required evidence
+are checked before fusion. Each strategy over-fetches (up to eight times the
+requested page, capped at 500) so an expired, mis-tagged, or evidence-less row
+cannot occupy the cutoff and hide an eligible answer; if a page is still
+saturated and the eligible set is short, that strategy is read once more
+without a limit.
+
+Candidates that arrive only from keyword or graph are scored against the
+question itself with their stored embedding, so a supported paraphrase is not
+treated as unsupported merely because it missed the semantic page. One
+unsupported lexical hit cannot suppress a supported candidate. Confidence
+decides eligibility; the configured fusion weights and importance boost decide
+order among eligible rows.
+
+When every strategy raises, recall returns status `unavailable` with reason
+`all_strategies_failed`, and the CLI exits non-zero with an error. That is not
+an abstention: abstention means the search ran and found no supported evidence.
+
 ## Core memory (DB-backed, auto-loaded)
 
 Rules tagged `core` are injected into the system prompt **every session**,

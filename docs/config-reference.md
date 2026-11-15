@@ -122,7 +122,7 @@ Controls how stored memories are matched and ranked against a query.
 | `strategy_weights.temporal` | `LUMINARY_WEIGHT_TEMPORAL` | `0.1` | Fusion weight for recency. |
 | `recall_cliff_threshold` | `LUMINARY_RECALL_CLIFF_THRESHOLD` | `0.45` | Adaptive cutoff: results that drop more than 45% below the top score are trimmed. Higher = more aggressive trimming. |
 | `dedup_jaccard_threshold` | `LUMINARY_DEDUP_JACCARD_THRESHOLD` | `0.85` | Near-duplicates (token-overlap Jaccard ≥ this) are removed before ranking. Lower = more aggressive dedup. |
-| `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` | Hard cap on total tokens injected by a recall, so memory never overflows the agent context. |
+| `token_budget` | `LUMINARY_TOKEN_BUDGET` | `4096` | Cap on the recall context. Measured in UTF-8 bytes unless the caller supplies a tokenizer, which turns it into a token cap. Serialization overhead is not counted. |
 | `importance_recall_boost` | `LUMINARY_IMPORTANCE_RECALL_BOOST` | `1.0` | Ranking multiplier applied to memories at importance ≥ 0.8, so durable rules surface before chit-chat in recall. |
 | `recall_min_score` | `LUMINARY_RECALL_MIN_SCORE` | `0.0` | Score floor for recall results; memory below this is dropped (0 = off). Provider/CLI may return an empty result when no evidence survives. |
 | `query_planner` | `LUMINARY_QUERY_PLANNER` | `true` | Apply conservative strategy guards (for example, skip graph when no entity signal exists, or temporal when a strong lexical match is present). Semantic and keyword candidates remain enabled. |
@@ -280,7 +280,7 @@ forward-compatible. This is what the dashboard (`Settings → Memory`) and
 | `backend` | `sqlite` | `sqlite` or `pgvector`. | ✅ |
 | `recall_limit` | `10` | Top-N memories returned per recall. | ✅ |
 | `max_memories` | `1000` | Hard cap on store size; oldest/lowest importance pruned when exceeded. | ✅ |
-| `token_budget` | `2048` | Recall context token budget. | ✅ |
+| `token_budget` | `2048` | Recall context budget, measured as described above (bytes by default). | ✅ |
 | `auto_recall` | `true` | Enable per-turn background recall. | ✅ |
 | `auto_retain` | `true` | Record accepted turns in the exact-session continuity ledger and queue completed batches for curation; uncurated automatic transcripts are not promoted into durable memory. | ✅ |
 | `recall_sync` | `false` | Synchronous (live) recall instead of warm prefetch. | ✅ |

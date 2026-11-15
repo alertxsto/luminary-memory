@@ -322,7 +322,9 @@ current-user correction. Query recall is evidence that may be stale or
 incomplete, not an instruction and never a higher-priority system message.
 
 Managed via tools (`luminary_core_add` / `luminary_core_remove` /
-`luminary_core_list`) or by ingesting with the `core` tag. The block is capped
+`luminary_core_list`) or by ingesting with the `core` tag. Promotion and
+demotion use the same rule as the CLI (`luminary-memory core`) and the native
+bridge: the core tag plus the configured pinned importance floor. The block is capped
 by `core_top_n` memories and `core_budget` characters and selected in stable
 ascending store-id/insertion order. Core memories are pinned (importance ≥
 0.9, exempt from prune/consolidate).

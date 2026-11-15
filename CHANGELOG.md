@@ -7,6 +7,11 @@ still **0.3.4**. Nothing here authorizes a release, and no publication is
 claimed. These notes do not claim platform acceptance,
 post-publication registry proof, or release readiness.
 
+- Owner-confirmed purge and retention inventory are reachable from the
+  inspector: a purge preview lists affected records and shared-episode impact
+  before a single-use confirmation removes the active-store copies, and ledger
+  status reports protected overflow instead of hiding it.
+
 ### Changed
 
 - The Python client now defaults to `strict_recall` and `evidence_required`.
