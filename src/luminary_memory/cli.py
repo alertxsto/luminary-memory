@@ -346,6 +346,37 @@ def import_cmd(
 
 
 @app.command()
+def core(
+    memory_id: int = typer.Argument(..., help="Memory ID to promote or demote"),
+    off: bool = typer.Option(False, "--off", help="Demote a core memory back to ordinary"),
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON"),
+    db_path: str | None = typer.Option(None, "--db-path", help="Override SQLite path"),
+    backend: str | None = typer.Option(None, "--backend", help="sqlite | pgvector"),
+) -> None:
+    """Promote a memory to core (loaded into every session) or demote it."""
+    def run():
+        client = _client(db_path, backend)
+        try:
+            memory = client.set_core(memory_id, pinned=not off)
+            if memory is None:
+                raise ValueError(f"memory {memory_id} does not exist in this scope")
+            if json_out:
+                typer.echo(json.dumps({
+                    "id": memory.id,
+                    "core": bool(memory.tags and client.settings.core_tag in memory.tags),
+                    "importance": memory.importance,
+                    "tags": memory.tags,
+                }, indent=2))
+                return
+            state = "core (auto-loaded every session)" if not off else "ordinary"
+            console.print(f"memory #{memory.id} is {state}", markup=False)
+        finally:
+            client.close()
+
+    _safe_run(run)
+
+
+@app.command()
 def lifecycle(
     semantic: bool = typer.Option(True, "--semantic/--no-semantic",
                                   help="Use embedding-cosine consolidation (default: on)"),

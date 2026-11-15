@@ -7,7 +7,7 @@ import { registerOmpInspector } from "./inspector.js";
 import { bridgeEnvironment, nativeUserSource, type RememberSource } from "../common/bridge-source.js";
 import { resolveBridgePython } from "../common/bridge-launch.js";
 
-type Action = "core" | "recall" | "remember" | "forget" | "activity" | "turn";
+type Action = "core" | "recall" | "remember" | "forget" | "activity" | "turn" | "promote" | "demote";
 type Arguments = { query?: string; text?: string; evidence_quote?: string; tags?: string[]; memory_id?: number; user?: string; assistant?: string };
 type Reply = {
   ok: boolean; status: string; reason: string; message: string; context: string;
@@ -16,7 +16,7 @@ type Reply = {
 type PendingTurn = { session: string; workspace: string; user: string; core?: Promise<Reply>; recall?: Promise<Reply>; reported?: boolean };
 const MAX_OUTPUT = 256 * 1024;
 const TIMEOUT_MS = 60_000;
-const HELP = "/luminary recall QUERY | remember TEXT | forget ID | activity";
+const HELP = "/luminary recall Q | remember TEXT | forget ID | core ID | uncore ID | activity";
 const CORE_MESSAGE_TYPE = "luminary_core";
 const RECALL_MESSAGE_TYPE = "luminary_recall";
 
@@ -85,7 +85,10 @@ function bridge(ctx: ExtensionContext, action: Action, args: Arguments, signal?:
 function validate(action: Action, args: Arguments): string | undefined {
   if (action === "recall" && !args.query?.trim()) return "Recall requires a query.";
   if (action === "remember" && !args.text?.trim()) return "Remember requires explicit memory text.";
-  if (action === "forget" && (!Number.isSafeInteger(args.memory_id) || args.memory_id! <= 0)) return "Forget requires a positive integer memory ID.";
+  if ((action === "forget" || action === "promote" || action === "demote") &&
+    (!Number.isSafeInteger(args.memory_id) || args.memory_id! <= 0)) {
+    return `${action} requires a positive integer memory ID.`;
+  }
 }
 
 export default function luminary(pi: ExtensionAPI) {
@@ -178,18 +181,20 @@ export default function luminary(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("luminary", {
-    description: "Open native memory inspector (full, compact, close), or recall/remember/forget/activity",
+    description: "Open native memory inspector (full, compact, close), or recall/remember/forget/core/uncore/activity",
     handler: async (raw, ctx) => {
       const input = raw.trim();
       if (!input || /^(full|compact|close)$/.test(input)) { await inspect(ctx, input || "full"); return; }
-      const match = /^(recall|remember|forget|activity)(?:\s+([\s\S]*))?$/.exec(input);
+      const match = /^(recall|remember|forget|core|uncore|activity)(?:\s+([\s\S]*))?$/.exec(input);
       if (!match) { publish(ctx, "activity", failure(HELP), true); return; }
-      const action = match[1] as Exclude<Action, "turn">;
+      const requested = match[1];
+      const action = (requested === "core" ? "promote" : requested === "uncore" ? "demote" : requested) as Exclude<Action, "turn">;
       const value = (match[2] || "").trim();
       if (action === "activity" && value) { publish(ctx, action, failure(HELP), true); return; }
-      const args: Arguments = action === "recall" ? { query: value } : action === "remember" ? { text: value } : action === "forget" ? { memory_id: /^\d+$/.test(value) ? Number(value) : NaN } : {};
+      const args: Arguments = action === "recall" ? { query: value } : action === "remember" ? { text: value } : action === "forget" || action === "promote" || action === "demote" ? { memory_id: /^\d+$/.test(value) ? Number(value) : NaN } : {};
       const error = validate(action, args);
-      publish(ctx, action, error ? failure(error) : await bridge(ctx, action, args, undefined, action === "remember" ? { kind: "operator" } : undefined), true);
+      const operator = action === "remember" || action === "promote" || action === "demote";
+      publish(ctx, action, error ? failure(error) : await bridge(ctx, action, args, undefined, operator ? { kind: "operator" } : undefined), true);
     },
   });
 }

@@ -46,10 +46,10 @@ The OpenCode adapter targets V2; the older npm `0.3.1` adapter is V1-only.
 
 ### Recommended installer (unreleased source contract)
 
-**Registry current: 0.3.4. The next release is UNRELEASED and its version is not
-selected; the proposed 0.3.5 bump is deferred.** The following describes source
-behavior, not completed acceptance, registry proof, or release readiness.
-Published 0.3.4 predates `setup`; its manual installation remains below.
+**Registry current: 0.3.4. This source is 0.3.5, unreleased.** The following
+describes source behavior, not completed acceptance, registry proof, or release
+readiness.
+Published 0.3.4 predates `setup` and the self-provisioning pi package; its manual installation remains below.
 Full options, PowerShell syntax, scope, and removal: [install.md](install.md).
 
 Install the host first. Public installer entry points (`main` may differ from
@@ -426,6 +426,8 @@ pi and omp provide:
 /luminary recall deploy target
 /luminary activity
 /luminary forget 12
+/luminary core 12      # promote to auto-loaded core memory
+/luminary uncore 12    # back to ordinary query recall
 ```
 
 The bare command opens a menu when the native UI is available; headless callers
@@ -452,7 +454,11 @@ or `confirmed` flag. The bridge refuses missing/unverifiable provenance with
 `skipped` / `user_evidence_required`; a host may reject malformed tool arguments
 before dispatch. Model-grounded paraphrases retain the original quote with
 confidence `0` (unassessed, not a calibrated probability); an owner-typed
-`/luminary remember TEXT` is an explicit assertion.
+`/luminary remember TEXT` is an explicit assertion, and `/luminary core ID`
+(alias `/luminary uncore ID` to demote) is the owner-typed path for core
+designation. Both are sent over the bridge's trusted operator channel; a model
+tool call can never promote a memory, and OpenCode exposes the same change only
+through the owner-confirmed inspector action.
 Tags `core`, `rule`, and the configured core tag require the owner-confirmed
 inspector; the model tool returns `owner_confirmation_required` instead.
 These checks govern new writes. Existing records are not automatically

@@ -114,6 +114,21 @@ Most recent first.
 
 ### lifecycle
 
+Core memory is the DB-backed equivalent of `MEMORY.md`: those rows are
+loaded into the system prompt every session. Promote or demote one record
+without touching its content or history:
+
+```bash
+luminary-memory core 12            # auto-loaded in every session
+luminary-memory core 12 --off      # back to ordinary query recall
+luminary-memory core 12 --json     # id, core, importance, tags
+```
+
+Only an active memory can change designation. The same rule (core tag plus the
+pinned importance floor) runs for the owner-confirmed inspector action, so the
+two surfaces cannot disagree, and a scoped client can only change its own
+records.
+
 ```bash
 luminary-memory lifecycle
 luminary-memory lifecycle --no-semantic   # Jaccard-only consolidation

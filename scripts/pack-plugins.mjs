@@ -19,7 +19,10 @@ for (const agent of ["pi", "opencode", "omp"]) {
   ], { cwd: root, encoding: "utf8", maxBuffer: 1024 * 1024 });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(result.stderr || `${manifest.name}: npm pack failed`);
-  const [packed] = JSON.parse(result.stdout);
+  // npm 12 returns an array when several targets are packed and a
+  // workspace-keyed object when exactly one is; accept both shapes.
+  const parsed = JSON.parse(result.stdout);
+  const [packed] = Array.isArray(parsed) ? parsed : Object.values(parsed);
   const expected = `${manifest.name}-${manifest.version}.tgz`;
   if (packed?.filename !== expected) throw new Error(`${manifest.name}: unexpected pack artifact`);
   const files = new Set(packed.files.map((file) => file.path));

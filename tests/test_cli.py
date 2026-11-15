@@ -192,3 +192,28 @@ def test_graph_relations_flag(tmp_path):
     r = _invoke(["graph", "--relations"], db)
     assert r.exit_code == 0
     assert "Relations" in r.output
+
+
+def test_core_command_promotes_and_demotes(tmp_path):
+    db = tmp_path / "core.db"
+    _invoke(["add", "release checklist requires two reviewers"], db)
+
+    promoted = _invoke(["core", "1", "--json"], db)
+    assert promoted.exit_code == 0, promoted.output
+    payload = json.loads(promoted.output)
+    assert payload["core"] is True
+    assert payload["importance"] >= 0.9
+    assert "core" in payload["tags"]
+
+    demoted = _invoke(["core", "1", "--off", "--json"], db)
+    assert demoted.exit_code == 0, demoted.output
+    payload = json.loads(demoted.output)
+    assert payload["core"] is False
+    assert payload["importance"] <= 0.89
+
+
+def test_core_command_reports_unknown_memory(tmp_path):
+    result = _invoke(["core", "999"], tmp_path / "core.db")
+
+    assert result.exit_code == 1
+    assert "does not exist in this scope" in result.output

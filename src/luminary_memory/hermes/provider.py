@@ -2549,20 +2549,9 @@ class LuminaryMemoryProvider(MemoryProvider):
                 )
                 return json.dumps({"result": "Memory rejected by whitelist."})
             # An exact duplicate may have been ingested earlier without the
-            # core tag. Promote that existing row instead of assuming ingest
-            # applied the requested tag on the duplicate path.
-            m = self._client.get(mid)
-            pin_importance = float(getattr(self._client.settings, "rule_importance", 0.9) or 0.9)
-            if m is not None:
-                changed = False
-                if tag not in (m.tags or []):
-                    m.tags = list(dict.fromkeys((m.tags or []) + [tag]))
-                    changed = True
-                if float(m.importance or 0) < pin_importance:
-                    m.importance = pin_importance
-                    changed = True
-                if changed:
-                    self._client.update(m)
+            # core tag. Promotion uses the same rule as the CLI, the native
+            # bridge and the owner-confirmed inspector.
+            self._client.set_core(mid, pinned=True)
             self._log_event(
                 "core_add.completed",
                 trace_id=trace_id,
@@ -2622,8 +2611,7 @@ class LuminaryMemoryProvider(MemoryProvider):
                     latency_ms=round((time.perf_counter() - started) * 1000, 2),
                 )
                 return json.dumps({"result": f"memory {mid} was not core (no change)"})
-            m.tags = new_tags
-            self._client.update(m)
+            self._client.set_core(mid, pinned=False)
             self._log_event(
                 "core_remove.completed",
                 trace_id=trace_id,

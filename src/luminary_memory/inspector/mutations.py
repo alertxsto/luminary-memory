@@ -332,14 +332,11 @@ class PreviewManager:
             memory.tags = payload["tags"]
             self.service.writer(context, memory=memory).update(memory)
         elif kind == "core":
-            core_tag = str(getattr(self.service.client.settings, "core_tag", "core") or "core")
-            memory.tags = [tag for tag in memory.tags if tag != core_tag]
-            if payload["pinned"]:
-                memory.tags.append(core_tag)
-                memory.importance = max(memory.importance, 0.9)
-            else:
-                memory.importance = min(memory.importance, 0.89)
-            self.service.writer(context, memory=memory).update(memory)
+            # One rule, shared with `luminary-memory core`: the tag plus the
+            # pinned importance floor.
+            self.service.writer(context, memory=memory).set_core(
+                memory.id, pinned=payload["pinned"],
+            )
         elif kind == "retract":
             self.service.writer(context, memory=memory).retract(memory.id)
         memory = self.backend.get(memory.id)

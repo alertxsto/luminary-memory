@@ -1,10 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.5] - unreleased
 
-Source changes below are **UNRELEASED**. Registry current remains **0.3.4**.
-The proposed **0.3.5** bump is deferred; source versions remain **0.3.4**.
-Nothing here authorizes a release. These notes do not claim platform acceptance,
+Source version is **0.3.5** and remains **UNRELEASED**: the registry current is
+still **0.3.4**. Nothing here authorizes a release, and no publication is
+claimed. These notes do not claim platform acceptance,
 post-publication registry proof, or release readiness.
 
 ### Changed
@@ -26,6 +26,20 @@ post-publication registry proof, or release readiness.
   non-zero with an error instead of "no relevant memories found".
 
 ### Added
+
+- `luminary-memory core <id> [--off]` promotes a memory into auto-loaded core
+  context or demotes it again. The rule lives once in `MemoryClient.set_core`
+  and the owner-confirmed inspector action delegates to it, so the CLI and the
+  panel cannot drift. Only active memories change designation, and a scoped
+  client can only change its own records.
+
+- Core designation is now reachable from every supported surface with one
+  rule (`MemoryClient.set_core`): the CLI command above, the pi/omp
+  `/luminary core ID` and `/luminary uncore ID` commands over the bridge's
+  trusted operator channel, the Hermes `luminary_core_add`/`luminary_core_remove`
+  tools, and the owner-confirmed inspector action shared by Pi, omp, OpenCode,
+  Hermes Desktop/dashboard and the browser companion. A model tool call cannot
+  promote a memory, and a scoped client can only change its own records.
 
 - Calibration-independent holdout baseline: `benchmarks/baselines/gold-holdout-real-v1.json`
   records the real-model run over `gold_holdout.jsonl` with separate fake and

@@ -65,6 +65,8 @@ luminary-memory add "deploy target is staging" --tags deploy
 luminary-memory recall "where do we deploy?" --json
 luminary-memory activity --limit 5
 luminary-memory list
+luminary-memory core 12            # promote to auto-loaded core memory
+luminary-memory core 12 --off      # back to ordinary query recall
 luminary-memory lifecycle
 luminary-memory stats
 ```
@@ -73,8 +75,9 @@ luminary-memory stats
 
 ## One-command install (OpenCode, pi, omp)
 
-**Registry current: 0.3.4. Managed native setup: UNRELEASED source.**
-The proposed 0.3.5 bump is deferred; source versions remain 0.3.4.
+**Registry current: 0.3.4. This checkout is source version 0.3.5, unreleased.**
+The 0.3.5 bump is applied in source; nothing here claims publication, registry
+download proof, or release readiness.
 This section describes the source contract, not completed acceptance,
 registry-download proof, or a release-ready claim. The published 0.3.4 wheel
 predates `setup`; use the [advanced current-release instructions](docs/install.md#advanced-manual-current-release-installation)

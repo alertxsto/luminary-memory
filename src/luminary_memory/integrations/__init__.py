@@ -300,7 +300,8 @@ def dispatch(request: dict, *, client: MemoryClient | None = None) -> dict:
     if not isinstance(agent, str) or not re.fullmatch(r"[a-z][a-z0-9._-]{0,63}", agent):
         raise ValueError("agent must be a stable lowercase harness ID (1-64 characters)")
     action = request.get("action")
-    if action not in {"core", "recall", "remember", "forget", "activity", "turn", "version"}:
+    if action not in {"core", "recall", "remember", "forget", "activity", "turn",
+                      "promote", "demote", "version"}:
         raise ValueError("unsupported memory action")
     if action == "version":
         # Handshake for installers and adapters: no database, workspace or
@@ -310,7 +311,8 @@ def dispatch(request: dict, *, client: MemoryClient | None = None) -> dict:
         return _reply(
             "ok", f"Luminary bridge {__version__}.",
             version=__version__,
-            actions=["core", "recall", "remember", "forget", "activity", "turn"],
+            actions=["core", "recall", "remember", "forget", "activity", "turn",
+                     "promote", "demote"],
         )
     workspace = Path(_text(request, "workspace")).expanduser()
     if not workspace.is_absolute():
@@ -351,8 +353,17 @@ def dispatch(request: dict, *, client: MemoryClient | None = None) -> dict:
                 "skipped", "Remember requires evidence from the current native user input.",
                 reason="user_evidence_required",
             )
+    if action in {"promote", "demote"}:
+        # Core designation changes what is loaded into every session, so only an
+        # owner-typed command may request it. Model tool calls stay unable.
+        source = _remember_source(request, scope, session, text)
+        if source is None or source.get("origin") != "operator":
+            return _reply(
+                "skipped", "Core designation requires an owner-typed command.",
+                reason="owner_confirmation_required",
+            )
     memory_id = request.get("memory_id")
-    if action == "forget" and (
+    if action in {"forget", "promote", "demote"} and (
         type(memory_id) is not int or memory_id <= 0
     ):
         raise ValueError("memory_id must be a positive integer")
@@ -392,6 +403,19 @@ def dispatch(request: dict, *, client: MemoryClient | None = None) -> dict:
                 return _reply("not_found", "No memory with that ID in this scope.")
             client.retract(memory_id, reason="Explicit native-agent forget request")
             return _reply("deleted", f"Retracted memory #{memory_id}; audit history retained.", deleted=1)
+        if action in {"promote", "demote"}:
+            memory = client.get(memory_id)
+            if memory is None or memory.status != "active":
+                return _reply("not_found", "No active memory with that ID in this scope.")
+            try:
+                updated = client.set_core(memory_id, pinned=action == "promote")
+            except (TypeError, ValueError) as error:
+                return _reply("skipped", str(error), reason="core_change_rejected")
+            state = "core (auto-loaded every session)" if action == "promote" else "ordinary"
+            return _reply(
+                "updated", f"Memory #{memory_id} is {state}.",
+                memories=[_row(updated)] if updated is not None else [],
+            )
         if action == "activity":
             memories = [_row(memory) for memory in _recent(client)]
             return _reply("ok", f"{len(memories)} recent active memories in this scope.",

@@ -834,3 +834,58 @@ def test_legacy_inventory_and_owner_confirmed_assignment(native):
         arguments={"kind": "assign_legacy", "memory_id": foreign, "expected_revision": backend.get(foreign).revision}))
     assert denied_foreign.status == "denied"
     assert backend.get(foreign).user_id == "other"
+
+
+def test_owner_typed_core_designation_round_trips(native):
+    client, request = native
+    memory_id = client.ingest("release checklist requires two reviewers", enrich=False)
+
+    def owner(action, mid):
+        return dispatch({**request, "action": action, "memory_id": mid}, client=client)
+
+    promoted = owner("promote", memory_id)
+    assert promoted["ok"] is True
+    stored = client.get(memory_id)
+    assert client.settings.core_tag in stored.tags
+    assert stored.importance >= float(client.settings.rule_importance)
+
+    demoted = owner("demote", memory_id)
+    assert demoted["ok"] is True
+    stored = client.get(memory_id)
+    assert client.settings.core_tag not in stored.tags
+    assert stored.importance < float(client.settings.rule_importance)
+
+
+def test_core_designation_requires_an_owner_typed_command(native, monkeypatch):
+    client, request = native
+    memory_id = client.ingest("owner only rule", enrich=False)
+
+    monkeypatch.delenv("LUMINARY_BRIDGE_SOURCE")
+    assert dispatch({**request, "action": "promote", "memory_id": memory_id}, client=client)["reason"] == (
+        "owner_confirmation_required"
+    )
+
+    # A user-quote source is evidence for `remember`, never authority to pin.
+    monkeypatch.setenv("LUMINARY_BRIDGE_SOURCE", json.dumps({
+        **{key: request[key] for key in ("agent", "workspace", "session_id")},
+        "kind": "native_user",
+        "quote": "owner only rule",
+    }))
+    response = dispatch(
+        {**request, "action": "promote", "memory_id": memory_id, "evidence_quote": "owner only rule"},
+        client=client,
+    )
+    assert response["reason"] == "owner_confirmation_required"
+    assert client.settings.core_tag not in (client.get(memory_id).tags or [])
+
+
+def test_core_designation_cannot_reach_another_owner(native):
+    from luminary_memory.types import Memory
+
+    client, request = native
+    foreign = client.backend.add(Memory(content="bob rule", user_id="bob"))
+
+    response = dispatch({**request, "action": "promote", "memory_id": foreign}, client=client)
+
+    assert response["status"] == "not_found"
+    assert "core" not in (client.backend.get(foreign).tags or [])

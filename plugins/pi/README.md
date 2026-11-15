@@ -121,6 +121,8 @@ there is a package-detail route. A registry install does not prove indexing.
 /luminary recall deploy target
 /luminary activity
 /luminary forget 12
+/luminary core 12      # promote to auto-loaded core memory
+/luminary uncore 12    # back to ordinary query recall
 ```
 
 Use an actual returned memory ID for `forget`. The bare command opens the
@@ -150,7 +152,8 @@ Model remember requires `evidence_quote` copied exactly from current native user
 input (at most 4096 UTF-8 bytes). The adapter verifies it; model text/metadata
 cannot certify their own evidence or confidence. Unverified writes return
 `user_evidence_required`; grounded paraphrases retain the original quote with
-unassessed confidence. Owner-typed `/luminary remember TEXT` remains an explicit
+unassessed confidence. Owner-typed `/luminary remember TEXT` and
+`/luminary core ID` / `/luminary uncore ID` remain explicit
 assertion. Core/rule promotion requires the owner-confirmed inspector.
 Automatic recall is request-local, non-system historical data, not a transcript
 entry. Empty recall adds no message. Core-tagged rows must pass normal retrieval;

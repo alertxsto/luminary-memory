@@ -7,7 +7,7 @@
 # runtime verification and the per-agent bridge record.
 set -eu
 
-VERSION="${LUMINARY_VERSION:-0.3.4}"
+VERSION="${LUMINARY_VERSION:-0.3.5}"
 AGENTS="auto"
 MODE="sync"
 NO_CONFIG=0

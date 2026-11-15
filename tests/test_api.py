@@ -233,3 +233,64 @@ def test_run_maintenance_never_calls_apply_paths(tmp_path, monkeypatch):
     assert result["proposed"] == 1
     assert result["reviewed"] == 1
     c.close()
+
+
+def test_set_core_promotes_and_demotes(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "core.db"), engine=_FakeEngine())
+    mid = c.ingest("release checklist requires two reviewers", tags=["process"])
+
+    promoted = c.set_core(mid)
+    assert promoted is not None
+    assert promoted.tags.count("core") == 1
+    assert promoted.importance >= 0.9
+    assert "process" in promoted.tags
+
+    # Idempotent: promoting twice keeps a single core tag.
+    c.set_core(mid)
+    assert c.get(mid).tags.count("core") == 1
+
+    demoted = c.set_core(mid, pinned=False)
+    assert demoted is not None
+    assert "core" not in demoted.tags
+    assert demoted.importance <= 0.89
+    assert "process" in demoted.tags
+    c.close()
+
+
+def test_set_core_cannot_reach_another_owner(tmp_path):
+    from luminary_memory.config import Settings
+    from luminary_memory.types import Memory
+
+    writer = MemoryClient(db_path=str(tmp_path / "core.db"), engine=_FakeEngine())
+    foreign = writer.backend.add(Memory(content="bob keeps this", user_id="bob"))
+    writer.close()
+
+    client = MemoryClient(
+        settings=Settings(db_path=str(tmp_path / "core.db"), scope_include_global=False),
+        engine=_FakeEngine(),
+        scope={"user_id": "alice"},
+    )
+    try:
+        try:
+            client.set_core(foreign)
+        except ValueError as error:
+            assert "does not exist in this scope" in str(error)
+        else:
+            raise AssertionError("another owner's memory must not become core")
+        assert "core" not in (client.backend.get(foreign).tags or [])
+    finally:
+        client.close()
+
+
+def test_set_core_requires_an_active_memory(tmp_path):
+    c = MemoryClient(db_path=str(tmp_path / "core.db"), engine=_FakeEngine())
+    mid = c.ingest("withdrawn rule")
+    c.retract(mid, reason="superseded")
+
+    try:
+        c.set_core(mid)
+    except ValueError as error:
+        assert "only an active memory" in str(error)
+    else:
+        raise AssertionError("a retracted memory must not be promoted")
+    c.close()

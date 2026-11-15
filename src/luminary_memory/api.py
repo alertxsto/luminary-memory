@@ -1135,6 +1135,36 @@ class MemoryClient:
         )
 
     @atomic_client
+    def set_core(self,
+    memory_id: int,
+    *,
+    pinned: bool = True,) -> Memory | None:
+        """Promote an active memory into auto-loaded core context, or demote it.
+
+        Core membership is one explicit tag plus the pinned importance floor; the
+        same rule runs for the CLI and the owner-confirmed inspector so the two
+        surfaces cannot drift.
+        """
+        if not isinstance(pinned, bool):
+            raise TypeError("pinned must be a boolean")
+        memory = self.get(memory_id)
+        if memory is None:
+            raise ValueError(f"memory {memory_id} does not exist in this scope")
+        if memory.status != "active":
+            raise ValueError(f"memory {memory_id} is {memory.status}; only an active memory can change core designation")
+        tag = str(getattr(self.settings, "core_tag", "core") or "core")
+        floor = float(getattr(self.settings, "rule_importance", 0.9) or 0.9)
+        floor = max(0.0, min(1.0, floor))
+        memory.tags = [existing for existing in (memory.tags or []) if existing != tag]
+        if pinned:
+            memory.tags.append(tag)
+            memory.importance = max(float(memory.importance or 0.0), floor)
+        else:
+            memory.importance = min(float(memory.importance or 0.0), max(0.0, floor - 0.01))
+        self.update(memory)
+        return self.get(memory_id)
+
+    @atomic_client
     def resolve_conflict(self,
     memory_id: int,
     *,

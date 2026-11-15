@@ -99,7 +99,7 @@ if [ "$DO_PROVIDER" -eq 1 ]; then
   # Activation is the only step that edits a file the operator owns, so refuse
   # before touching it when the installed bridge cannot do the job.
   if ! "$HERMES_RUNTIME_PYTHON" -c "import luminary_memory.hermes.activation" 2>/dev/null; then
-    fail "the installed bridge has no Hermes activation module; install luminary-memory>=0.3.3"
+    fail "the installed bridge has no Hermes activation module; install luminary-memory>=0.3.5"
   fi
 
   CONFIG="$HERMES_HOME/config.yaml"

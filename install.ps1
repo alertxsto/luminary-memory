@@ -19,7 +19,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $explicitVersion = [bool]$Version
-if (-not $Version) { $Version = "0.3.4" }
+if (-not $Version) { $Version = "0.3.5" }
 if ($All) { $Agents = "all" }
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "Version must have the form X.Y.Z" }
 if (@($Check, $Upgrade, $Uninstall | Where-Object { $_ }).Count -gt 1) {
