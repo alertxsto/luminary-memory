@@ -27,6 +27,20 @@ def digest(path: Path) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
 
 
+def snapshot(home: Path) -> list[str]:
+    """Paths under the throwaway home, ignoring host tooling's own caches.
+
+    PowerShell writes StartupProfileData-NonInteractive under USERPROFILE even
+    when APPDATA/LOCALAPPDATA point elsewhere. That is host noise, not
+    Luminary state, so the read-only contract does not count it.
+    """
+    return sorted(
+        str(path.relative_to(home))
+        for path in home.rglob("*")
+        if path.relative_to(home).parts[0].lower() != "appdata"
+    )
+
+
 def space_free(path: Path) -> Path:
     """uv splits a spaced UV_CONSTRAINT path; use the Windows short name."""
     if " " not in str(path):
@@ -104,10 +118,10 @@ def main() -> None:
 
         bridge = home / ".luminary" / "bridge.json"
         store = home / "memory.db"
-        before = sorted(str(path.relative_to(home)) for path in home.rglob("*"))
+        before = snapshot(home)
         setup("--dry-run")
         setup("--check", success=False)
-        after = sorted(str(path.relative_to(home)) for path in home.rglob("*"))
+        after = snapshot(home)
         assert after == before, sorted(set(after) - set(before))
         setup()
         record = json.loads(bridge.read_text(encoding="utf-8"))
