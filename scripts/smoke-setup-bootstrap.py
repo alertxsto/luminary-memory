@@ -27,6 +27,20 @@ def digest(path: Path) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
 
 
+def is_under(path: str | Path, ancestor: Path) -> bool:
+    """Textual prefixes break on Windows 8.3 names and macOS /private symlinks."""
+    current = Path(path)
+    while True:
+        try:
+            if os.path.samefile(current, ancestor):
+                return True
+        except OSError:
+            pass
+        if current.parent == current:
+            return False
+        current = current.parent
+
+
 def snapshot(home: Path) -> list[str]:
     """Paths under the throwaway home, ignoring host tooling's own caches.
 
@@ -126,14 +140,13 @@ def main() -> None:
         setup()
         record = json.loads(bridge.read_text(encoding="utf-8"))
         python = Path(record["agents"]["pi"]["python"])
-        assert python.is_relative_to(home / ".luminary" / "venvs")
+        assert is_under(python, home / ".luminary" / "venvs"), python
         result = subprocess.run([str(python), "-I", "-c", "import importlib.metadata as m, json, sys; import luminary_memory; d=m.distribution('luminary-memory'); print(json.dumps({'package':luminary_memory.__file__,'version':d.version,'base':sys.base_prefix,'prefix':sys.prefix,'metadata':str(next(d.locate_file(p) for p in d.files if str(p).endswith('.dist-info/METADATA')))}))"],
                                 check=True, env=environment, cwd=workspace, capture_output=True, text=True, timeout=30)
         runtime = json.loads(result.stdout)
         assert runtime["version"] == version
         assert Path(runtime["package"]).is_relative_to(Path(runtime["prefix"]))
-        # macOS resolves /var to /private/var, so compare resolved paths.
-        assert Path(runtime["base"]).is_relative_to((home / ".luminary" / "bin" / "python").resolve()), runtime['base']
+        assert is_under(runtime["base"], home / ".luminary" / "bin" / "python"), runtime["base"]
         metadata_path = Path(runtime["metadata"])
         installed_at = metadata_path.stat().st_mtime_ns
         setup()
