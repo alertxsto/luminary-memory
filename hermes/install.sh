@@ -67,14 +67,17 @@ if [ "$DO_PROVIDER" -eq 1 ]; then
 
   log "installing luminary-memory[hermes] ..."
   install_bridge() {
+    # ``--upgrade`` is required, not cosmetic: the requirement is unpinned, so
+    # without it pip treats any installed version as already satisfying the
+    # request and silently leaves an older bridge in place.
     # 1. ``pip --python`` targets the resolved environment even when it has no pip
     #    of its own, which is the normal shape of a Hermes managed environment.
-    if "$LUMINARY_PYTHON" -m pip --python "$HERMES_RUNTIME_PYTHON" install -q \
+    if "$LUMINARY_PYTHON" -m pip --python "$HERMES_RUNTIME_PYTHON" install -q --upgrade \
         "luminary-memory[hermes]" 2>/dev/null; then
       return 0
     fi
     # 2. The environment may carry its own pip.
-    if "$HERMES_RUNTIME_PYTHON" -m pip install -q "luminary-memory[hermes]" 2>/dev/null; then
+    if "$HERMES_RUNTIME_PYTHON" -m pip install -q --upgrade "luminary-memory[hermes]" 2>/dev/null; then
       return 0
     fi
     # 3. Last resort for a pip too old for ``--python``: install straight into the
@@ -87,6 +90,14 @@ if [ "$DO_PROVIDER" -eq 1 ]; then
     return 1
   }
   install_bridge || fail "pip install failed"
+
+  # Report what actually landed, so an update that silently did nothing is
+  # visible instead of being mistaken for success.
+  BRIDGE_VERSION="$("$HERMES_RUNTIME_PYTHON" -c \
+    "import luminary_memory; print(luminary_memory.__version__)" 2>/dev/null || true)"
+  if [ -n "$BRIDGE_VERSION" ]; then
+    log "bridge version: $BRIDGE_VERSION"
+  fi
 
   # Check capabilities, never a Hermes release number. This keeps an unsupported
   # host from silently falling back to native memory or leaving two persistent

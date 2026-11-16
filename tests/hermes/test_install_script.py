@@ -269,6 +269,34 @@ def test_install_script_has_install_fallbacks():
     assert '"$HERMES_RUNTIME_PYTHON" -m pip install' in script
 
 
+def test_every_install_path_upgrades():
+    """The requirement is unpinned, so without --upgrade pip leaves an old bridge.
+
+    Re-running the installer is the documented update path. A plain
+    ``pip install luminary-memory[hermes]`` sees any installed version as
+    already satisfying the request and silently does nothing, which is how a
+    host stays on an old bridge while the installer reports success.
+    """
+    script = INSTALL_SH.read_text(encoding="utf-8")
+    installs = [
+        line
+        for line in script.splitlines()
+        if "pip" in line and "install" in line and "luminary-memory[hermes]" in line
+    ]
+
+    assert installs, "no pip install line found"
+    for line in installs:
+        assert "--upgrade" in line, f"install path without --upgrade: {line.strip()}"
+
+
+def test_install_script_reports_the_installed_version():
+    """An update that silently did nothing must be visible, not assumed."""
+    script = INSTALL_SH.read_text(encoding="utf-8")
+
+    assert "BRIDGE_VERSION=" in script
+    assert "luminary_memory.__version__" in script
+
+
 def test_install_script_backs_up_the_config_before_activation():
     """Activation rewrites an operator-owned file, so it must be recoverable."""
     script = INSTALL_SH.read_text(encoding="utf-8")
